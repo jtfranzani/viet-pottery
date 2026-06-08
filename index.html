@@ -997,6 +997,7 @@ function openEmitirSII(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
   const c=clientById(s.clienteId);
   const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const emailCli=(c&&c.email)||s.clienteEmail||'';
   const total=saleTotal(s);
   const neto=Math.round(total/1.19);
   const iva=total-neto;
@@ -1021,6 +1022,14 @@ function openEmitirSII(id){
       </div>
       <div class="text-xs text-clay-400">Solo se copia el monto, no los datos del cliente. Tu certificado y tus claves del SII quedan solo en el portal; la plataforma nunca los maneja.</div>
       <div class="bg-clay-50 rounded-xl p-4">
+        <div class="text-sm font-semibold mb-1">Enviar la boleta al cliente por correo</div>
+        <div class="text-xs text-clay-400 mb-2">Pega este correo en el campo del <b>receptor</b> al emitir en el SII, y el SII le envía la boleta al cliente. Se guarda en la venta.</div>
+        <div class="flex gap-2">
+          <input id="emitir_email" value="${emailCli.replace(/"/g,'&quot;')}" placeholder="correo@cliente.cl" class="flex-1 border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+          <button id="emitir_emailbtn" onclick="copyEmitirEmail()" class="border border-clay-200 hover:bg-white text-clay-700 text-sm font-medium px-3 py-2 rounded-xl bg-white whitespace-nowrap">Copiar correo</button>
+        </div>
+      </div>
+      <div class="bg-clay-50 rounded-xl p-4">
         <div class="text-sm font-semibold mb-2">Registrar el documento emitido</div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="text-xs text-clay-500">Tipo</label><select id="emitir_tipo" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="boleta" ${s.docTipo!=='factura'?'selected':''}>Boleta</option><option value="factura" ${s.docTipo==='factura'?'selected':''}>Factura</option></select></div>
@@ -1037,12 +1046,22 @@ function copyEmitir(){
   const fallback=()=>{const t=document.createElement('textarea');t.value=val;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();};
   if(navigator.clipboard){ navigator.clipboard.writeText(val).then(done).catch(fallback); } else fallback();
 }
+function copyEmitirEmail(){
+  const el=document.getElementById('emitir_email'); if(!el) return;
+  const val=(el.value||'').trim();
+  if(!val){ alert('Escribe el correo del cliente.'); return; }
+  const done=()=>{const b=document.getElementById('emitir_emailbtn'); if(b){const o=b.textContent;b.textContent='¡Copiado! ✓';setTimeout(()=>b.textContent=o,1500);}};
+  const fallback=()=>{el.select();try{document.execCommand('copy');}catch(e){}done();};
+  if(navigator.clipboard){ navigator.clipboard.writeText(val).then(done).catch(fallback); } else fallback();
+}
 function saveFolio(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
   const folio=document.getElementById('emitir_folio').value.trim();
   const tipo=document.getElementById('emitir_tipo').value;
   if(!folio){ alert('Pega el N° de folio que te entregó el SII para registrarlo.'); return; }
   s.docTipo=tipo; s.docNumero=folio;
+  const em=(document.getElementById('emitir_email')?.value||'').trim();
+  if(em){ const c=clientById(s.clienteId); if(c){ c.email=em; } s.clienteEmail=em; }
   save(); closeModal(); go(CURRENT==='cobranzas'?'cobranzas':'ventas');
 }
 
@@ -1166,10 +1185,51 @@ function generateHojaRuta(fecha){
   if(ventas.length===0){ alert('No hay entregas pendientes para el '+fecha+'.'); return; }
   const totalUnidades=ventas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const comunas=[...new Set(ventas.map(s=>s.comuna||s.ciudad).filter(Boolean))];
+  // Resumen de carga: total de cada producto a cargar ese día
+  const resumen={};
+  ventas.forEach(s=>s.items.forEach(i=>{
+    const p=productById(i.productId);
+    const name=p?productName(p):(i.descripcion||'(producto)');
+    const key=p?p.id:name;
+    if(!resumen[key]) resumen[key]={name, cant:0};
+    resumen[key].cant+=i.cantidad;
+  }));
+  const resumenArr=Object.values(resumen).sort((a,b)=> b.cant-a.cant || a.name.localeCompare(b.name));
+
   const { jsPDF }=window.jspdf; const doc=new jsPDF();
+  const drawBand=()=>{
+    doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Hoja de ruta',14,12);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170);
+    doc.text('Entregas del '+fecha+'   ·   '+ventas.length+' paradas   ·   '+totalUnidades+' productos a repartir',14,20);
+  };
+  drawBand();
+
+  // ---------- Sección 1: Resumen de carga ----------
+  let y=35;
+  doc.setTextColor(35,51,42); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Resumen de carga',14,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(120,135,120); doc.text('Total de cada producto a cargar para esta ruta',14,y+4.5);
   doc.autoTable({
-    startY:34,
-    head:[['✓','Cliente','Ciudad / Comuna','Dirección','Productos','Tipo']],
+    startY:y+8,
+    head:[['Producto','Cantidad']],
+    body:resumenArr.map(r=>[r.name, String(r.cant)]),
+    foot:[['Total de productos a repartir', String(totalUnidades)]],
+    styles:{fontSize:9.5,cellPadding:3.2,textColor:[35,51,42],lineColor:[225,231,222],lineWidth:0.1},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
+    footStyles:{fillColor:[230,236,231],textColor:[35,51,42],fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{0:{fontStyle:'bold'},1:{halign:'right',cellWidth:34,fontStyle:'bold'}},
+    margin:{top:30,left:14,right:14},
+    didDrawPage:()=>{ drawBand(); }
+  });
+
+  // ---------- Sección 2: Detalle de la ruta ----------
+  y=doc.lastAutoTable.finalY+11;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(35,51,42); doc.text('Detalle de la ruta',14,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(120,135,120); doc.text('Paradas ordenadas por zona. Marca la casilla a medida que entregas.',14,y+4.5);
+  doc.autoTable({
+    startY:y+8,
+    head:[['','Cliente','Ciudad / Comuna','Dirección','Productos','Tipo']],
     body:ventas.map(s=>{
       const c=clientById(s.clienteId);
       const nom=(c?c.nombre:(s.clienteNombre||'—'))+((c&&c.telefono)?'\n'+c.telefono:'');
@@ -1177,24 +1237,20 @@ function generateHojaRuta(fecha){
       const prods=s.items.map(i=>i.cantidad+'x '+itemLabel(i)).join('\n');
       return ['', nom, lugar, s.direccion||'-', prods, tipoDespachoOf(s)];
     }),
-    styles:{fontSize:9,cellPadding:3,valign:'top',lineColor:[210,216,205],lineWidth:0.2,textColor:[35,51,42]},
+    styles:{fontSize:9,cellPadding:3.2,valign:'top',lineColor:[225,231,222],lineWidth:0.1,textColor:[35,51,42]},
     headStyles:{fillColor:[58,78,64],textColor:[255,255,255],halign:'left'},
     alternateRowStyles:{fillColor:[247,250,247]},
-    columnStyles:{0:{cellWidth:9,halign:'center'},1:{cellWidth:35},2:{cellWidth:28},3:{cellWidth:42},5:{cellWidth:14,halign:'center'}},
-    margin:{top:32,left:10,right:10},
+    columnStyles:{0:{cellWidth:9,halign:'center'},1:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:28},3:{cellWidth:42},5:{cellWidth:14,halign:'center'}},
+    margin:{top:30,left:10,right:10},
     didDrawCell:(data)=>{ if(data.section==='body' && data.column.index===0){ doc.setDrawColor(120,120,120); doc.setLineWidth(0.3); doc.rect(data.cell.x+2.5, data.cell.y+2.5, 4.5, 4.5); } },
-    didDrawPage:()=>{
-      doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F');
-      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Hoja de ruta',14,12);
-      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170);
-      doc.text('Entregas del '+fecha+'   ·   '+ventas.length+' paradas   ·   '+totalUnidades+' productos a repartir',14,20);
-    }
+    didDrawPage:()=>{ drawBand(); }
   });
-  let y=doc.lastAutoTable.finalY+8;
+
+  let yy=doc.lastAutoTable.finalY+9;
   doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(35,51,42);
-  doc.text('Total de productos a repartir: '+totalUnidades,14,y);
+  doc.text('Total de productos a repartir: '+totalUnidades+'   ·   Paradas: '+ventas.length,14,yy);
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(93,120,96);
-  y+=6; doc.text('Paradas: '+ventas.length+'   ·   Comunas: '+(comunas.join(', ')||'-'),14,y);
+  yy+=6; doc.text('Comunas en la ruta: '+(comunas.join(', ')||'-'),14,yy);
   doc.setFontSize(8); doc.setTextColor(150,150,150);
   doc.text('Hoja de ruta generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
   doc.save('hoja-de-ruta-'+fecha+'.pdf');
