@@ -739,13 +739,29 @@ function downloadQuotePDF(id){
 }
 
 /* ===================== VENTAS ===================== */
+const zonaOf = s => ((s.ciudad||'').trim().toLowerCase()==='santiago') ? 'Santiago' : 'Región';
 function renderVentas(){
   const v=document.getElementById('view');
   const rows=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const ciudades=[...new Set(DB.sales.map(s=>(s.ciudad||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const comunas=[...new Set(DB.sales.map(s=>(s.comuna||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   v.innerHTML=`
   <div class="card overflow-hidden">
     <div class="p-4 flex flex-wrap gap-2 items-center border-b border-clay-100">
       <input id="fVenta" oninput="filterVentas()" placeholder="Buscar cliente o producto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <select id="fZona" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Zona: todas</option>
+        <option value="Santiago">Santiago (RM)</option>
+        <option value="Región">Región</option>
+      </select>
+      <select id="fCiudad" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Ciudad: todas</option>
+        ${ciudades.map(c=>`<option value="${c.toLowerCase()}">${c}</option>`).join('')}
+      </select>
+      <select id="fComuna" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Comuna: todas</option>
+        ${comunas.map(c=>`<option value="${c.toLowerCase()}">${c}</option>`).join('')}
+      </select>
       <select id="fDoc" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
         <option value="">Todos los documentos</option>
         <option value="pendiente">📌 Documentos pendientes</option>
@@ -766,10 +782,10 @@ function renderVentas(){
           <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
         </thead>
         <tbody>
-        ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}">
+        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="text-xs text-clay-400">${[s.ciudad,s.comuna].filter(Boolean).join(' · ')}</div></td>
+          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -997,9 +1013,10 @@ function openEmitirSII(id){
         <div class="text-xs text-clay-500">Monto a emitir (total con IVA)</div>
         <div class="text-3xl font-bold text-clay-800 my-1">${fmt(total)}</div>
         <div class="text-xs text-clay-400">Neto ${fmt(neto)} · IVA 19% ${fmt(iva)}</div>
-        <div class="flex gap-2 mt-3">
-          <button id="emitir_copybtn" onclick="copyEmitir()" class="flex-1 border border-clay-200 hover:bg-white text-clay-700 text-sm font-medium px-3 py-2 rounded-xl bg-white">Copiar monto</button>
-          <a href="https://eboleta.sii.cl/emitir/" target="_blank" rel="noopener" class="flex-1 text-center bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 py-2 rounded-xl">Abrir portal SII ↗</a>
+        <button id="emitir_copybtn" onclick="copyEmitir()" class="w-full border border-clay-200 hover:bg-white text-clay-700 text-sm font-medium px-3 py-2 rounded-xl bg-white mt-3 mb-2">Copiar monto</button>
+        <div class="grid grid-cols-2 gap-2">
+          <a href="https://eboleta.sii.cl/emitir/" target="_blank" rel="noopener" class="text-center bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 py-2 rounded-xl">Emitir Boleta ↗</a>
+          <a href="https://www.sii.cl/servicios_online/1039-1183.html" target="_blank" rel="noopener" class="text-center bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 py-2 rounded-xl">Emitir Factura ↗</a>
         </div>
       </div>
       <div class="text-xs text-clay-400">Solo se copia el monto, no los datos del cliente. Tu certificado y tus claves del SII quedan solo en el portal; la plataforma nunca los maneja.</div>
@@ -1869,18 +1886,24 @@ function modal(html){document.getElementById('modalBox').innerHTML=html;document
 function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;CONVERT_QUOTE_ID=null;}
 function filterTable(tid,q){q=q.toLowerCase();document.querySelectorAll(`#${tid} tbody tr`).forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';});}
 function filterVentas(){
-  const q=(document.getElementById('fVenta').value||'').toLowerCase();
-  const doc=document.getElementById('fDoc').value;
-  const pago=document.getElementById('fPago').value;
+  const g=id=>document.getElementById(id);
+  const q=(g('fVenta').value||'').toLowerCase();
+  const doc=g('fDoc')?g('fDoc').value:'';
+  const pago=g('fPago')?g('fPago').value:'';
+  const zona=g('fZona')?g('fZona').value:'';
+  const ciudad=g('fCiudad')?g('fCiudad').value:'';
+  const comuna=g('fComuna')?g('fComuna').value:'';
   let shown=0;
   document.querySelectorAll('#vtbl tbody tr').forEach(tr=>{
-    const okQ=tr.textContent.toLowerCase().includes(q);
-    const okDoc=!doc||tr.dataset.doc===doc;
-    const okPago=!pago||tr.dataset.pago===pago;
-    const vis=okQ&&okDoc&&okPago;
+    const vis = tr.textContent.toLowerCase().includes(q)
+      && (!doc||tr.dataset.doc===doc)
+      && (!pago||tr.dataset.pago===pago)
+      && (!zona||tr.dataset.zona===zona)
+      && (!ciudad||tr.dataset.ciudad===ciudad)
+      && (!comuna||tr.dataset.comuna===comuna);
     tr.style.display=vis?'':'none'; if(vis) shown++;
   });
-  const el=document.getElementById('vCount'); if(el) el.textContent=shown+' ventas';
+  const el=g('vCount'); if(el) el.textContent=shown+' ventas';
 }
 
 /* ---------- Init ---------- */
