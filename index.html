@@ -125,7 +125,7 @@
    ========================================================= */
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
-const ACCOUNTS = ['Santander','Link de pago','Efectivo','Transferencia','Otra'];
+const ACCOUNTS = ['Transferencia B. Santander Viet','Transferencia B. Estado C.F','Efectivo','Link de Pago'];
 const fmt = n => '$' + (Math.round(n||0)).toLocaleString('es-CL');
 const todayISO = () => new Date().toISOString().slice(0,10);
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
@@ -216,7 +216,8 @@ function seed(){
     ],
     adjustments: [],
     orders: [],
-    counter: { boleta: 92, factura: 12, oc: 0 }
+    quotes: [],
+    counter: { boleta: 92, factura: 12, oc: 0, pres: 0 }
   };
 }
 
@@ -233,16 +234,18 @@ async function bootData(){
   if(!data){
     // Primera vez: catálogo real de productos, sin datos de demo.
     data = seed();
-    data.clients=[]; data.sales=[]; data.purchases=[]; data.orders=[]; data.adjustments=[]; data.users=[];
-    data.counter={boleta:92, factura:12, oc:0};
+    data.clients=[]; data.sales=[]; data.purchases=[]; data.orders=[]; data.adjustments=[]; data.users=[]; data.quotes=[];
+    data.counter={boleta:92, factura:12, oc:0, pres:0};
     if(window.FB) await FB.setData(data);
   }
   DB = data;
   if(!DB.orders) DB.orders=[];
   if(!DB.users) DB.users=[];
   if(!DB.adjustments) DB.adjustments=[];
-  if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0};
+  if(!DB.quotes) DB.quotes=[];
+  if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
+  if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
 }
 
 /* ---------- Helpers de negocio ---------- */
@@ -250,7 +253,8 @@ const productById = id => DB.products.find(p=>p.id===id);
 const clientById = id => DB.clients.find(c=>c.id===id);
 const productName = p => `${p.modelo} ${p.tamano!=='Único'?p.tamano:''} ${p.color!=='Natural'?'· '+p.color:''}`.replace(/\s+/g,' ').trim();
 const lineTotal = i => i.cantidad*i.precio*(1-(i.descuento||0)/100);
-const saleTotal = s => s.items.reduce((a,i)=>a+lineTotal(i),0);
+const saleSubtotal = s => s.items.reduce((a,i)=>a+lineTotal(i),0);   // solo productos (con descuentos)
+const saleTotal = s => saleSubtotal(s) + (s.costoEnvio||0);          // total que paga el cliente: productos + envío
 const saleCost  = s => s.items.reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
 // Nombre limpio de un item: usa el catálogo y, si no, limpia la descripción (quita "xN" duplicado).
 const itemLabel = i => { const p=productById(i.productId); return p?productName(p):String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim(); };
@@ -272,7 +276,9 @@ function clientBalance(clientId){
 /* ---------- Auth & layout ---------- */
 const NAV = [
   {id:'dashboard', label:'Dashboard', roles:['admin','vendedor','bodega'], icon:'M3 12l9-9 9 9M5 10v10h14V10'},
+  {id:'presupuestos', label:'Presupuestos', roles:['admin','vendedor'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6'},
   {id:'ventas',    label:'Ventas',    roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
+  {id:'reportes',  label:'Reportes',  roles:['admin','vendedor'], icon:'M3 3v18h18M8 16V9M13 16V5M18 16v-4'},
   {id:'despachos', label:'Despachos', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'calendario', label:'Calendario', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
   {id:'clientes',  label:'Clientes', roles:['admin','vendedor'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87'},
@@ -303,7 +309,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; rerender(); });
     showApp();
   });
 }
@@ -341,15 +347,16 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',ventas:'Ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',usuarios:'Usuarios'};
+  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Ventas',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({dashboard:renderDashboard,ventas:renderVentas,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,usuarios:renderUsuarios})[view]();
+  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
   if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nueva venta');
+  if(view==='presupuestos' && SESSION.rol!=='bodega') return btn('openQuote()','Nuevo presupuesto');
   if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
   if(view==='usuarios' && SESSION.rol==='admin') return btn('openUsuario()','Nuevo usuario');
@@ -390,7 +397,7 @@ function renderDashboard(){
   const porCobrar = DB.sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
   const stockBajo = DB.products.filter(p=>stockOf(p.id)<=p.stockMin);
   const despPend  = DB.sales.filter(s=>s.estadoDespacho!=='entregado');
-  const margenMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleTotal(s)-saleCost(s),0);
+  const margenMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0);
   const docsPend = DB.sales.filter(s=>s.docTipo==='pendiente');
 
   const v=document.getElementById('view');
@@ -442,6 +449,295 @@ function drawChart(id,type,labels,data,color,horizontal){
       scales:type==='doughnut'?{}:{y:{ticks:{callback:v=>'$'+(v/1000)+'k',font:{size:10}},grid:{color:'#e6ece7'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}});
 }
 
+/* ===================== REPORTES ===================== */
+let REP={preset:'mes', from:'', to:'', sort:'cantidad'};
+function repIso(d){const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const da=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${da}`;}
+function repRange(){
+  const t=new Date(); t.setHours(0,0,0,0); const today=repIso(t);
+  if(REP.preset==='hoy') return [today,today];
+  if(REP.preset==='semana'){ const day=(t.getDay()+6)%7; const mon=new Date(t); mon.setDate(t.getDate()-day); return [repIso(mon),today]; }
+  if(REP.preset==='mes') return [repIso(new Date(t.getFullYear(),t.getMonth(),1)),today];
+  if(REP.preset==='anio') return [repIso(new Date(t.getFullYear(),0,1)),today];
+  if(REP.preset==='personalizado') return [REP.from||today, REP.to||today];
+  return ['0000-01-01','9999-12-31'];
+}
+function setRepPreset(p){ REP.preset=p; if(p==='personalizado' && (!REP.from||!REP.to)){ const t=new Date(); REP.from=repIso(new Date(t.getFullYear(),t.getMonth(),1)); REP.to=repIso(t); } renderReportes(); }
+function setRepFrom(v){ REP.from=v; renderReportes(); }
+function setRepTo(v){ REP.to=v; renderReportes(); }
+function setRepSort(v){ REP.sort=v; renderReportes(); }
+function repData(){
+  const [from,to]=repRange();
+  const sales=DB.sales.filter(s=>s.fecha>=from && s.fecha<=to);
+  const byProd={};
+  sales.forEach(s=>s.items.forEach(i=>{const k=i.productId||i.descripcion; if(!byProd[k])byProd[k]={pid:i.productId,desc:i.descripcion,cant:0,monto:0}; byProd[k].cant+=i.cantidad; byProd[k].monto+=lineTotal(i);}));
+  let top=Object.values(byProd); top.sort((a,b)=> REP.sort==='monto'? b.monto-a.monto : b.cant-a.cant);
+  return {from,to,sales,top,
+    nVentas:sales.length,
+    unidades:sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0),
+    ingresos:sales.reduce((a,s)=>a+saleSubtotal(s),0),
+    margen:sales.reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0),
+    envios:sales.reduce((a,s)=>a+(s.costoEnvio||0),0),
+    porCobrar:sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0)};
+}
+function repName(r){const p=r.pid?productById(r.pid):null; return p?productName(p):(r.desc||'(producto)');}
+function renderReportes(){
+  const v=document.getElementById('view');
+  const d=repData();
+  const ticket=d.nVentas?Math.round(d.ingresos/d.nVentas):0;
+  const masV=d.top[0];
+  const span=Math.round((new Date(d.to)-new Date(d.from))/86400000);
+  const byMonth=span>62;
+  const buckets={}; d.sales.forEach(s=>{const k=byMonth? s.fecha.slice(0,7): s.fecha; buckets[k]=(buckets[k]||0)+saleSubtotal(s);});
+  const bk=Object.keys(buckets).sort();
+  const vietN=d.sales.filter(s=>tipoDespachoOf(s)==='Viet').length;
+  const franN=d.sales.filter(s=>tipoDespachoOf(s)==='Fran').length;
+  const presetBtn=(p,l)=>`<button onclick="setRepPreset('${p}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${REP.preset===p?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${l}</button>`;
+  v.innerHTML=`
+  <div class="card p-4 mb-6">
+    <div class="flex flex-wrap items-center gap-2">
+      ${presetBtn('hoy','Hoy')}${presetBtn('semana','Esta semana')}${presetBtn('mes','Este mes')}${presetBtn('anio','Este año')}${presetBtn('todo','Total')}${presetBtn('personalizado','Personalizado')}
+      ${REP.preset==='personalizado'?`<div class="flex items-center gap-2"><input type="date" value="${REP.from}" onchange="setRepFrom(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"><span class="text-clay-400 text-sm">a</span><input type="date" value="${REP.to}" onchange="setRepTo(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"></div>`:''}
+      <div class="ml-auto flex items-center gap-3">
+        <span class="text-sm text-clay-500 hidden sm:inline">${d.from} → ${d.to}</span>
+        <button onclick="downloadReportePDF()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>PDF</button>
+      </div>
+    </div>
+  </div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Ventas (productos)',fmt(d.ingresos),'Ticket prom. '+fmt(ticket),'text-clay-800')}
+    ${statCard('Margen estimado',fmt(d.margen),d.ingresos?Math.round(d.margen/d.ingresos*100)+'% sobre ventas':'','text-sage-600')}
+    ${statCard('Unidades vendidas',d.unidades,d.nVentas+' venta'+(d.nVentas!==1?'s':''),'')}
+    ${statCard('Envíos cobrados',fmt(d.envios),'Por cobrar '+fmt(d.porCobrar),'')}
+  </div>
+  ${d.nVentas===0?`<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">📊</div>No hay ventas en este período. Prueba con otro rango.</div>`:`
+  <div class="grid lg:grid-cols-3 gap-4 items-start mb-4">
+    <div class="card p-5 lg:col-span-2">
+      <div class="font-semibold mb-3">Ventas por ${byMonth?'mes':'día'}</div>
+      <canvas id="chRep" height="110"></canvas>
+    </div>
+    <div class="card p-5">
+      <div class="text-sm text-clay-500">🏆 Producto más vendido</div>
+      <div class="text-lg font-bold mt-1">${masV?repName(masV):'—'}</div>
+      ${masV?`<div class="text-sm text-clay-500 mt-1">${masV.cant} unidades · ${fmt(masV.monto)}</div>`:''}
+      <div class="border-t border-clay-100 mt-4 pt-3 text-xs text-clay-400">Despachos: Viet ${vietN} · Fran ${franN}</div>
+    </div>
+  </div>
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
+      <div class="font-semibold">Productos vendidos en el período</div>
+      <div class="flex items-center gap-2 text-sm"><span class="text-clay-400">Ordenar por:</span>
+        <select onchange="setRepSort(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 bg-white"><option value="cantidad" ${REP.sort==='cantidad'?'selected':''}>Cantidad</option><option value="monto" ${REP.sort==='monto'?'selected':''}>Monto ($)</option></select>
+      </div>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">#</th><th class="text-left px-3 py-3">Producto</th><th class="text-right px-3 py-3">Unidades</th><th class="text-right px-5 py-3">Monto</th></tr></thead><tbody>
+    ${d.top.map((r,ix)=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-2.5 text-clay-400">${ix+1}</td>
+      <td class="px-3 py-2.5 font-medium">${repName(r)}</td>
+      <td class="px-3 py-2.5 text-right font-semibold">${r.cant}</td>
+      <td class="px-5 py-2.5 text-right">${fmt(r.monto)}</td>
+    </tr>`).join('')}
+    </tbody>
+    <tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-5 py-2.5 font-semibold" colspan="2">Total</td><td class="px-3 py-2.5 text-right font-bold">${d.unidades}</td><td class="px-5 py-2.5 text-right font-bold">${fmt(d.ingresos)}</td></tr></tfoot>
+    </table></div>
+  </div>`}
+  `;
+  if(d.nVentas>0) drawChart('chRep','bar',bk,bk.map(k=>buckets[k]),'#496150');
+}
+function downloadReportePDF(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
+  const d=repData();
+  const { jsPDF }=window.jspdf; const doc=new jsPDF();
+  doc.setFillColor(35,51,42); doc.rect(0,0,210,30,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('Viet Pottery — Reporte de ventas',14,14);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(167,189,170); doc.text('Período: '+d.from+'  a  '+d.to,14,22);
+  doc.setTextColor(35,51,42); let y=42;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Resumen',14,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  y+=7; doc.text('N° de ventas: '+d.nVentas,14,y);
+  y+=6; doc.text('Unidades vendidas: '+d.unidades,14,y);
+  y+=6; doc.text('Ventas (productos): '+fmt(d.ingresos),14,y);
+  y+=6; doc.text('Margen estimado: '+fmt(d.margen)+(d.ingresos?'  ('+Math.round(d.margen/d.ingresos*100)+'%)':''),14,y);
+  y+=6; doc.text('Envíos cobrados: '+fmt(d.envios),14,y);
+  doc.autoTable({
+    startY:y+8,
+    head:[['#','Producto','Unidades','Monto']],
+    body:d.top.map((r,ix)=>[String(ix+1), repName(r), String(r.cant), fmt(r.monto)]),
+    styles:{fontSize:9,cellPadding:3,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
+    columnStyles:{0:{cellWidth:14},2:{halign:'right'},3:{halign:'right'}},
+    margin:{left:14,right:14}
+  });
+  doc.save('reporte-ventas-'+d.from+'_a_'+d.to+'.pdf');
+}
+
+/* ===================== PRESUPUESTOS (cotizaciones) ===================== */
+let CONVERT_QUOTE_ID=null;
+function quoteEstadoPill(e){ return e==='ganado'?pill('Ganado','green'):e==='perdido'?pill('Perdido','gray'):pill('Cotizando','amber'); }
+function renderPresupuestos(){
+  if(!DB.quotes) DB.quotes=[];
+  const v=document.getElementById('view');
+  const quotes=[...DB.quotes].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const abiertos=quotes.filter(q=>q.estado==='abierto');
+  const ganados=quotes.filter(q=>q.estado==='ganado').length;
+  const perdidos=quotes.filter(q=>q.estado==='perdido').length;
+  const montoAbierto=abiertos.reduce((a,q)=>a+saleTotal(q),0);
+  const conv=(ganados+perdidos)>0?Math.round(ganados/(ganados+perdidos)*100):0;
+  const puede=SESSION.rol!=='bodega';
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Cotizando',abiertos.length,fmt(montoAbierto)+' en juego','text-amber-600')}
+    ${statCard('Ganados',ganados,'convertidos a venta','text-sage-600')}
+    ${statCard('Perdidos',perdidos,'','')}
+    ${statCard('Tasa de conversión',conv+'%','de los presupuestos cerrados','')}
+  </div>
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100">
+      <div class="font-semibold">Presupuestos / cotizaciones</div><div class="text-xs text-clay-400">No afectan el stock. Cuando el cliente confirma y paga, conviértelo en venta (ahí se descuenta stock).</div>
+    </div>
+    ${quotes.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">N°</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
+    ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-3 font-semibold whitespace-nowrap">${q.numero||'—'}</td>
+      <td class="px-3 py-3 whitespace-nowrap text-clay-500">${q.fecha||''}</td>
+      <td class="px-3 py-3 font-medium">${q.clienteNombre||'—'}</td>
+      <td class="px-3 py-3 text-clay-600 text-xs">${q.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join('<br>')}</td>
+      <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(q))}</td>
+      <td class="px-3 py-3 whitespace-nowrap">${quoteEstadoPill(q.estado)}</td>
+      <td class="px-5 py-3 text-right whitespace-nowrap">
+        <button onclick="downloadQuotePDF('${q.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1">PDF</button>
+        ${puede&&q.estado==='abierto'?`<button onclick="convertirPresupuesto('${q.id}')" class="text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2.5 py-1.5 rounded-lg mr-1">Convertir a venta</button><button onclick="openQuote('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Editar</button><button onclick="marcarPerdido('${q.id}')" class="text-clay-400 hover:text-red-600 text-xs px-1.5">Perdido</button>`:''}
+        ${q.estado==='perdido'?`<button onclick="reabrirPresupuesto('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Reabrir</button>`:''}
+        ${q.estado==='ganado'?`<span class="text-xs text-sage-600">✓ vendido</span>`:''}
+      </td>
+    </tr>`).join('')}
+    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
+  </div>`;
+}
+function openQuote(id){
+  CONVERT_QUOTE_ID=null;
+  if(!DB.quotes) DB.quotes=[];
+  const q=id?DB.quotes.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaValidez:'',clienteNombre:'',telefono:'',email:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],costoEnvio:0,ciudad:'',comuna:'',direccion:'',tipoDespacho:'Viet',notas:'',estado:'abierto'};
+  EDIT=JSON.parse(JSON.stringify(q));
+  renderQuoteModal();
+}
+function renderQuoteModal(){
+  const s=EDIT;
+  const clientList=DB.clients.map(c=>`<option value="${c.nombre.replace(/"/g,'&quot;')}">`).join('');
+  const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${s.id?'Editar presupuesto '+(s.numero||''):'Nuevo presupuesto'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div><label class="text-sm font-medium">Cliente</label>
+        <input id="s_cli" list="clientList" value="${(s.clienteNombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre del cliente o referencia" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">
+        <datalist id="clientList">${clientList}</datalist></div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-xs text-clay-500">Celular (opcional)</label><input id="s_cli_tel" value="${(s.telefono||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-xs text-clay-500">Email (opcional)</label><input id="s_cli_email" value="${(s.email||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Fecha</label><input id="s_fecha" type="date" value="${s.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Válido hasta (opcional)</label><input id="s_validez" type="date" value="${s.fechaValidez||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos cotizados</label>
+          <button onclick="addSaleItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div class="hidden sm:grid grid-cols-12 gap-2 text-xs font-medium text-clay-400 px-2.5 mb-1">
+          <div class="col-span-5">Producto</div><div class="col-span-2 text-center">Cantidad</div><div class="col-span-2 text-right">Precio</div><div class="col-span-2 text-right">Descuento</div><div class="col-span-1"></div>
+        </div>
+        <div class="space-y-2" id="s_items">${s.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('')}</div>
+        <div class="text-xs text-clay-400 mt-1.5">Los precios vienen del catálogo (con IVA) y son editables; el descuento % se aplica al instante.</div>
+      </div>
+      <div class="bg-clay-50 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-2"><div class="text-sm font-semibold">Despacho (referencial)</div>
+          <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5">
+            <button type="button" onclick="setSaleTipoDesp('Viet')" id="td_viet" class="px-3 py-1 rounded-md text-xs font-medium ${(s.tipoDespacho||'Viet')==='Viet'?'bg-sage-500 text-white':'text-clay-600'}">Despacho Viet</button>
+            <button type="button" onclick="setSaleTipoDesp('Fran')" id="td_fran" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Fran'?'bg-blue-500 text-white':'text-clay-600'}">Despacho Fran</button>
+          </div>
+        </div>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <div><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
+          <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio||0}" oninput="onSaleEnvio(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        </div>
+        <div class="mt-3"><label class="text-xs text-clay-500">Dirección (opcional)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${(s.notas||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="bg-clay-50 rounded-xl p-4">
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen de la cotización</div>
+        <div class="flex justify-between text-sm mb-1.5"><span class="text-clay-500">Subtotal productos</span><span id="s_sumprod" class="font-medium">${fmt(saleSubtotal(s))}</span></div>
+        <div class="flex justify-between text-sm mb-2"><span class="text-clay-500">Envío</span><span id="s_sumenvio" class="font-medium">${fmt(s.costoEnvio||0)}</span></div>
+        <div class="flex justify-between items-center border-t border-clay-200 pt-2"><span class="font-semibold">Total (con IVA)</span><span id="s_sumtotal" class="text-xl font-bold text-clay-800">${fmt(saleTotal(s))}</span></div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <div class="text-sm">${s.id?`<button onclick="downloadQuotePDF('${s.id}')" class="text-clay-600 hover:text-clay-900">Descargar PDF</button>${SESSION.rol==='admin'?` · <button onclick="deleteQuote('${s.id}')" class="text-red-600">Eliminar</button>`:''}`:''}</div>
+      <div class="flex items-center gap-4"><div class="text-right"><div class="text-xs text-clay-400">Total</div><div id="s_total" class="text-xl font-bold">${fmt(saleTotal(s))}</div></div><button onclick="saveQuote()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar presupuesto</button></div>
+    </div>
+  `);
+}
+function saveQuote(){
+  syncSaleFromForm();
+  EDIT.telefono=(document.getElementById('s_cli_tel')?.value||'').trim();
+  EDIT.email=(document.getElementById('s_cli_email')?.value||'').trim();
+  if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente o una referencia');return;}
+  if(!DB.quotes) DB.quotes=[];
+  if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
+  if(EDIT.id){const ix=DB.quotes.findIndex(q=>q.id===EDIT.id);DB.quotes[ix]=EDIT;}
+  else{ DB.counter.pres++; EDIT.numero='PRE-'+String(DB.counter.pres).padStart(4,'0'); EDIT.id=uid('q'); EDIT.estado='abierto'; DB.quotes.push(EDIT); }
+  save();closeModal();go('presupuestos');
+}
+function convertirPresupuesto(qid){
+  const q=DB.quotes.find(x=>x.id===qid); if(!q) return;
+  CONVERT_QUOTE_ID=qid;
+  EDIT={id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:q.clienteNombre||'',clienteTel:q.telefono||'',clienteEmail:q.email||'',
+        items:JSON.parse(JSON.stringify(q.items)),cuenta:ACCOUNTS[0],pagado:true,docTipo:'pendiente',docNumero:'',
+        ciudad:q.ciudad||'Santiago',comuna:q.comuna||'',direccion:q.direccion||'',estadoDespacho:'pendiente',tipoDespacho:q.tipoDespacho||'Viet',courier:'',costoEnvio:q.costoEnvio||0,notas:q.notas||''};
+  renderSaleModal();
+}
+function marcarPerdido(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;if(!confirm('¿Marcar el presupuesto '+(q.numero||'')+' como perdido?'))return;q.estado='perdido';save();go('presupuestos');}
+function reabrirPresupuesto(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;q.estado='abierto';save();go('presupuestos');}
+function deleteQuote(id){if(!confirm('¿Eliminar este presupuesto?'))return;DB.quotes=(DB.quotes||[]).filter(q=>q.id!==id);save();closeModal();go('presupuestos');}
+function downloadQuotePDF(id){
+  const q=DB.quotes.find(x=>x.id===id); if(!q) return;
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
+  const { jsPDF }=window.jspdf; const doc=new jsPDF();
+  const sub=saleSubtotal(q); const envio=q.costoEnvio||0; const total=sub+envio;
+  const neto=Math.round(total/1.19); const iva=total-neto;
+  doc.setFillColor(35,51,42); doc.rect(0,0,210,34,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.text('Viet Pottery',14,18);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text('Maceteros con alma',14,25);
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('COTIZACIÓN',196,16,{align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(q.numero||'',196,23,{align:'right'});
+  doc.setFontSize(9); doc.text('Fecha: '+(q.fecha||''),196,29,{align:'right'});
+  doc.setTextColor(35,51,42); doc.setFontSize(10);
+  doc.setFont('helvetica','bold'); doc.text('Cliente',14,46); doc.setFont('helvetica','normal'); doc.text(q.clienteNombre||'-',14,52);
+  if(q.fechaValidez){ doc.setFont('helvetica','bold'); doc.text('Válido hasta',140,46); doc.setFont('helvetica','normal'); doc.text(q.fechaValidez,140,52); }
+  doc.autoTable({
+    startY:60,
+    head:[['Producto','Cant.','Precio','Dcto','Subtotal']],
+    body:q.items.map(i=>{const p=productById(i.productId); return [p?productName(p):(i.descripcion||'-'), String(i.cantidad), fmt(i.precio), (i.descuento||0)+'%', fmt(lineTotal(i))];}),
+    styles:{fontSize:9,cellPadding:3,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
+    alternateRowStyles:{fillColor:[244,247,244]},
+    columnStyles:{1:{halign:'center'},2:{halign:'right'},3:{halign:'center'},4:{halign:'right'}},
+    margin:{left:14,right:14}
+  });
+  let y=doc.lastAutoTable.finalY+10;
+  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Valores en pesos chilenos, IVA incluido.',14,y+2);
+  doc.setTextColor(35,51,42); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  if(envio>0){ doc.text('Envío',150,y); doc.text(fmt(envio),196,y,{align:'right'}); y+=6; }
+  doc.text('Neto',150,y); doc.text(fmt(neto),196,y,{align:'right'});
+  y+=6; doc.text('IVA (19%)',150,y); doc.text(fmt(iva),196,y,{align:'right'});
+  y+=7; doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(58,78,64); doc.text('Total',150,y); doc.text(fmt(total),196,y,{align:'right'}); doc.setFont('helvetica','normal'); doc.setTextColor(35,51,42);
+  if(q.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+q.notas,182),14,y); }
+  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Cotización generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
+  doc.save('cotizacion-'+(q.numero||'viet-pottery')+'.pdf');
+}
+
 /* ===================== VENTAS ===================== */
 function renderVentas(){
   const v=document.getElementById('view');
@@ -480,7 +776,7 @@ function renderVentas(){
           <td class="px-4 py-3">${dispPill(s)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            ${SESSION.rol!=='bodega'?`<button onclick="openConfirmacion('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5">Editar</button>`:''}
+            ${SESSION.rol!=='bodega'?`${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5">Editar</button>`:''}
           </td></tr>`;}).join('')}
         </tbody>
       </table>
@@ -489,7 +785,8 @@ function renderVentas(){
 }
 
 function openSale(id){
-  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,notas:''};
+  CONVERT_QUOTE_ID=null;
+  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:ACCOUNTS[0],pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,notas:''};
   EDIT = JSON.parse(JSON.stringify(s));
   renderSaleModal();
 }
@@ -498,8 +795,8 @@ function renderSaleModal(){
   const s=EDIT;
   const cliObj = clientById(s.clienteId);
   const clientName = s.clienteNombre || (cliObj?.nombre) || '';
-  const cliTel = cliObj?.telefono || '';
-  const cliEmail = cliObj?.email || '';
+  const cliTel = cliObj?.telefono || s.clienteTel || '';
+  const cliEmail = cliObj?.email || s.clienteEmail || '';
   const clientList=DB.clients.map(c=>`<option value="${c.nombre.replace(/"/g,'&quot;')}">`).join('');
   const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');
   const total=saleTotal(s);
@@ -561,10 +858,16 @@ function renderSaleModal(){
           <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
           <div><label class="text-xs text-clay-500">Courier</label><input id="s_courier" value="${s.courier}" placeholder="Starken, Pullman..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio}" oninput="onSaleEnvio(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
         </div>
       </div>
       <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="bg-clay-50 rounded-xl p-4">
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen del pedido</div>
+        <div class="flex justify-between text-sm mb-1.5"><span class="text-clay-500">Subtotal productos</span><span id="s_sumprod" class="font-medium">${fmt(saleSubtotal(s))}</span></div>
+        <div class="flex justify-between text-sm mb-2"><span class="text-clay-500">Envío</span><span id="s_sumenvio" class="font-medium">${fmt(s.costoEnvio||0)}</span></div>
+        <div class="flex justify-between items-center border-t border-clay-200 pt-2"><span class="font-semibold">Total a pagar</span><span id="s_sumtotal" class="text-xl font-bold text-clay-800">${fmt(saleTotal(s))}</span></div>
+      </div>
     </div>
     <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
       <div>${s.id&&SESSION.rol==='admin'?`<button onclick="deleteSale('${s.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
@@ -594,20 +897,22 @@ function lineSubHtml(it){
     : `<span class="text-clay-400">Subtotal línea: <b class="text-clay-600">${fmt(sub)}</b></span>`;
 }
 function syncSaleFromForm(){
-  EDIT.clienteNombre=document.getElementById('s_cli').value.trim();
-  EDIT.fecha=document.getElementById('s_fecha').value;
-  EDIT.fechaEntrega=document.getElementById('s_entrega').value;
-  EDIT.cuenta=document.getElementById('s_cuenta').value;
-  EDIT.pagado=document.getElementById('s_pagado').value==='true';
-  EDIT.docTipo=document.getElementById('s_doc').value;
-  EDIT.docNumero=document.getElementById('s_docnum').value;
-  EDIT.ciudad=document.getElementById('s_ciudad').value.trim();
-  EDIT.comuna=document.getElementById('s_comuna').value.trim();
-  EDIT.direccion=document.getElementById('s_dir').value;
-  EDIT.estadoDespacho=document.getElementById('s_disp').value;
-  EDIT.courier=document.getElementById('s_courier').value;
-  EDIT.costoEnvio=+document.getElementById('s_envio').value||0;
-  EDIT.notas=document.getElementById('s_notas').value;
+  const g=id=>document.getElementById(id);
+  if(g('s_cli')) EDIT.clienteNombre=g('s_cli').value.trim();
+  if(g('s_fecha')) EDIT.fecha=g('s_fecha').value;
+  if(g('s_entrega')) EDIT.fechaEntrega=g('s_entrega').value;
+  if(g('s_validez')) EDIT.fechaValidez=g('s_validez').value;
+  if(g('s_cuenta')) EDIT.cuenta=g('s_cuenta').value;
+  if(g('s_pagado')) EDIT.pagado=g('s_pagado').value==='true';
+  if(g('s_doc')) EDIT.docTipo=g('s_doc').value;
+  if(g('s_docnum')) EDIT.docNumero=g('s_docnum').value;
+  if(g('s_ciudad')) EDIT.ciudad=g('s_ciudad').value.trim();
+  if(g('s_comuna')) EDIT.comuna=g('s_comuna').value.trim();
+  if(g('s_dir')) EDIT.direccion=g('s_dir').value;
+  if(g('s_disp')) EDIT.estadoDespacho=g('s_disp').value;
+  if(g('s_courier')) EDIT.courier=g('s_courier').value;
+  if(g('s_envio')) EDIT.costoEnvio=+g('s_envio').value||0;
+  if(g('s_notas')) EDIT.notas=g('s_notas').value;
 }
 // Busca un cliente por nombre (sin distinguir mayúsculas) o lo crea automáticamente.
 // Si el cliente ya existe, completa los datos que estén vacíos con lo ingresado.
@@ -639,7 +944,15 @@ function setSaleTipoDesp(t){
 }
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
 function refreshSaleItems(){const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
-function updateSaleTotal(){document.getElementById('s_total').textContent=fmt(saleTotal(EDIT));}
+function onSaleEnvio(v){ EDIT.costoEnvio=+v||0; updateSaleTotal(); }
+function updateSaleTotal(){
+  const sub=saleSubtotal(EDIT), env=EDIT.costoEnvio||0, tot=sub+env;
+  const set=(id,val)=>{const e=document.getElementById(id); if(e) e.textContent=val;};
+  set('s_total',fmt(tot));
+  set('s_sumprod',fmt(sub));
+  set('s_sumenvio',fmt(env));
+  set('s_sumtotal',fmt(tot));
+}
 function saveSale(){
   syncSaleFromForm();
   if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
@@ -655,6 +968,7 @@ function saveSale(){
     if(EDIT.docTipo==='boleta'&&!EDIT.docNumero){DB.counter.boleta++;EDIT.docNumero=String(DB.counter.boleta);}
     if(EDIT.docTipo==='factura'&&!EDIT.docNumero){DB.counter.factura++;EDIT.docNumero=String(DB.counter.factura);}
     DB.sales.push(EDIT);
+    if(CONVERT_QUOTE_ID){ const q=(DB.quotes||[]).find(x=>x.id===CONVERT_QUOTE_ID); if(q){ q.estado='ganado'; q.ventaId=EDIT.id; } CONVERT_QUOTE_ID=null; }
   }
   const sid=EDIT.id;
   save();closeModal();go(CURRENT==='despachos'?'despachos':'ventas');
@@ -662,11 +976,64 @@ function saveSale(){
 }
 function deleteSale(id){if(!confirm('¿Eliminar esta venta?'))return;DB.sales=DB.sales.filter(s=>s.id!==id);save();closeModal();go('ventas');}
 
+/* ----- Asistente de emisión en el portal gratuito del SII (sin manejar credenciales) ----- */
+function openEmitirSII(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const total=saleTotal(s);
+  const neto=Math.round(total/1.19);
+  const iva=total-neto;
+  window.__emitirMonto=total;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><div><h3 class="text-lg font-bold">Emitir documento en SII</h3><div class="text-xs text-clay-400">${nombre}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
+    <div class="p-5 space-y-4">
+      <ol class="text-sm text-clay-600 list-decimal pl-5 space-y-1">
+        <li>Copia el monto total de la venta.</li>
+        <li>Abre el portal del SII y emite la boleta con ese monto.</li>
+        <li>Vuelve aquí y pega el <b>N° de folio</b> que te entregó el SII para dejarla registrada.</li>
+      </ol>
+      <div class="bg-clay-50 rounded-xl p-4 text-center">
+        <div class="text-xs text-clay-500">Monto a emitir (total con IVA)</div>
+        <div class="text-3xl font-bold text-clay-800 my-1">${fmt(total)}</div>
+        <div class="text-xs text-clay-400">Neto ${fmt(neto)} · IVA 19% ${fmt(iva)}</div>
+        <div class="flex gap-2 mt-3">
+          <button id="emitir_copybtn" onclick="copyEmitir()" class="flex-1 border border-clay-200 hover:bg-white text-clay-700 text-sm font-medium px-3 py-2 rounded-xl bg-white">Copiar monto</button>
+          <a href="https://eboleta.sii.cl/emitir/" target="_blank" rel="noopener" class="flex-1 text-center bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 py-2 rounded-xl">Abrir portal SII ↗</a>
+        </div>
+      </div>
+      <div class="text-xs text-clay-400">Solo se copia el monto, no los datos del cliente. Tu certificado y tus claves del SII quedan solo en el portal; la plataforma nunca los maneja.</div>
+      <div class="bg-clay-50 rounded-xl p-4">
+        <div class="text-sm font-semibold mb-2">Registrar el documento emitido</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-clay-500">Tipo</label><select id="emitir_tipo" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="boleta" ${s.docTipo!=='factura'?'selected':''}>Boleta</option><option value="factura" ${s.docTipo==='factura'?'selected':''}>Factura</option></select></div>
+          <div><label class="text-xs text-clay-500">N° de folio (del SII)</label><input id="emitir_folio" value="${(s.docNumero||'').replace(/"/g,'&quot;')}" placeholder="Ej: 1045" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        </div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cerrar</button><button onclick="saveFolio('${s.id}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar folio</button></div>
+  `);
+}
+function copyEmitir(){
+  const val=String(window.__emitirMonto||'');
+  const done=()=>{const b=document.getElementById('emitir_copybtn'); if(b){const o=b.textContent;b.textContent='¡Copiado! ✓';setTimeout(()=>b.textContent=o,1500);}};
+  const fallback=()=>{const t=document.createElement('textarea');t.value=val;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();};
+  if(navigator.clipboard){ navigator.clipboard.writeText(val).then(done).catch(fallback); } else fallback();
+}
+function saveFolio(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const folio=document.getElementById('emitir_folio').value.trim();
+  const tipo=document.getElementById('emitir_tipo').value;
+  if(!folio){ alert('Pega el N° de folio que te entregó el SII para registrarlo.'); return; }
+  s.docTipo=tipo; s.docNumero=folio;
+  save(); closeModal(); go(CURRENT==='cobranzas'?'cobranzas':'ventas');
+}
+
 /* ----- Comprobante de compra (imagen descargable para el cliente) ----- */
 function comprobanteHTML(s){
   const c=clientById(s.clienteId);
   const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
-  const subtotal=saleTotal(s);
+  const subtotal=saleSubtotal(s);
   const envio=s.costoEnvio||0;
   const total=subtotal+envio;
   const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
@@ -774,6 +1141,47 @@ function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fD
 let CAL=null; // {y, m}
 function calNav(delta){ if(!CAL){const n=new Date();CAL={y:n.getFullYear(),m:n.getMonth()};} let m=CAL.m+delta, y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={y,m}; renderCalendario(); }
 function calToday(){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; renderCalendario(); }
+function generateHojaRuta(fecha){
+  if(!fecha){ alert('Elige un día para la hoja de ruta.'); return; }
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión.'); return; }
+  const ventas=DB.sales.filter(s=>s.fechaEntrega===fecha && s.estadoDespacho!=='entregado')
+    .sort((a,b)=> (a.ciudad||'').localeCompare(b.ciudad||'') || (a.comuna||'').localeCompare(b.comuna||'') );
+  if(ventas.length===0){ alert('No hay entregas pendientes para el '+fecha+'.'); return; }
+  const totalUnidades=ventas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const comunas=[...new Set(ventas.map(s=>s.comuna||s.ciudad).filter(Boolean))];
+  const { jsPDF }=window.jspdf; const doc=new jsPDF();
+  doc.autoTable({
+    startY:34,
+    head:[['✓','Cliente','Ciudad / Comuna','Dirección','Productos','Tipo']],
+    body:ventas.map(s=>{
+      const c=clientById(s.clienteId);
+      const nom=(c?c.nombre:(s.clienteNombre||'—'))+((c&&c.telefono)?'\n'+c.telefono:'');
+      const lugar=[s.ciudad,s.comuna].filter(Boolean).join('\n')||'-';
+      const prods=s.items.map(i=>i.cantidad+'x '+itemLabel(i)).join('\n');
+      return ['', nom, lugar, s.direccion||'-', prods, tipoDespachoOf(s)];
+    }),
+    styles:{fontSize:9,cellPadding:3,valign:'top',lineColor:[210,216,205],lineWidth:0.2,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],halign:'left'},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{0:{cellWidth:9,halign:'center'},1:{cellWidth:35},2:{cellWidth:28},3:{cellWidth:42},5:{cellWidth:14,halign:'center'}},
+    margin:{top:32,left:10,right:10},
+    didDrawCell:(data)=>{ if(data.section==='body' && data.column.index===0){ doc.setDrawColor(120,120,120); doc.setLineWidth(0.3); doc.rect(data.cell.x+2.5, data.cell.y+2.5, 4.5, 4.5); } },
+    didDrawPage:()=>{
+      doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Hoja de ruta',14,12);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170);
+      doc.text('Entregas del '+fecha+'   ·   '+ventas.length+' paradas   ·   '+totalUnidades+' productos a repartir',14,20);
+    }
+  });
+  let y=doc.lastAutoTable.finalY+8;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(35,51,42);
+  doc.text('Total de productos a repartir: '+totalUnidades,14,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(93,120,96);
+  y+=6; doc.text('Paradas: '+ventas.length+'   ·   Comunas: '+(comunas.join(', ')||'-'),14,y);
+  doc.setFontSize(8); doc.setTextColor(150,150,150);
+  doc.text('Hoja de ruta generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
+  doc.save('hoja-de-ruta-'+fecha+'.pdf');
+}
 function renderCalendario(){
   if(!CAL){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; }
   const {y,m}=CAL;
@@ -807,6 +1215,12 @@ function renderCalendario(){
 
   const v=document.getElementById('view');
   v.innerHTML=`
+  <div class="card p-4 mb-4 flex flex-wrap items-center gap-2">
+    <div class="flex items-center gap-2"><span class="text-base">🚚</span><span class="text-sm font-semibold">Hoja de ruta del día</span></div>
+    <input type="date" id="rutaFecha" value="${todayISO()}" class="border border-clay-200 rounded-lg px-3 py-1.5 text-sm">
+    <button onclick="generateHojaRuta(document.getElementById('rutaFecha').value)" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-1.5 rounded-lg flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Generar PDF</button>
+    <span class="text-xs text-clay-400 hidden sm:inline">Imprime las entregas del día: cliente, comuna, dirección, productos y total a repartir.</span>
+  </div>
   <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
     <div class="flex items-center gap-2">
       <button onclick="calNav(-1)" class="w-9 h-9 rounded-lg border border-clay-200 hover:bg-clay-100">←</button>
@@ -1239,7 +1653,7 @@ function openOrder(id){
   EDITO=JSON.parse(JSON.stringify(o));renderOrderModal();
 }
 function renderOrderModal(){
-  const o=EDITO;const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
+  const o=EDITO;const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);const neto=Math.round(total/1.19);const iva=total-neto;
   const prodOpt=sel=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)}</option>`).join('');
   modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><h3 class="text-lg font-bold">${o.id?'Pedido '+o.numero:'Nuevo pedido a proveedor'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
   <div class="p-5 space-y-4">
@@ -1256,10 +1670,10 @@ function renderOrderModal(){
   </div>
   <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
     <div>${o.id&&SESSION.rol==='admin'?`<button onclick="deleteOrder('${o.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
-    <div class="flex items-center gap-4"><div class="text-right"><div class="text-xs text-clay-400">Total estimado</div><div id="o_total" class="text-xl font-bold">${fmt(total)}</div></div><button onclick="saveOrder(true)" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar y generar PDF</button></div>
+    <div class="flex items-center gap-4"><div class="text-right"><div class="text-[11px] text-clay-400">Neto <span id="o_neto">${fmt(neto)}</span> · IVA <span id="o_iva">${fmt(iva)}</span></div><div class="text-xs text-clay-400">Total con IVA</div><div id="o_total" class="text-xl font-bold">${fmt(total)}</div></div><button onclick="saveOrder(true)" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar y generar PDF</button></div>
   </div>`);
 }
-function oTotal(){document.getElementById('o_total').textContent=fmt(EDITO.items.reduce((a,i)=>a+i.cantidad*i.costo,0));}
+function oTotal(){const t=EDITO.items.reduce((a,i)=>a+i.cantidad*i.costo,0);const neto=Math.round(t/1.19);const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};set('o_total',fmt(t));set('o_neto',fmt(neto));set('o_iva',fmt(t-neto));}
 function addOItem(){syncO();const p=DB.products[0];EDITO.items.push({productId:p.id,cantidad:1,costo:p.costo});renderOrderModal();}
 function removeOItem(ix){if(EDITO.items.length<=1)return;syncO();EDITO.items.splice(ix,1);renderOrderModal();}
 function syncO(){EDITO.proveedor=val('o_prov');EDITO.fecha=val('o_fecha');EDITO.fechaEntrega=val('o_entrega');EDITO.notas=val('o_notas');}
@@ -1275,12 +1689,48 @@ function saveOrder(genPDF){
   if(genPDF) downloadOrderPDF(oid);
 }
 function deleteOrder(id){if(!confirm('¿Eliminar este pedido?'))return;DB.orders=DB.orders.filter(o=>o.id!==id);save();closeModal();go('compras');}
+let RECV=null;
 function recibirOrder(id){
   const o=DB.orders.find(x=>x.id===id); if(!o) return;
-  if(!confirm('¿Marcar el pedido '+o.numero+' como recibido? Esto sumará los productos al stock.')) return;
-  DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:o.proveedor,items:JSON.parse(JSON.stringify(o.items)),notas:'Recepción de '+o.numero});
-  o.estado='recibido';
-  save();go('compras');
+  RECV={id:o.id, numero:o.numero, proveedor:o.proveedor,
+        items:o.items.map(i=>({productId:i.productId, costo:i.costo, pedida:i.cantidad, recibida:i.cantidad}))};
+  renderRecvModal();
+}
+function recvItemRow(it,ix){
+  const p=productById(it.productId); const dif=(it.recibida||0)-it.pedida;
+  return `<div class="grid grid-cols-12 gap-2 items-center">
+    <div class="col-span-6 text-sm">${p?productName(p):'(producto)'}${p?` <span class="text-clay-400 text-xs">${p.sku}</span>`:''}</div>
+    <div class="col-span-3 text-center text-sm text-clay-500">${it.pedida}</div>
+    <div class="col-span-3"><input type="number" min="0" value="${it.recibida}" oninput="onRecvQty(${ix},this.value)" class="w-full border ${dif<0?'border-amber-400 bg-amber-50':'border-clay-200'} rounded-lg px-2 py-2 text-sm text-center"></div>
+  </div>`;
+}
+function renderRecvModal(){
+  const r=RECV;
+  const totalRecibido=r.items.reduce((a,i)=>a+(i.recibida||0)*i.costo,0);
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><div><h3 class="text-lg font-bold">Confirmar recepción · ${r.numero}</h3><div class="text-xs text-clay-400">${r.proveedor}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
+    <div class="p-5 space-y-4">
+      <div class="text-sm text-clay-600">Revisa lo que realmente llegó. Si recibiste menos (o más) de lo pedido, ajusta la cantidad. <b>Solo lo recibido se suma al stock.</b></div>
+      <div class="grid grid-cols-12 gap-2 text-xs font-medium text-clay-400 px-1"><div class="col-span-6">Producto</div><div class="col-span-3 text-center">Pedido</div><div class="col-span-3 text-center">Recibido</div></div>
+      <div class="space-y-2" id="recv_items">${r.items.map((it,ix)=>recvItemRow(it,ix)).join('')}</div>
+      <div><label class="text-sm font-medium">Nota (opcional)</label><input id="recv_nota" placeholder="Ej: faltaron 5 unidades, llegan la próxima semana" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <div class="text-right"><div class="text-xs text-clay-400">Recibido (a costo, con IVA)</div><div id="recv_total" class="text-lg font-bold text-clay-800">${fmt(totalRecibido)}</div></div>
+      <button onclick="confirmarRecepcion()" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Confirmar y sumar al stock</button>
+    </div>`);
+}
+function onRecvQty(ix,v){RECV.items[ix].recibida=Math.max(0,+v||0);const el=document.getElementById('recv_total');if(el)el.textContent=fmt(RECV.items.reduce((a,i)=>a+(i.recibida||0)*i.costo,0));}
+function confirmarRecepcion(){
+  const r=RECV; if(!r) return;
+  const items=r.items.filter(i=>(i.recibida||0)>0).map(i=>({productId:i.productId,cantidad:i.recibida,costo:i.costo}));
+  if(items.length===0){ alert('No marcaste ninguna unidad como recibida.'); return; }
+  const nota=(document.getElementById('recv_nota')?.value||'').trim();
+  const hayDif=r.items.some(i=>(i.recibida||0)!==i.pedida);
+  DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:r.proveedor,items,notas:'Recepción de '+r.numero+(hayDif?' (cantidades ajustadas)':'')+(nota?' · '+nota:'')});
+  const o=DB.orders.find(x=>x.id===r.id);
+  if(o){ o.estado='recibido'; o.recibido={fecha:todayISO(), items:r.items.map(i=>({productId:i.productId,pedida:i.pedida,recibida:i.recibida})), nota}; }
+  RECV=null; save(); closeModal(); go('compras');
 }
 function downloadOrderPDF(id){
   const o=DB.orders.find(x=>x.id===id); if(!o) return;
@@ -1312,9 +1762,14 @@ function downloadOrderPDF(id){
     columnStyles:{2:{halign:'center'},3:{halign:'right'},4:{halign:'right'}},
     margin:{left:14,right:14}
   });
+  const neto=Math.round(total/1.19); const iva=total-neto;
   let y=doc.lastAutoTable.finalY+10;
   doc.setFontSize(10); doc.setTextColor(93,120,96); doc.text('Total de unidades: '+unidades,14,y);
-  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(58,78,64); doc.text('Total estimado: '+fmt(total),196,y,{align:'right'});
+  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Valores en pesos chilenos, IVA incluido.',14,y+6);
+  doc.setTextColor(35,51,42); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text('Neto',150,y); doc.text(fmt(neto),196,y,{align:'right'});
+  y+=6; doc.text('IVA (19%)',150,y); doc.text(fmt(iva),196,y,{align:'right'});
+  y+=7; doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(58,78,64); doc.text('Total',150,y); doc.text(fmt(total),196,y,{align:'right'});
   doc.setFont('helvetica','normal');
   if(o.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+o.notas,182),14,y); }
   // Pie
@@ -1411,7 +1866,7 @@ function deleteUsuario(email){
 /* ---------- Utils UI ---------- */
 function val(id){return document.getElementById(id).value;}
 function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
-function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;}
+function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;CONVERT_QUOTE_ID=null;}
 function filterTable(tid,q){q=q.toLowerCase();document.querySelectorAll(`#${tid} tbody tr`).forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';});}
 function filterVentas(){
   const q=(document.getElementById('fVenta').value||'').toLowerCase();
