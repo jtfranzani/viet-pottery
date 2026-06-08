@@ -81,7 +81,7 @@
 <!-- ===================== LOGIN ===================== -->
 <div id="loginScreen" class="min-h-screen flex items-center justify-center p-4">
   <div class="card w-full max-w-md p-8 fade">
-    <div class="flex flex-col items-center text-center mb-6">
+    <div id="loginBrand" class="flex flex-col items-center text-center mb-6">
       <div class="w-16 h-16 rounded-2xl bg-clay-700 text-white flex items-center justify-center text-2xl font-bold mb-3">VP</div>
       <h1 class="text-2xl font-bold">Viet Pottery</h1>
       <p class="text-clay-500 text-sm">Plataforma de gestión · Stock · Ventas · Despachos</p>
@@ -335,6 +335,61 @@ function doLogin(){
   FB.signIn(email,pass).catch(e=>{ err.textContent='Correo o clave incorrectos.'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='Entrar'; });
 }
 function doLogout(){ if(window.FB) FB.signOutNow().finally(()=>location.reload()); else location.reload(); }
+
+/* ---------- Logo (carga logo.png, recorta y le quita el fondo blanco en el navegador) ---------- */
+let LOGO_DATAURL=null, LOGO_W=0, LOGO_H=0;
+function prepareLogo(){
+  const img=new Image(); img.crossOrigin='anonymous';
+  img.onload=function(){
+    try{
+      const cv=document.createElement('canvas'); cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+      const ctx=cv.getContext('2d'); ctx.drawImage(img,0,0);
+      const id=ctx.getImageData(0,0,cv.width,cv.height); const d=id.data;
+      let minX=cv.width,minY=cv.height,maxX=0,maxY=0,found=false;
+      for(let i=0;i<d.length;i+=4){
+        const wmin=Math.min(d[i],d[i+1],d[i+2]);
+        let a; if(wmin>=245)a=0; else if(wmin<=225)a=255; else a=Math.round((245-wmin)/20*255);
+        d[i+3]=a;
+        if(a>20){ found=true; const idx=i/4, px=idx%cv.width, py=(idx/cv.width)|0; if(px<minX)minX=px; if(px>maxX)maxX=px; if(py<minY)minY=py; if(py>maxY)maxY=py; }
+      }
+      ctx.putImageData(id,0,0);
+      let sx=0,sy=0,sw=cv.width,sh=cv.height;
+      if(found){ const pad=Math.round(Math.max(cv.width,cv.height)*0.02); sx=Math.max(0,minX-pad); sy=Math.max(0,minY-pad); sw=Math.min(cv.width-sx,maxX-minX+1+2*pad); sh=Math.min(cv.height-sy,maxY-minY+1+2*pad); }
+      const out=document.createElement('canvas'); out.width=sw; out.height=sh;
+      out.getContext('2d').drawImage(cv,sx,sy,sw,sh,0,0,sw,sh);
+      LOGO_DATAURL=out.toDataURL('image/png'); LOGO_W=sw; LOGO_H=sh;
+    }catch(e){ LOGO_DATAURL=img.src; LOGO_W=img.naturalWidth; LOGO_H=img.naturalHeight; }
+    applyLogo();
+  };
+  img.onerror=function(){ /* sin logo.png: se mantiene el diseño con "VP" */ };
+  img.src='logo.png?v=1';
+}
+function applyLogo(){
+  if(!LOGO_DATAURL) return;
+  const lb=document.getElementById('loginBrand');
+  if(lb) lb.innerHTML='<img src="'+LOGO_DATAURL+'" alt="Viet Pottery" class="mx-auto h-24 object-contain mb-2"><p class="text-clay-500 text-sm">Plataforma de gestión · Stock · Ventas · Despachos</p>';
+}
+// Encabezado de PDF: con logo (fondo blanco) si está disponible; si no, banda verde con "Viet Pottery".
+function pdfHeader(doc, titulo, numero, fecha){
+  if(LOGO_DATAURL){
+    const h=16, w=(LOGO_W&&LOGO_H)?Math.min(46,h*(LOGO_W/LOGO_H)):16;
+    try{ doc.addImage(LOGO_DATAURL,'PNG',14,9,w,h); }catch(e){}
+    doc.setTextColor(58,78,64); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(titulo,196,17,{align:'right'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(90,100,90);
+    if(numero) doc.text(String(numero),196,24,{align:'right'});
+    if(fecha) doc.text('Fecha: '+fecha,196,30,{align:'right'});
+    doc.setDrawColor(58,78,64); doc.setLineWidth(0.5); doc.line(14,33,196,33);
+    doc.setTextColor(35,51,42);
+  } else {
+    doc.setFillColor(35,51,42); doc.rect(0,0,210,34,'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.text('Viet Pottery',14,18);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text('Maceteros con alma',14,25);
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(titulo,196,16,{align:'right'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); if(numero) doc.text(String(numero),196,23,{align:'right'});
+    doc.setFontSize(9); if(fecha) doc.text('Fecha: '+fecha,196,29,{align:'right'});
+    doc.setTextColor(35,51,42);
+  }
+}
 
 function buildNav(){
   const nav = document.getElementById('navMenu');
@@ -608,7 +663,7 @@ function renderPresupuestos(){
     <div class="px-5 py-4 border-b border-clay-100">
       <div class="font-semibold">Presupuestos / cotizaciones</div><div class="text-xs text-clay-400">No afectan el stock. Cuando el cliente confirma y paga, conviértelo en venta (ahí se descuenta stock).</div>
     </div>
-    ${quotes.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${quotes.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">N°</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
     ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-5 py-3 font-semibold whitespace-nowrap">${q.numero||'—'}</td>
@@ -624,8 +679,9 @@ function renderPresupuestos(){
         ${q.estado==='ganado'?`<span class="text-xs text-sage-600">✓ vendido</span>`:''}
       </td>
     </tr>`).join('')}
-    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
+    </tbody></table></div>${pagControlsHTML('prestbl')}`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
   </div>`;
+  pagRender('prestbl');
 }
 function openQuote(id){
   CONVERT_QUOTE_ID=null;
@@ -720,12 +776,7 @@ function downloadQuotePDF(id){
   const { jsPDF }=window.jspdf; const doc=new jsPDF();
   const sub=saleSubtotal(q); const envio=q.costoEnvio||0; const total=sub+envio;
   const neto=Math.round(total/1.19); const iva=total-neto;
-  doc.setFillColor(35,51,42); doc.rect(0,0,210,34,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.text('Viet Pottery',14,18);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text('Maceteros con alma',14,25);
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('COTIZACIÓN',196,16,{align:'right'});
-  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(q.numero||'',196,23,{align:'right'});
-  doc.setFontSize(9); doc.text('Fecha: '+(q.fecha||''),196,29,{align:'right'});
+  pdfHeader(doc,'COTIZACIÓN',q.numero||'',q.fecha||'');
   doc.setTextColor(35,51,42); doc.setFontSize(10);
   doc.setFont('helvetica','bold'); doc.text('Cliente',14,46); doc.setFont('helvetica','normal'); doc.text(q.clienteNombre||'-',14,52);
   if(q.fechaValidez){ doc.setFont('helvetica','bold'); doc.text('Válido hasta',140,46); doc.setFont('helvetica','normal'); doc.text(q.fechaValidez,140,52); }
@@ -760,6 +811,7 @@ function distinctCI(values){
   values.forEach(v=>{ const t=String(v||'').trim(); if(!t) return; const k=t.toLowerCase(); if(!map.has(k)) map.set(k, titleCase(t)); });
   return [...map.entries()].map(([value,label])=>({value,label})).sort((a,b)=>a.label.localeCompare(b.label));
 }
+let VENTAS_PAGE=1, VENTAS_PER=20;
 function renderVentas(){
   const v=document.getElementById('view');
   const rows=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -794,7 +846,14 @@ function renderVentas(){
         <option value="no">Por cobrar</option>
         <option value="si">Pagado</option>
       </select>
-      <div id="vCount" class="text-sm text-clay-500 ml-auto">${rows.length} ventas</div>
+      <select id="fPer" onchange="setVentasPer(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white ml-auto">
+        <option value="10" ${VENTAS_PER===10?'selected':''}>10 por página</option>
+        <option value="20" ${VENTAS_PER===20?'selected':''}>20 por página</option>
+        <option value="30" ${VENTAS_PER===30?'selected':''}>30 por página</option>
+        <option value="50" ${VENTAS_PER===50?'selected':''}>50 por página</option>
+        <option value="all" ${VENTAS_PER===Infinity?'selected':''}>Todas</option>
+      </select>
+      <div id="vCount" class="text-sm text-clay-500">${rows.length} ventas</div>
     </div>
     <div class="hidden sm:block overflow-x-auto">
       <table class="w-full text-sm min-w-[920px]" id="vtbl">
@@ -834,7 +893,16 @@ function renderVentas(){
         <div class="flex gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="openSale('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
+    <div class="px-4 py-3 border-t border-clay-100 flex items-center justify-between gap-3 flex-wrap">
+      <div id="vPageInfo" class="text-sm text-clay-500"></div>
+      <div class="flex items-center gap-2">
+        <button id="vPrev" onclick="ventasPrev()" class="px-3 py-1.5 rounded-lg border border-clay-200 text-sm hover:bg-clay-50 disabled:opacity-40">← Anterior</button>
+        <span id="vPageLbl" class="text-sm text-clay-500"></span>
+        <button id="vNext" onclick="ventasNext()" class="px-3 py-1.5 rounded-lg border border-clay-200 text-sm hover:bg-clay-50 disabled:opacity-40">Siguiente →</button>
+      </div>
+    </div>
   </div>`;
+  applyVentasView();
 }
 
 function openSale(id){
@@ -1113,11 +1181,9 @@ function comprobanteHTML(s){
   const row=(l,r,extra)=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;${extra||''}"><span style="color:#5d7860;">${l}</span><span>${r}</span></div>`;
   return `
   <div id="comprobante" style="width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
-    <div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;">
-      <div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div>
-      <div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div>
-      <div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div>
-    </div>
+    ${LOGO_DATAURL
+      ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Confirmación de compra</div></div>`
+      : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div></div>`}
     <div style="padding:24px;">
       <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
         <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#5f7f4d;color:#ffffff;font-size:12px;">✓</span> ¡Compra confirmada!
@@ -1292,6 +1358,50 @@ function generateHojaRuta(fecha){
   doc.text('Hoja de ruta generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
   doc.save('hoja-de-ruta-'+fecha+'.pdf');
 }
+function openDiaEntregas(fecha){
+  const list=DB.sales.filter(s=>s.fechaEntrega===fecha).sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
+  const estPill={pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')};
+  const totalU=list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
+  const resumen={};
+  list.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const name=p?productName(p):(i.descripcion||'producto');const key=p?p.id:name; if(!resumen[key])resumen[key]={name,cant:0}; resumen[key].cant+=i.cantidad;}));
+  const resumenArr=Object.values(resumen).sort((a,b)=>b.cant-a.cant||a.name.localeCompare(b.name));
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <div><h3 class="text-lg font-bold">Resumen del día · ${fecha}</h3><div class="text-xs text-clay-400">${list.length} entrega${list.length!==1?'s':''} · ${totalU} producto${totalU!==1?'s':''} a repartir</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    ${list.length===0?`<div class="p-10 text-center text-clay-400 text-sm">No hay entregas programadas para este día.</div>`:`
+    <div class="p-5 space-y-5">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Paradas</div><div class="text-xl font-bold">${list.length}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Productos</div><div class="text-xl font-bold">${totalU}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Pendientes</div><div class="text-xl font-bold text-amber-600">${pend}</div></div>
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen de carga — productos a llevar</div>
+        <div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
+          ${resumenArr.map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
+          <div class="flex items-center justify-between px-3 py-2 text-sm bg-clay-50 font-semibold"><span>Total de productos</span><span class="tabular-nums">${totalU}</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas (ordenadas por zona)</div>
+        <div class="space-y-2">
+          ${list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 ${SESSION.rol!=='bodega'?'cursor-pointer hover:border-clay-300':''}" ${SESSION.rol!=='bodega'?`onclick="openSale('${s.id}')"`:''}>
+            <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
+            <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
+            <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
+          </div>`;}).join('')}
+        </div>
+      </div>
+    </div>`}
+    <div class="p-4 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
+      ${list.length>0?`<button onclick="generateHojaRuta('${fecha}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar hoja de ruta</button>`:''}
+    </div>
+  `);
+}
 function renderCalendario(){
   if(!CAL){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; }
   const {y,m}=CAL;
@@ -1313,11 +1423,15 @@ function renderCalendario(){
 
   let cells='';
   for(let i=0;i<lead;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
+  const calChip=s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="block w-full text-left">${tag}</button>`:tag;};
   for(let d=1; d<=dim; d++){
     const list=byDay[d]||[];
+    const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const extra=list.length-5;
     cells+=`<div class="bg-white border ${isToday(d)?'border-clay-500 ring-1 ring-clay-300':'border-clay-100'} rounded-lg p-1.5 min-h-[96px]">
       <div class="text-xs font-semibold ${isToday(d)?'text-clay-700':'text-clay-400'} mb-1">${d}</div>
-      ${list.map(s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="block w-full text-left">${tag}</button>`:tag;}).join('')}
+      ${list.slice(0,5).map(calChip).join('')}
+      ${extra>0?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${extra} más</button>`:''}
     </div>`;
   }
   const trail=(7-((lead+dim)%7))%7;
@@ -1371,7 +1485,7 @@ function renderClientes(){
     ${statCard('Ticket promedio',fmt(ticket),'por venta','')}
   </div>
   <div class="card overflow-hidden">
-    <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ctbl',this.value)" placeholder="Buscar cliente, ciudad o contacto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
+    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ctbl',this.value)" placeholder="Buscar cliente, ciudad o contacto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
     <div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="ctbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Contacto</th><th class="text-left px-4 py-3">Ciudad</th><th class="text-left px-4 py-3">Comuna</th><th class="text-right px-4 py-3">Compras</th><th class="text-right px-4 py-3">Total comprado</th><th class="text-left px-4 py-3">Última compra</th><th class="px-4 py-3"></th></tr></thead><tbody>
     ${DB.clients.map(c=>{const cs=DB.sales.filter(s=>s.clienteId===c.id);const tot=cs.reduce((a,s)=>a+saleTotal(s),0);const ult=cs.length?cs.map(s=>s.fecha).sort().slice(-1)[0]:'';return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
@@ -1384,8 +1498,9 @@ function renderClientes(){
       <td class="px-4 py-3 text-clay-500 whitespace-nowrap">${ult||'<span class="text-clay-300">—</span>'}</td>
       <td class="px-4 py-3 text-right">${SESSION.rol!=='bodega'?`<button onclick="openClient('${c.id}')" class="text-clay-600 hover:text-clay-900">Editar</button>`:''}</td>
     </tr>`;}).join('')}
-    </tbody></table></div>
+    </tbody></table></div>${pagControlsHTML('ctbl')}
   </div>`;
+  pagRender('ctbl');
 }
 
 /* ===================== COBRANZAS ===================== */
@@ -1420,7 +1535,7 @@ function renderCobranzas(){
       <div class="text-xs text-clay-400">${impagas.length} pendiente${impagas.length!==1?'s':''} · ordenadas de la más antigua</div>
     </div>
     <div class="overflow-x-auto">
-      <table class="w-full text-sm min-w-[680px]">
+      <table class="w-full text-sm min-w-[680px]" id="cobtbl">
         <thead class="bg-clay-50 text-clay-500 text-xs uppercase">
           <tr>
             <th class="text-left font-semibold px-5 py-3">Cliente</th>
@@ -1451,7 +1566,7 @@ function renderCobranzas(){
           </tr>
         </tfoot>
       </table>
-    </div>
+    </div>${pagControlsHTML('cobtbl')}
   </div>
 
   <div class="card overflow-hidden">
@@ -1466,6 +1581,7 @@ function renderCobranzas(){
       </div>`;}).join('')}
     </div>
   </div>`}`;
+  pagRender('cobtbl');
 }
 function openClient(id,fromSale){
   const c=id?clientById(id):{id:null,nombre:'',ciudad:'',comuna:'',direccion:'',telefono:'',email:''};
@@ -1550,20 +1666,18 @@ function renderStock(){
           ${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">Ajustar</button>`:''}
         </td>
       </tr>`;}).join('')}
-      </tbody></table></div>
+      </tbody></table></div>${pagControlsHTML('sttbl')}
   </div>
   <div class="text-xs text-clay-400 mt-3 px-1">💡 Haz clic en cualquier producto para ver su trazabilidad (historial de movimientos).</div>`;
+  PAG_MATCH['sttbl']=stockMatch;
+  pagRender('sttbl');
 }
-function filterStock(){
-  const q=(document.getElementById('fStock').value||'').toLowerCase();
-  const est=document.getElementById('fStockEstado').value;
-  let shown=0;
-  document.querySelectorAll('#sttbl tbody tr').forEach(tr=>{
-    const vis=tr.textContent.toLowerCase().includes(q) && (!est||tr.dataset.estado===est);
-    tr.style.display=vis?'':'none'; if(vis) shown++;
-  });
-  const el=document.getElementById('stCount'); if(el) el.textContent=shown+' productos';
+function stockMatch(tr){
+  const q=(((document.getElementById('fStock')||{}).value)||'').toLowerCase();
+  const est=((document.getElementById('fStockEstado')||{}).value)||'';
+  return tr.textContent.toLowerCase().includes(q) && (!est||tr.dataset.estado===est);
 }
+function filterStock(){ const st=pagState('sttbl'); st.page=1; pagApply('sttbl'); }
 /* ----- Trazabilidad: historial de movimientos de un producto ----- */
 function stockMovements(productId){
   const moves=[];
@@ -1659,7 +1773,7 @@ function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!
 function renderProductos(){
   const v=document.getElementById('view');
   v.innerHTML=`<div class="card overflow-hidden">
-    <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ptbl',this.value)" placeholder="Buscar..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-72"></div>
+    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value)" placeholder="Buscar..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-72"></div>
     <div class="overflow-x-auto"><table class="w-full text-sm min-w-[760px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-left px-4 py-3">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-right px-4 py-3">Margen</th><th class="text-right px-4 py-3">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3"></th>':''}</tr></thead><tbody>
     ${DB.products.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
@@ -1669,7 +1783,8 @@ function renderProductos(){
       <td class="px-4 py-3 text-right">${stockOf(p.id)}</td>
       ${SESSION.rol!=='vendedor'?`<td class="px-4 py-3 text-right"><button onclick="openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900">Editar</button></td>`:''}
     </tr>`;}).join('')}
-    </tbody></table></div></div>`;
+    </tbody></table></div>${pagControlsHTML('ptbl')}</div>`;
+  pagRender('ptbl');
 }
 function openProduct(id){
   const p=id?productById(id):{id:null,sku:'VP-'+String(DB.products.length+1).padStart(3,'0'),modelo:'',tamano:'M',color:'Natural',precioRef:0,costo:0,stockInicial:0,stockMin:2};
@@ -1743,7 +1858,7 @@ function renderCompras(){
       <div><div class="font-semibold">Compras recibidas</div><div class="text-xs text-clay-400">Mercadería que llegó y sumó al stock.</div></div>
       ${puede?`<button onclick="openPurchase()" class="text-sm text-clay-700 font-medium">+ Registrar recibida</button>`:''}
     </div>
-    ${rows.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${rows.length?`<div class="overflow-x-auto"><table class="w-full text-sm" id="comtbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">Fecha</th><th class="text-left px-3 py-3">Proveedor</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="px-5 py-3"></th></tr></thead><tbody>
     ${rows.map(c=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-5 py-3 whitespace-nowrap text-clay-500">${c.fecha}</td><td class="px-3 py-3 font-medium">${c.proveedor}</td>
@@ -1751,8 +1866,9 @@ function renderCompras(){
       <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(c.items.reduce((a,i)=>a+i.cantidad*i.costo,0))}</td>
       <td class="px-5 py-3 text-right">${puede?`<button onclick="openPurchase('${c.id}')" class="text-clay-600 hover:text-clay-900 text-sm">Ver</button>`:''}</td>
     </tr>`).join('')}
-    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Sin compras recibidas todavía.</div>`}
+    </tbody></table></div>${pagControlsHTML('comtbl')}`:`<div class="p-10 text-center text-clay-400 text-sm">Sin compras recibidas todavía.</div>`}
   </div>`;
+  pagRender('comtbl');
 }
 
 /* ----- Pedidos a proveedor (órdenes de compra) ----- */
@@ -1849,13 +1965,8 @@ function downloadOrderPDF(id){
   const doc=new jsPDF();
   const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
   const unidades=o.items.reduce((a,i)=>a+i.cantidad,0);
-  // Encabezado
-  doc.setFillColor(35,51,42); doc.rect(0,0,210,34,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.text('Viet Pottery',14,18);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text('Maceteros con alma',14,25);
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('ORDEN DE COMPRA',196,16,{align:'right'});
-  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(o.numero,196,23,{align:'right'});
-  doc.setFontSize(9); doc.text('Fecha: '+o.fecha,196,29,{align:'right'});
+  // Encabezado (con logo si está disponible)
+  pdfHeader(doc,'ORDEN DE COMPRA',o.numero,o.fecha);
   // Datos proveedor
   doc.setTextColor(35,51,42); doc.setFontSize(10);
   doc.setFont('helvetica','bold'); doc.text('Proveedor',14,46);
@@ -2034,30 +2145,92 @@ function val(id){return document.getElementById(id).value;}
 function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
 function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;CONVERT_QUOTE_ID=null;}
 function filterTable(tid,q){q=q.toLowerCase();document.querySelectorAll(`#${tid} tbody tr`).forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';});}
-function filterVentas(){
+function ventasMatch(el){
   const g=id=>document.getElementById(id);
-  const q=(g('fVenta').value||'').toLowerCase();
+  const q=((g('fVenta')&&g('fVenta').value)||'').toLowerCase();
   const doc=g('fDoc')?g('fDoc').value:'';
   const pago=g('fPago')?g('fPago').value:'';
   const zona=g('fZona')?g('fZona').value:'';
   const ciudad=g('fCiudad')?g('fCiudad').value:'';
   const comuna=g('fComuna')?g('fComuna').value:'';
-  const match=el => el.textContent.toLowerCase().includes(q)
-      && (!doc||el.dataset.doc===doc)
-      && (!pago||el.dataset.pago===pago)
-      && (!zona||el.dataset.zona===zona)
-      && (!ciudad||el.dataset.ciudad===ciudad)
-      && (!comuna||el.dataset.comuna===comuna);
-  let shown=0;
-  document.querySelectorAll('#vtbl tbody tr').forEach(tr=>{ const v=match(tr); tr.style.display=v?'':'none'; if(v) shown++; });
-  document.querySelectorAll('#vcards .vcard').forEach(card=>{ card.style.display=match(card)?'':'none'; });
-  const el=g('vCount'); if(el) el.textContent=shown+' ventas';
+  return el.textContent.toLowerCase().includes(q)
+    && (!doc||el.dataset.doc===doc)
+    && (!pago||el.dataset.pago===pago)
+    && (!zona||el.dataset.zona===zona)
+    && (!ciudad||el.dataset.ciudad===ciudad)
+    && (!comuna||el.dataset.comuna===comuna);
 }
+function applyVentasView(){
+  const g=id=>document.getElementById(id);
+  const per=VENTAS_PER;
+  // total que pasan el filtro
+  let total=0; document.querySelectorAll('#vtbl tbody tr').forEach(tr=>{ if(ventasMatch(tr)) total++; });
+  const pages = per===Infinity?1:Math.max(1,Math.ceil(total/per));
+  if(VENTAS_PAGE>pages) VENTAS_PAGE=pages;
+  if(VENTAS_PAGE<1) VENTAS_PAGE=1;
+  const page=VENTAS_PAGE, start=(page-1)*per, end=(per===Infinity)?Infinity:page*per;
+  const applySet=nodes=>{ let mi=0; nodes.forEach(el=>{ if(ventasMatch(el)){ el.style.display=(mi>=start&&mi<end)?'':'none'; mi++; } else el.style.display='none'; }); };
+  applySet(document.querySelectorAll('#vtbl tbody tr'));
+  applySet(document.querySelectorAll('#vcards .vcard'));
+  const from = total===0?0:start+1;
+  const to = (per===Infinity)?total:Math.min(end,total);
+  if(g('vCount')) g('vCount').textContent = total+' ventas';
+  if(g('vPageInfo')) g('vPageInfo').textContent = total===0?'Sin resultados':('Mostrando '+from+'–'+to+' de '+total);
+  if(g('vPageLbl')) g('vPageLbl').textContent = 'Página '+page+' de '+pages;
+  if(g('vPrev')) g('vPrev').disabled = page<=1;
+  if(g('vNext')) g('vNext').disabled = page>=pages;
+}
+function filterVentas(){ VENTAS_PAGE=1; applyVentasView(); }
+function setVentasPer(v){ VENTAS_PER = v==='all'?Infinity:(+v||20); VENTAS_PAGE=1; applyVentasView(); }
+function ventasPrev(){ if(VENTAS_PAGE>1){ VENTAS_PAGE--; applyVentasView(); } }
+function ventasNext(){ VENTAS_PAGE++; applyVentasView(); }
+
+/* ---------- Paginación genérica para tablas (#id tbody tr) ---------- */
+let PAG={}, PAG_MATCH={};
+function pagState(id){ if(!PAG[id]) PAG[id]={page:1,per:20,q:''}; return PAG[id]; }
+function pagControlsHTML(id){
+  const st=pagState(id);
+  return `<div class="px-4 py-3 border-t border-clay-100 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2"><span class="text-sm text-clay-500">Mostrar</span>
+      <select onchange="pagSetPer('${id}',this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm bg-white">
+        ${[10,20,30,50].map(n=>`<option value="${n}" ${st.per===n?'selected':''}>${n}</option>`).join('')}<option value="all" ${st.per===Infinity?'selected':''}>Todas</option>
+      </select>
+      <span id="pi_${id}" class="text-sm text-clay-500"></span></div>
+    <div class="flex items-center gap-2">
+      <button id="pp_${id}" onclick="pagPrev('${id}')" class="px-3 py-1.5 rounded-lg border border-clay-200 text-sm hover:bg-clay-50 disabled:opacity-40">← Anterior</button>
+      <span id="pl_${id}" class="text-sm text-clay-500"></span>
+      <button id="pn_${id}" onclick="pagNext('${id}')" class="px-3 py-1.5 rounded-lg border border-clay-200 text-sm hover:bg-clay-50 disabled:opacity-40">Siguiente →</button>
+    </div>
+  </div>`;
+}
+function pagApply(id){
+  const st=pagState(id);
+  const m=PAG_MATCH[id]||(tr=>tr.textContent.toLowerCase().includes((st.q||'').toLowerCase()));
+  const rows=document.querySelectorAll('#'+id+' tbody tr');
+  let total=0; rows.forEach(tr=>{ if(m(tr)) total++; });
+  const per=st.per, pages=per===Infinity?1:Math.max(1,Math.ceil(total/per));
+  if(st.page>pages)st.page=pages; if(st.page<1)st.page=1;
+  const start=(st.page-1)*per, end=per===Infinity?Infinity:st.page*per;
+  let mi=0; rows.forEach(tr=>{ if(m(tr)){ tr.style.display=(mi>=start&&mi<end)?'':'none'; mi++; } else tr.style.display='none'; });
+  const from=total===0?0:start+1, to=per===Infinity?total:Math.min(end,total);
+  const set=(eid,t)=>{const e=document.getElementById(eid); if(e)e.textContent=t;};
+  set('pi_'+id, total===0?'Sin resultados':('Mostrando '+from+'–'+to+' de '+total));
+  set('pl_'+id,'Página '+st.page+' de '+pages);
+  const pp=document.getElementById('pp_'+id), pn=document.getElementById('pn_'+id);
+  if(pp)pp.disabled=st.page<=1; if(pn)pn.disabled=st.page>=pages;
+  if(id==='sttbl'){ const e=document.getElementById('stCount'); if(e)e.textContent=total+' productos'; }
+}
+function pagRender(id){ const st=pagState(id); st.q=''; st.page=1; pagApply(id); }
+function pagSearch(id,q){ const st=pagState(id); st.q=q||''; st.page=1; pagApply(id); }
+function pagSetPer(id,v){ const st=pagState(id); st.per=v==='all'?Infinity:(+v||20); st.page=1; pagApply(id); }
+function pagPrev(id){ const st=pagState(id); if(st.page>1){st.page--; pagApply(id);} }
+function pagNext(id){ const st=pagState(id); st.page++; pagApply(id); }
 
 /* ---------- Init ---------- */
 // La app arranca cuando Firebase está listo: el script de módulo llama a bootFirebaseApp().
 // Si Firebase ya cargó antes que este script, arrancamos de inmediato.
 if(window.FB) bootFirebaseApp();
+prepareLogo();
 </script>
 </body>
 </html>
