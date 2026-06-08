@@ -249,7 +249,8 @@ async function bootData(){
 const productById = id => DB.products.find(p=>p.id===id);
 const clientById = id => DB.clients.find(c=>c.id===id);
 const productName = p => `${p.modelo} ${p.tamano!=='Único'?p.tamano:''} ${p.color!=='Natural'?'· '+p.color:''}`.replace(/\s+/g,' ').trim();
-const saleTotal = s => s.items.reduce((a,i)=>a+i.cantidad*i.precio,0);
+const lineTotal = i => i.cantidad*i.precio*(1-(i.descuento||0)/100);
+const saleTotal = s => s.items.reduce((a,i)=>a+lineTotal(i),0);
 const saleCost  = s => s.items.reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
 // Nombre limpio de un item: usa el catálogo y, si no, limpia la descripción (quita "xN" duplicado).
 const itemLabel = i => { const p=productById(i.productId); return p?productName(p):String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim(); };
@@ -428,7 +429,7 @@ function renderDashboard(){
   drawChart('chMes','bar',mk,mk.map(k=>byMonth[k]),'#496150');
   const byCity={}; DB.sales.forEach(s=>{byCity[s.ciudad]=(byCity[s.ciudad]||0)+saleTotal(s);});
   drawChart('chCiudad','doughnut',Object.keys(byCity),Object.values(byCity),['#3a4e40','#5f7f4d','#7d977f','#a7bdaa','#9fb98f']);
-  const byProd={}; DB.sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const n=p?productName(p):i.descripcion;byProd[n]=(byProd[n]||0)+i.cantidad*i.precio;}));
+  const byProd={}; DB.sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const n=p?productName(p):i.descripcion;byProd[n]=(byProd[n]||0)+lineTotal(i);}));
   const top=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,6);
   drawChart('chTop','bar',top.map(t=>t[0]),top.map(t=>t[1]),'#5f7f4d',true);  // verde herbal para top productos
 }
@@ -488,7 +489,7 @@ function renderVentas(){
 }
 
 function openSale(id){
-  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',courier:'',costoEnvio:0,notas:''};
+  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',courier:'',costoEnvio:0,notas:''};
   EDIT = JSON.parse(JSON.stringify(s));
   renderSaleModal();
 }
@@ -522,12 +523,19 @@ function renderSaleModal(){
       </div>
 
       <div>
-        <div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos</label>
+        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos</label>
           <button onclick="addSaleItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div class="hidden sm:grid grid-cols-12 gap-2 text-xs font-medium text-clay-400 px-2.5 mb-1">
+          <div class="col-span-5">Producto</div>
+          <div class="col-span-2 text-center">Cantidad</div>
+          <div class="col-span-2 text-right">Precio</div>
+          <div class="col-span-2 text-right">Descuento</div>
+          <div class="col-span-1"></div>
+        </div>
         <div class="space-y-2" id="s_items">
           ${s.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('')}
         </div>
-        <div class="text-xs text-clay-400 mt-1">El precio viene del catálogo pero lo puedes <b>modificar libremente</b> en cada línea.</div>
+        <div class="text-xs text-clay-400 mt-1.5">El precio viene del catálogo pero lo puedes <b>modificar libremente</b>, y el <b>descuento %</b> se aplica al instante a cada línea.</div>
       </div>
 
       <div class="grid sm:grid-cols-3 gap-3">
@@ -563,12 +571,22 @@ function renderSaleModal(){
   `);
 }
 function saleItemRow(it,ix,prodOpt){
-  return `<div class="grid grid-cols-12 gap-2 items-center s-item" data-ix="${ix}">
-    <select onchange="onSaleProd(${ix},this.value)" class="col-span-5 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select>
-    <input type="number" min="1" value="${it.cantidad}" oninput="onSaleQty(${ix},this.value)" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center" title="Cantidad">
-    <input type="number" value="${it.precio}" oninput="onSalePrice(${ix},this.value)" class="col-span-4 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right" title="Precio unitario (editable)">
-    <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center">✕</button>
+  return `<div class="s-item border border-clay-100 rounded-xl p-2.5 bg-clay-50/40" data-ix="${ix}">
+    <div class="grid grid-cols-12 gap-2 items-center">
+      <select onchange="onSaleProd(${ix},this.value)" class="col-span-12 sm:col-span-5 border border-clay-200 rounded-lg px-2 py-2 text-sm bg-white">${prodOpt(it.productId)}</select>
+      <input type="number" min="1" value="${it.cantidad}" oninput="onSaleQty(${ix},this.value)" class="col-span-3 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center bg-white" title="Cantidad">
+      <input type="number" value="${it.precio}" oninput="onSalePrice(${ix},this.value)" class="col-span-4 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio unitario">
+      <div class="col-span-4 sm:col-span-2 relative"><input type="number" min="0" max="100" value="${it.descuento||0}" oninput="onSaleDesc(${ix},this.value)" class="w-full border border-clay-200 rounded-lg pl-2 pr-6 py-2 text-sm text-right bg-white" title="Descuento %"><span class="absolute right-2 top-1/2 -translate-y-1/2 text-clay-400 text-xs">%</span></div>
+      <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
+    </div>
+    <div id="s_sub_${ix}" class="text-xs text-right mt-1.5">${lineSubHtml(it)}</div>
   </div>`;
+}
+function lineSubHtml(it){
+  const desc=it.descuento||0; const sub=lineTotal(it);
+  return desc>0
+    ? `<span class="text-sage-700">Subtotal línea: <span class="line-through text-clay-300">${fmt(it.cantidad*it.precio)}</span> → <b>${fmt(sub)}</b> · ${desc}% dcto</span>`
+    : `<span class="text-clay-400">Subtotal línea: <b class="text-clay-600">${fmt(sub)}</b></span>`;
 }
 function syncSaleFromForm(){
   EDIT.clienteNombre=document.getElementById('s_cli').value.trim();
@@ -603,9 +621,11 @@ function resolveClient(nombre, ciudad, comuna, direccion, telefono, email){
   return c;
 }
 function onSaleProd(ix,pid){const p=productById(pid);EDIT.items[ix].productId=pid;EDIT.items[ix].descripcion=productName(p);EDIT.items[ix].precio=p.precioRef;refreshSaleItems();}
-function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateSaleTotal();}
-function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateSaleTotal();}
-function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef});refreshSaleItems();}
+function updateLineSub(ix){const el=document.getElementById('s_sub_'+ix);if(el)el.innerHTML=lineSubHtml(EDIT.items[ix]);}
+function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub(ix);updateSaleTotal();}
+function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateLineSub(ix);updateSaleTotal();}
+function onSaleDesc(ix,v){let d=+v||0;d=Math.max(0,Math.min(100,d));EDIT.items[ix].descuento=d;updateLineSub(ix);updateSaleTotal();}
+function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef,descuento:0});refreshSaleItems();}
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
 function refreshSaleItems(){const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
 function updateSaleTotal(){document.getElementById('s_total').textContent=fmt(saleTotal(EDIT));}
@@ -656,7 +676,7 @@ function comprobanteHTML(s){
       ${s.fechaEntrega?row('Entrega estimada',`<b>${s.fechaEntrega}</b>`):''}
       <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Detalle de tu compra</div>
-      ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span><span style="font-weight:600;white-space:nowrap;">${fmt(i.cantidad*i.precio)}</span></div>`).join('')}
+      ${s.items.map(i=>{const dt=i.descuento||0;return `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span style="color:#5f7f4d;font-size:11px;">(-${dt}%)</span>`:''}</span><span style="font-weight:600;white-space:nowrap;">${fmt(lineTotal(i))}</span></div>`;}).join('')}
       <div style="border-top:1px dashed #cbd8cd;margin:14px 0;"></div>
       ${row('Subtotal',fmt(subtotal))}
       ${envio>0?row('Envío',fmt(envio)):''}
