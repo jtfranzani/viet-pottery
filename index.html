@@ -62,6 +62,17 @@
   table{border-collapse:separate;border-spacing:0}
   .fade{animation:fade .25s ease}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  /* ---- Ajustes móviles ---- */
+  html,body{overflow-x:hidden}
+  .overflow-x-auto{-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+  @media (max-width:640px){
+    /* Evita el zoom automático de iOS al enfocar campos (fuentes < 16px lo gatillan) */
+    input,select,textarea{font-size:16px !important}
+    /* Objetivos táctiles más cómodos en botones de acción */
+    button{touch-action:manipulation}
+    /* Pista visual de que las tablas se deslizan de lado */
+    .overflow-x-auto{position:relative}
+  }
 </style>
 </head>
 <body class="bg-clay-50 text-clay-900 font-sans antialiased">
@@ -784,7 +795,7 @@ function renderVentas(){
       <div id="vCount" class="text-sm text-clay-500 ml-auto">${rows.length} ventas</div>
     </div>
     <div class="overflow-x-auto">
-      <table class="w-full text-sm" id="vtbl">
+      <table class="w-full text-sm min-w-[920px]" id="vtbl">
         <thead class="bg-clay-50 text-clay-500 text-xs uppercase">
           <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
         </thead>
@@ -1342,7 +1353,7 @@ function renderClientes(){
   </div>
   <div class="card overflow-hidden">
     <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ctbl',this.value)" placeholder="Buscar cliente, ciudad o contacto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
-    <div class="overflow-x-auto"><table class="w-full text-sm" id="ctbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="ctbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Contacto</th><th class="text-left px-4 py-3">Ciudad</th><th class="text-left px-4 py-3">Comuna</th><th class="text-right px-4 py-3">Compras</th><th class="text-right px-4 py-3">Total comprado</th><th class="text-left px-4 py-3">Última compra</th><th class="px-4 py-3"></th></tr></thead><tbody>
     ${DB.clients.map(c=>{const cs=DB.sales.filter(s=>s.clienteId===c.id);const tot=cs.reduce((a,s)=>a+saleTotal(s),0);const ult=cs.length?cs.map(s=>s.fecha).sort().slice(-1)[0]:'';return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-4 py-3 font-medium">${c.nombre}</td>
@@ -1630,7 +1641,7 @@ function renderProductos(){
   const v=document.getElementById('view');
   v.innerHTML=`<div class="card overflow-hidden">
     <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ptbl',this.value)" placeholder="Buscar..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-72"></div>
-    <div class="overflow-x-auto"><table class="w-full text-sm" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[760px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-left px-4 py-3">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-right px-4 py-3">Margen</th><th class="text-right px-4 py-3">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3"></th>':''}</tr></thead><tbody>
     ${DB.products.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-4 py-3 text-clay-500">${p.sku}</td><td class="px-4 py-3 font-medium">${p.modelo}</td><td class="px-4 py-3">${p.tamano}</td><td class="px-4 py-3">${p.color}</td>
