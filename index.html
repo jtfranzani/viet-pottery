@@ -489,7 +489,7 @@ function renderVentas(){
 }
 
 function openSale(id){
-  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',courier:'',costoEnvio:0,notas:''};
+  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,notas:''};
   EDIT = JSON.parse(JSON.stringify(s));
   renderSaleModal();
 }
@@ -549,7 +549,12 @@ function renderSaleModal(){
       </div>
 
       <div class="bg-clay-50 rounded-xl p-4">
-        <div class="text-sm font-semibold mb-2">Despacho</div>
+        <div class="flex items-center justify-between mb-2"><div class="text-sm font-semibold">Despacho</div>
+          <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5">
+            <button type="button" onclick="setSaleTipoDesp('Viet')" id="td_viet" class="px-3 py-1 rounded-md text-xs font-medium ${(s.tipoDespacho||'Viet')==='Viet'?'bg-sage-500 text-white':'text-clay-600'}">Despacho Viet</button>
+            <button type="button" onclick="setSaleTipoDesp('Fran')" id="td_fran" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Fran'?'bg-blue-500 text-white':'text-clay-600'}">Despacho Fran</button>
+          </div>
+        </div>
         <div class="grid sm:grid-cols-3 gap-3">
           <div><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" placeholder="Ciudad" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
           <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
@@ -626,6 +631,12 @@ function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub
 function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateLineSub(ix);updateSaleTotal();}
 function onSaleDesc(ix,v){let d=+v||0;d=Math.max(0,Math.min(100,d));EDIT.items[ix].descuento=d;updateLineSub(ix);updateSaleTotal();}
 function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef,descuento:0});refreshSaleItems();}
+function setSaleTipoDesp(t){
+  if(!EDIT) return; EDIT.tipoDespacho=t;
+  const viet=document.getElementById('td_viet'), fran=document.getElementById('td_fran');
+  if(viet) viet.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Viet'?'bg-sage-500 text-white':'text-clay-600');
+  if(fran) fran.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Fran'?'bg-blue-500 text-white':'text-clay-600');
+}
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
 function refreshSaleItems(){const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
 function updateSaleTotal(){document.getElementById('s_total').textContent=fmt(saleTotal(EDIT));}
@@ -723,19 +734,32 @@ function descargarComprobante(saleId){
 }
 
 /* ===================== DESPACHOS ===================== */
+const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':'Viet');
+let DESP_TIPO='Viet';
+function setDespTipo(t){ DESP_TIPO=t; renderDespachos(); }
 function renderDespachos(){
   const v=document.getElementById('view');
   const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
-  const sales=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  v.innerHTML=`<div class="grid lg:grid-cols-3 gap-4">
+  const all=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const activos=t=> all.filter(s=>tipoDespachoOf(s)===t && s.estadoDespacho!=='entregado').length;
+  const sales = DESP_TIPO==='Todos'? all : all.filter(s=>tipoDespachoOf(s)===DESP_TIPO);
+  const tab=(t,label,badge)=>`<button onclick="setDespTipo('${t}')" class="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 ${DESP_TIPO===t?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${badge!=null?`<span class="text-xs ${DESP_TIPO===t?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${badge}</span>`:''}</button>`;
+  v.innerHTML=`
+  <div class="flex flex-wrap gap-2 mb-4">
+    ${tab('Viet','Despachos Viet',activos('Viet'))}
+    ${tab('Fran','Despachos Fran',activos('Fran'))}
+    ${tab('Todos','Todos',null)}
+  </div>
+  <div class="grid lg:grid-cols-3 gap-4">
     ${cols.map(([key,title,color])=>{
       const list=sales.filter(s=>s.estadoDespacho===key);
       return `<div class="card p-4">
         <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
         <div class="space-y-2">
-        ${list.length?list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="${SESSION.rol!=='bodega'?`openSale('${s.id}')`:`advanceDispatch('${s.id}')`}">
-          <div class="flex justify-between items-start"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400">${s.fecha}</div></div>
-          <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
+        ${list.length?list.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="${SESSION.rol!=='bodega'?`openSale('${s.id}')`:`advanceDispatch('${s.id}')`}">
+          <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400 whitespace-nowrap">${s.fecha}</div></div>
+          <div class="mt-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}</div>
+          <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key!=='entregado'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">${key==='pendiente'?'Marcar en camino →':'Marcar entregado ✓'}</button>`:pill('OK','green')}</div>
         </div>`;}).join(''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
