@@ -55,7 +55,7 @@
   ::-webkit-scrollbar-track{background:#e6ece7}
   [x-cloak]{display:none}
   .card{background:#fff;border:1px solid #e6ece7;border-radius:16px;box-shadow:0 1px 3px rgba(35,51,42,.06),0 8px 24px -12px rgba(35,51,42,.14)}
-  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
   input,select,textarea{outline:none}
   input:focus,select:focus,textarea:focus{border-color:#3a4e40;box-shadow:0 0 0 3px rgba(58,78,64,.15)}
   .nav-item.active{background:#3a4e40;color:#fff}
@@ -739,12 +739,19 @@ function downloadQuotePDF(id){
 }
 
 /* ===================== VENTAS ===================== */
+const titleCase = s => String(s||'').toLowerCase().replace(/(^|[\s/])([a-záéíóúñ])/g, (m,p,c)=>p+c.toUpperCase());
 const zonaOf = s => ((s.ciudad||'').trim().toLowerCase()==='santiago') ? 'Santiago' : 'Región';
+// Agrupa sin distinguir mayúsculas/minúsculas: "Lo Barnechea" = "lo barnechea". value = minúsculas, label = bonito.
+function distinctCI(values){
+  const map=new Map();
+  values.forEach(v=>{ const t=String(v||'').trim(); if(!t) return; const k=t.toLowerCase(); if(!map.has(k)) map.set(k, titleCase(t)); });
+  return [...map.entries()].map(([value,label])=>({value,label})).sort((a,b)=>a.label.localeCompare(b.label));
+}
 function renderVentas(){
   const v=document.getElementById('view');
   const rows=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  const ciudades=[...new Set(DB.sales.map(s=>(s.ciudad||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-  const comunas=[...new Set(DB.sales.map(s=>(s.comuna||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const ciudades=distinctCI(DB.sales.map(s=>s.ciudad));
+  const comunas=distinctCI(DB.sales.map(s=>s.comuna));
   v.innerHTML=`
   <div class="card overflow-hidden">
     <div class="p-4 flex flex-wrap gap-2 items-center border-b border-clay-100">
@@ -756,11 +763,11 @@ function renderVentas(){
       </select>
       <select id="fCiudad" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
         <option value="">Ciudad: todas</option>
-        ${ciudades.map(c=>`<option value="${c.toLowerCase()}">${c}</option>`).join('')}
+        ${ciudades.map(c=>`<option value="${c.value}">${c.label}</option>`).join('')}
       </select>
       <select id="fComuna" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
         <option value="">Comuna: todas</option>
-        ${comunas.map(c=>`<option value="${c.toLowerCase()}">${c}</option>`).join('')}
+        ${comunas.map(c=>`<option value="${c.value}">${c.label}</option>`).join('')}
       </select>
       <select id="fDoc" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
         <option value="">Todos los documentos</option>
@@ -785,14 +792,14 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
           <td class="px-4 py-3">${dispPill(s)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            ${SESSION.rol!=='bodega'?`${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5">Editar</button>`:''}
+            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
           </td></tr>`;}).join('')}
         </tbody>
       </table>
