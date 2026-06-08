@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module">
   // ----- Firebase: autenticación y base de datos en la nube -----
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
@@ -105,6 +106,7 @@
     <nav id="navMenu" class="flex-1 p-3 space-y-1 overflow-y-auto text-sm"></nav>
     <div class="p-3 border-t border-clay-800">
       <div id="userBox" class="flex items-center gap-3 px-2 py-2"></div>
+      <button onclick="descargarRespaldoExcel()" class="w-full text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-200 flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar respaldo (Excel)</button>
       <button onclick="doLogout()" class="w-full mt-1 text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-300">Cerrar sesión</button>
     </div>
   </aside>
@@ -1969,6 +1971,62 @@ function deleteUsuario(email){
   if(!confirm('¿Quitar el acceso de '+email+'? (No borra su cuenta de Firebase Authentication, solo su rol aquí.)'))return;
   DB.users=(DB.users||[]).filter(x=>x.email!==email);
   save();closeModal();go('usuarios');
+}
+
+/* ---------- Respaldo a Excel (una hoja por categoría) ---------- */
+function descargarRespaldoExcel(){
+  if(!window.XLSX){ alert('No se pudo generar el Excel. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const nombreProd=i=>{const p=productById(i.productId);return p?productName(p):(i.descripcion||'producto');};
+  const itemsStr=arr=>(arr||[]).map(i=>i.cantidad+'x '+nombreProd(i)).join(' | ');
+  const docPlain=s=> s.docTipo==='no_aplica'?'No aplica':s.docTipo==='pendiente'?'Pendiente':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||''));
+  const wb=XLSX.utils.book_new();
+  const add=(name,rows)=>{ const data=(rows&&rows.length)?rows:[{Aviso:'Sin registros'}]; const ws=XLSX.utils.json_to_sheet(data); XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31)); };
+
+  add('Presupuestos',(DB.quotes||[]).map(q=>({
+    'N°':q.numero||'','Fecha':q.fecha||'','Válido hasta':q.fechaValidez||'','Cliente':q.clienteNombre||'','Teléfono':q.telefono||'','Email':q.email||'',
+    'Estado':q.estado||'','Productos':itemsStr(q.items),'Subtotal':saleSubtotal(q),'Envío':q.costoEnvio||0,'Total':saleTotal(q),'Notas':q.notas||''
+  })));
+
+  add('Ventas',(DB.sales||[]).map(s=>{const c=clientById(s.clienteId);return {
+    'Fecha':s.fecha||'','Entrega':s.fechaEntrega||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Zona':zonaOf(s),'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Dirección':s.direccion||'',
+    'Productos':itemsStr(s.items),'Subtotal':saleSubtotal(s),'Envío':s.costoEnvio||0,'Total':saleTotal(s),
+    'Pago':s.pagado?'Pagado':'Por cobrar','Cuenta':s.cuenta||'','Despacho':s.estadoDespacho||'','Tipo despacho':tipoDespachoOf(s),'Courier':s.courier||'',
+    'Documento':docPlain(s),'N° doc':s.docNumero||''
+  };}));
+
+  add('Despachos',(DB.sales||[]).map(s=>{const c=clientById(s.clienteId);return {
+    'Fecha entrega':s.fechaEntrega||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Estado':s.estadoDespacho||'','Tipo':tipoDespachoOf(s),
+    'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Dirección':s.direccion||'','Courier':s.courier||'','Costo envío':s.costoEnvio||0,'Productos':itemsStr(s.items)
+  };}));
+
+  add('Calendario',(DB.sales||[]).filter(s=>s.fechaEntrega).sort((a,b)=>(a.fechaEntrega||'').localeCompare(b.fechaEntrega||'')).map(s=>{const c=clientById(s.clienteId);return {
+    'Fecha entrega':s.fechaEntrega||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Estado despacho':s.estadoDespacho||'','Tipo':tipoDespachoOf(s),'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Productos':itemsStr(s.items),'Total':saleTotal(s)
+  };}));
+
+  add('Clientes',(DB.clients||[]).map(c=>{const cs=(DB.sales||[]).filter(s=>s.clienteId===c.id);return {
+    'Nombre':c.nombre||'','Ciudad':c.ciudad||'','Comuna':c.comuna||'','Dirección':c.direccion||'','Teléfono':c.telefono||'','Email':c.email||'',
+    'N° compras':cs.length,'Total comprado':cs.reduce((a,s)=>a+saleTotal(s),0),'Por cobrar':clientBalance(c.id)
+  };}));
+
+  add('Cobranzas',(DB.sales||[]).filter(s=>!s.pagado).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(s=>{const c=clientById(s.clienteId);return {
+    'Fecha venta':s.fecha||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Días':diasDesde(s.fecha),'Monto':saleTotal(s),'Cuenta':s.cuenta||'','Documento':docPlain(s)
+  };}));
+
+  add('Stock',(DB.products||[]).map(p=>{const st=stockOf(p.id);return {
+    'SKU':p.sku||'','Producto':productName(p),'Modelo':p.modelo||'','Tamaño':p.tamano||'','Color':p.color||'','Stock':st,'Mínimo':p.stockMin||0,
+    'Estado':st<=0?'Agotado':st<=p.stockMin?'Bajo':'OK','Costo':p.costo||0,'Valor a costo':st*(p.costo||0)
+  };}));
+
+  add('Productos',(DB.products||[]).map(p=>({
+    'SKU':p.sku||'','Modelo':p.modelo||'','Tamaño':p.tamano||'','Color':p.color||'','Costo':p.costo||0,'Precio ref':p.precioRef||0,
+    'Margen %':p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0,'Stock':stockOf(p.id)
+  })));
+
+  add('Compras',(DB.purchases||[]).map(pu=>({
+    'Fecha':pu.fecha||'','Proveedor':pu.proveedor||'','Productos':itemsStr(pu.items),'Total (con IVA)':(pu.items||[]).reduce((a,i)=>a+i.cantidad*i.costo,0),'Notas':pu.notas||''
+  })));
+
+  XLSX.writeFile(wb,'respaldo-viet-pottery-'+todayISO()+'.xlsx');
 }
 
 /* ---------- Utils UI ---------- */
