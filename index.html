@@ -9,6 +9,33 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script type="module">
+  // ----- Firebase: autenticación y base de datos en la nube -----
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyAdDsvcGtkIUVHhX5o-VIivgKd_nnoqUws",
+    authDomain: "viet-pottery.firebaseapp.com",
+    projectId: "viet-pottery",
+    storageBucket: "viet-pottery.firebasestorage.app",
+    messagingSenderId: "451880236267",
+    appId: "1:451880236267:web:51c93138c0061a46f53aae"
+  };
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const DREF = doc(db, 'app', 'data');
+  window.FB = {
+    signIn:(e,p)=>signInWithEmailAndPassword(auth,e,p),
+    signOutNow:()=>signOut(auth),
+    onAuth:(cb)=>onAuthStateChanged(auth,cb),
+    getData: async ()=>{ const s=await getDoc(DREF); return s.exists()?(s.data().db||null):null; },
+    setData:(obj)=>setDoc(DREF,{db:obj}),
+    watch:(cb)=>onSnapshot(DREF,(s)=>{ if(s.exists()&&s.data().db) cb(s.data().db); })
+  };
+  if(window.bootFirebaseApp) window.bootFirebaseApp();
+</script>
 <script>
   tailwind.config = {
     theme: {
@@ -47,13 +74,12 @@
       <h1 class="text-2xl font-bold">Viet Pottery</h1>
       <p class="text-clay-500 text-sm">Plataforma de gestión · Stock · Ventas · Despachos</p>
     </div>
-    <label class="block text-sm font-medium mb-1">Usuario</label>
-    <select id="loginUser" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-4 bg-clay-50"></select>
+    <label class="block text-sm font-medium mb-1">Correo</label>
+    <input id="loginEmail" type="email" autocomplete="username" placeholder="tucorreo@ejemplo.com" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-4">
     <label class="block text-sm font-medium mb-1">Clave</label>
-    <input id="loginPass" type="password" placeholder="123" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-2">
-    <p class="text-xs text-clay-400 mb-5">Demo: la clave de todos los usuarios es <b>123</b></p>
-    <button onclick="doLogin()" class="w-full bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl transition">Entrar</button>
-    <p id="loginErr" class="text-red-600 text-sm mt-3 hidden text-center">Clave incorrecta.</p>
+    <input id="loginPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-5">
+    <button id="loginBtn" onclick="doLogin()" class="w-full bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl transition">Entrar</button>
+    <p id="loginErr" class="text-red-600 text-sm mt-3 hidden text-center">Correo o clave incorrectos.</p>
   </div>
 </div>
 
@@ -94,11 +120,10 @@
 
 <script>
 /* =========================================================
-   VIET POTTERY · Prototipo de plataforma de gestión
-   Persistencia local (localStorage) — luego migrable a Firebase
+   VIET POTTERY · Plataforma de gestión
+   Datos y login en la nube con Firebase (Firestore + Auth)
    ========================================================= */
 
-const LS_KEY = 'vietpottery_v4';
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 const ACCOUNTS = ['Santander','Link de pago','Efectivo','Transferencia','Otra'];
 const fmt = n => '$' + (Math.round(n||0)).toLocaleString('es-CL');
@@ -196,16 +221,29 @@ function seed(){
 }
 
 /* ---------- State ---------- */
-let DB;            // se declara antes de load() para evitar el TDZ al llamar save()
-DB = load();
+let DB = null;
 let SESSION = null;
 let CURRENT = 'dashboard';
 
-function load(){
-  try{ const r = localStorage.getItem(LS_KEY); if(r) return JSON.parse(r);}catch(e){}
-  const s = seed(); save(s); return s;
+// Persistencia en la nube (Firestore). save() escribe todo el estado.
+function save(){ if(window.FB && DB) FB.setData(DB); }
+
+async function bootData(){
+  let data = window.FB ? await FB.getData() : null;
+  if(!data){
+    // Primera vez: catálogo real de productos, sin datos de demo.
+    data = seed();
+    data.clients=[]; data.sales=[]; data.purchases=[]; data.orders=[]; data.adjustments=[]; data.users=[];
+    data.counter={boleta:92, factura:12, oc:0};
+    if(window.FB) await FB.setData(data);
+  }
+  DB = data;
+  if(!DB.orders) DB.orders=[];
+  if(!DB.users) DB.users=[];
+  if(!DB.adjustments) DB.adjustments=[];
+  if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0};
+  if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
 }
-function save(db){ DB = db||DB; try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ console.warn('No se pudo guardar', e);} }
 
 /* ---------- Helpers de negocio ---------- */
 const productById = id => DB.products.find(p=>p.id===id);
@@ -240,23 +278,43 @@ const NAV = [
   {id:'cobranzas', label:'Cobranzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
   {id:'stock',     label:'Stock',     roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'productos', label:'Productos', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
-  {id:'compras',   label:'Compras',   roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'}
+  {id:'compras',   label:'Compras',   roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
+  {id:'usuarios',  label:'Usuarios',  roles:['admin'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75'}
 ];
 
-function initLogin(){
-  document.getElementById('loginUser').innerHTML = DB.users.map(u=>`<option value="${u.id}">${u.nombre} — ${u.rol}</option>`).join('');
+function emailNombre(email){ const p=(email||'').split('@')[0].replace(/[._-]+/g,' ').trim(); return p.replace(/\b\w/g,c=>c.toUpperCase())||'Usuario'; }
+function showLogin(){ document.getElementById('app').classList.add('hidden'); document.getElementById('loginScreen').classList.remove('hidden'); }
+function showApp(){ document.getElementById('loginScreen').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); buildNav(); renderUserBox(); go('dashboard'); }
+function isModalOpen(){ const m=document.getElementById('modal'); return m && !m.classList.contains('hidden'); }
+function rerender(){ if(SESSION && !isModalOpen()) go(CURRENT); }
+
+// Arranca cuando Firebase está listo (lo llama el script de módulo).
+function bootFirebaseApp(){
+  if(window.__vpBooted) return; window.__vpBooted=true;
+  FB.onAuth(async (user)=>{
+    if(!user){ SESSION=null; showLogin(); return; }
+    try{ await bootData(); }
+    catch(e){ console.error(e); alert('No se pudieron cargar los datos. Revisa tu conexión e intenta de nuevo.'); showLogin(); return; }
+    const email=(user.email||'').toLowerCase();
+    let u=(DB.users||[]).find(x=>(x.email||'').toLowerCase()===email);
+    if(!u){
+      if(!DB.users || DB.users.length===0){ u={email:user.email, nombre:emailNombre(user.email), rol:'admin'}; DB.users.push(u); save(); }
+      else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
+    }
+    SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; rerender(); });
+    showApp();
+  });
 }
 function doLogin(){
-  const uid = document.getElementById('loginUser').value;
-  const pass = document.getElementById('loginPass').value || '123';
-  const u = DB.users.find(x=>x.id===uid);
-  if(!u || u.pass!==pass){ document.getElementById('loginErr').classList.remove('hidden'); return; }
-  SESSION = u;
-  document.getElementById('loginScreen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
-  buildNav(); renderUserBox(); go('dashboard');
+  const email=document.getElementById('loginEmail').value.trim();
+  const pass=document.getElementById('loginPass').value;
+  const err=document.getElementById('loginErr'); err.classList.add('hidden');
+  const btn=document.getElementById('loginBtn'); btn.disabled=true; btn.textContent='Entrando...';
+  if(!window.FB){ err.textContent='Conectando con Firebase... intenta de nuevo en unos segundos.'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='Entrar'; return; }
+  FB.signIn(email,pass).catch(e=>{ err.textContent='Correo o clave incorrectos.'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='Entrar'; });
 }
-function doLogout(){ SESSION=null; location.reload(); }
+function doLogout(){ if(window.FB) FB.signOutNow().finally(()=>location.reload()); else location.reload(); }
 
 function buildNav(){
   const nav = document.getElementById('navMenu');
@@ -282,17 +340,18 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',ventas:'Ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras'};
+  const titles={dashboard:'Dashboard',ventas:'Ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({dashboard:renderDashboard,ventas:renderVentas,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras})[view]();
+  ({dashboard:renderDashboard,ventas:renderVentas,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
   if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nueva venta');
   if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
+  if(view==='usuarios' && SESSION.rol==='admin') return btn('openUsuario()','Nuevo usuario');
   return '';
 }
 
@@ -1247,6 +1306,64 @@ function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');E
 function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);}save();closeModal();go('compras');}
 function deletePurchase(id){if(!confirm('¿Eliminar compra?'))return;DB.purchases=DB.purchases.filter(p=>p.id!==id);save();closeModal();go('compras');}
 
+/* ===================== USUARIOS Y PERMISOS ===================== */
+function rolLabel(r){return r==='admin'?'Administrador':r==='vendedor'?'Vendedor':'Bodega';}
+function renderUsuarios(){
+  const v=document.getElementById('view');
+  const users=DB.users||[];
+  v.innerHTML=`
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100">
+      <div class="font-semibold">Usuarios y permisos</div>
+      <div class="text-xs text-clay-400 mt-1">Para que alguien pueda entrar, su correo debe (1) existir en <b>Firebase → Authentication</b> con una clave, y (2) estar agregado aquí con su rol.</div>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">Nombre</th><th class="text-left px-3 py-3">Correo</th><th class="text-left px-3 py-3">Rol</th><th class="px-5 py-3"></th></tr></thead><tbody>
+    ${users.length?users.map(u=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-3 font-medium">${u.nombre||'—'}${(u.email||'').toLowerCase()===(SESSION.email||'').toLowerCase()?' <span class="text-xs text-clay-400">(tú)</span>':''}</td>
+      <td class="px-3 py-3 text-clay-600">${u.email}</td>
+      <td class="px-3 py-3">${pill(rolLabel(u.rol),u.rol==='admin'?'green':u.rol==='vendedor'?'blue':'amber')}</td>
+      <td class="px-5 py-3 text-right"><button onclick="openUsuario('${(u.email||'').replace(/'/g,"\\'")}')" class="text-clay-600 hover:text-clay-900 text-sm">Editar</button></td>
+    </tr>`).join(''):`<tr><td colspan="4" class="px-5 py-10 text-center text-clay-400 text-sm">Aún no hay usuarios con rol asignado.</td></tr>`}
+    </tbody></table></div>
+  </div>
+  <div class="text-xs text-clay-400 mt-3 px-1">Roles: <b>Administrador</b> ve y edita todo · <b>Vendedor</b> ve ventas, clientes, cobranzas, despachos y calendario · <b>Bodega</b> ve stock, productos y compras.</div>`;
+}
+let EDITU=null;
+function openUsuario(email){
+  const u=email?(DB.users||[]).find(x=>x.email===email):{email:'',nombre:'',rol:'vendedor'};
+  EDITU=JSON.parse(JSON.stringify(u||{email:'',nombre:'',rol:'vendedor'}));
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">${email?'Editar usuario':'Nuevo usuario'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
+  <div class="p-5 space-y-3">
+    <div><label class="text-sm font-medium">Correo (igual al de Firebase Authentication)</label><input id="u_email" value="${(EDITU.email||'').replace(/"/g,'&quot;')}" ${email?'disabled':''} placeholder="persona@vietpottery.cl" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 ${email?'bg-clay-50 text-clay-400':''}"></div>
+    <div><label class="text-sm font-medium">Nombre</label><input id="u_nombre" value="${(EDITU.nombre||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Rol</label><select id="u_rol" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">
+      <option value="admin" ${EDITU.rol==='admin'?'selected':''}>Administrador (ve y edita todo)</option>
+      <option value="vendedor" ${EDITU.rol==='vendedor'?'selected':''}>Vendedor (ventas, clientes, cobranzas, despachos)</option>
+      <option value="bodega" ${EDITU.rol==='bodega'?'selected':''}>Bodega (stock, productos, compras)</option>
+    </select></div>
+    ${email?'':'<div class="text-xs text-clay-400">Recuerda crear también este correo en Firebase → Authentication → Users, con una clave.</div>'}
+  </div>
+  <div class="p-5 border-t border-clay-100 flex justify-between"><div>${email&&email.toLowerCase()!==(SESSION.email||'').toLowerCase()?`<button onclick="deleteUsuario('${email.replace(/'/g,"\\'")}')" class="text-red-600 text-sm">Quitar acceso</button>`:''}</div><div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveUsuario()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div></div>`);
+}
+function saveUsuario(){
+  const email=document.getElementById('u_email').value.trim();
+  const nombre=document.getElementById('u_nombre').value.trim();
+  const rol=document.getElementById('u_rol').value;
+  if(!email){alert('Ingresa el correo');return;}
+  if(!DB.users) DB.users=[];
+  const ix=DB.users.findIndex(x=>(x.email||'').toLowerCase()===email.toLowerCase());
+  if(ix>=0) DB.users[ix]={email:DB.users[ix].email, nombre, rol};
+  else DB.users.push({email, nombre, rol});
+  save();closeModal();go('usuarios');
+}
+function deleteUsuario(email){
+  if((email||'').toLowerCase()===(SESSION.email||'').toLowerCase()){alert('No puedes quitarte el acceso a ti mismo.');return;}
+  if(!confirm('¿Quitar el acceso de '+email+'? (No borra su cuenta de Firebase Authentication, solo su rol aquí.)'))return;
+  DB.users=(DB.users||[]).filter(x=>x.email!==email);
+  save();closeModal();go('usuarios');
+}
+
 /* ---------- Utils UI ---------- */
 function val(id){return document.getElementById(id).value;}
 function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
@@ -1268,7 +1385,9 @@ function filterVentas(){
 }
 
 /* ---------- Init ---------- */
-initLogin();
+// La app arranca cuando Firebase está listo: el script de módulo llama a bootFirebaseApp().
+// Si Firebase ya cargó antes que este script, arrancamos de inmediato.
+if(window.FB) bootFirebaseApp();
 </script>
 </body>
 </html>
