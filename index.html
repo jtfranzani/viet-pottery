@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Viet Pottery · Plataforma de Gestión</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          clay:   { 50:'#f4f7f4',100:'#e6ece7',200:'#cbd8cd',300:'#a7bdaa',400:'#7d977f',500:'#5d7860',600:'#496150',700:'#3a4e40',800:'#2f4034',900:'#23332a' },
+          sage:   { 50:'#f3f6f1',100:'#e2ebdc',200:'#c5d6bb',300:'#9fb98f',400:'#7c9b69',500:'#5f7f4d',600:'#49653b',700:'#3a5030',800:'#30412a',900:'#293724' }
+        },
+        fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+      }
+    }
+  }
+</script>
+<style>
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#a7bdaa;border-radius:6px}
+  ::-webkit-scrollbar-track{background:#e6ece7}
+  [x-cloak]{display:none}
+  .card{background:#fff;border:1px solid #e6ece7;border-radius:16px;box-shadow:0 1px 3px rgba(35,51,42,.06),0 8px 24px -12px rgba(35,51,42,.14)}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+  input,select,textarea{outline:none}
+  input:focus,select:focus,textarea:focus{border-color:#3a4e40;box-shadow:0 0 0 3px rgba(58,78,64,.15)}
+  .nav-item.active{background:#3a4e40;color:#fff}
+  table{border-collapse:separate;border-spacing:0}
+  .fade{animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body class="bg-clay-50 text-clay-900 font-sans antialiased">
+
+<!-- ===================== LOGIN ===================== -->
+<div id="loginScreen" class="min-h-screen flex items-center justify-center p-4">
+  <div class="card w-full max-w-md p-8 fade">
+    <div class="flex flex-col items-center text-center mb-6">
+      <div class="w-16 h-16 rounded-2xl bg-clay-700 text-white flex items-center justify-center text-2xl font-bold mb-3">VP</div>
+      <h1 class="text-2xl font-bold">Viet Pottery</h1>
+      <p class="text-clay-500 text-sm">Plataforma de gestión · Stock · Ventas · Despachos</p>
+    </div>
+    <label class="block text-sm font-medium mb-1">Usuario</label>
+    <select id="loginUser" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-4 bg-clay-50"></select>
+    <label class="block text-sm font-medium mb-1">Clave</label>
+    <input id="loginPass" type="password" placeholder="123" class="w-full border border-clay-200 rounded-xl px-3 py-2.5 mb-2">
+    <p class="text-xs text-clay-400 mb-5">Demo: la clave de todos los usuarios es <b>123</b></p>
+    <button onclick="doLogin()" class="w-full bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl transition">Entrar</button>
+    <p id="loginErr" class="text-red-600 text-sm mt-3 hidden text-center">Clave incorrecta.</p>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="hidden min-h-screen flex">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="fixed lg:static z-40 inset-y-0 left-0 w-64 bg-clay-900 text-clay-100 flex-col -translate-x-full lg:translate-x-0 transition-transform flex">
+    <div class="px-5 py-5 flex items-center gap-3 border-b border-clay-800">
+      <div class="w-10 h-10 rounded-xl bg-clay-700 flex items-center justify-center font-bold">VP</div>
+      <div><div class="font-bold leading-tight">Viet Pottery</div><div class="text-xs text-clay-400">Gestión</div></div>
+    </div>
+    <nav id="navMenu" class="flex-1 p-3 space-y-1 overflow-y-auto text-sm"></nav>
+    <div class="p-3 border-t border-clay-800">
+      <div id="userBox" class="flex items-center gap-3 px-2 py-2"></div>
+      <button onclick="doLogout()" class="w-full mt-1 text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-300">Cerrar sesión</button>
+    </div>
+  </aside>
+  <div id="overlay" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/40 z-30 hidden lg:hidden"></div>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 flex flex-col">
+    <header class="sticky top-0 z-20 bg-clay-50/90 backdrop-blur border-b border-clay-200 px-4 lg:px-8 py-3 flex items-center gap-3">
+      <button onclick="toggleSidebar(true)" class="lg:hidden p-2 -ml-2 rounded-lg hover:bg-clay-100">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <h2 id="pageTitle" class="text-lg lg:text-xl font-bold flex-1">Dashboard</h2>
+      <div id="headerActions" class="flex items-center gap-2"></div>
+    </header>
+    <div id="view" class="p-4 lg:p-8 flex-1"></div>
+  </main>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+  <div class="absolute inset-0 bg-clay-900/40" onclick="closeModal()"></div>
+  <div id="modalBox" class="relative card w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-b-none sm:rounded-2xl fade"></div>
+</div>
+
+<script>
+/* =========================================================
+   VIET POTTERY · Prototipo de plataforma de gestión
+   Persistencia local (localStorage) — luego migrable a Firebase
+   ========================================================= */
+
+const LS_KEY = 'vietpottery_v4';
+const CITIES = ['Santiago','Rancagua','Talca','Otra'];
+const ACCOUNTS = ['Santander','Link de pago','Efectivo','Transferencia','Otra'];
+const fmt = n => '$' + (Math.round(n||0)).toLocaleString('es-CL');
+const todayISO = () => new Date().toISOString().slice(0,10);
+const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
+
+/* ---------- Seed data (derivado del Excel real) ---------- */
+function seed(){
+  return {
+    users: [
+      {id:'u1', nombre:'José Tomás Franzani', email:'jose@vietpottery.cl', rol:'admin', pass:'123'},
+      {id:'u2', nombre:'Vendedor Demo', email:'ventas@vietpottery.cl', rol:'vendedor', pass:'123'},
+      {id:'u3', nombre:'Bodega Demo', email:'bodega@vietpottery.cl', rol:'bodega', pass:'123'}
+    ],
+    products: [
+      {id:'p1',  sku:'VP-001', modelo:'Rustic Round', tamano:'L', color:'óxido', precioRef:63000, costo:34653, stockInicial:10, stockMin:3},
+      {id:'p2',  sku:'VP-002', modelo:'Rustic Round', tamano:'M', color:'óxido', precioRef:48000, costo:25157, stockInicial:10, stockMin:3},
+      {id:'p3',  sku:'VP-003', modelo:'Rustic Round', tamano:'S', color:'óxido', precioRef:33000, costo:13922, stockInicial:10, stockMin:3},
+      {id:'p4',  sku:'VP-004', modelo:'Rustic Round', tamano:'L', color:'grafito', precioRef:63000, costo:34653, stockInicial:10, stockMin:3},
+      {id:'p5',  sku:'VP-005', modelo:'Rustic Round', tamano:'M', color:'grafito', precioRef:48000, costo:25157, stockInicial:10, stockMin:3},
+      {id:'p6',  sku:'VP-006', modelo:'Rustic Round', tamano:'S', color:'grafito', precioRef:33000, costo:13922, stockInicial:10, stockMin:3},
+      {id:'p7',  sku:'VP-007', modelo:'Rustic Round', tamano:'L', color:'sandstone', precioRef:63000, costo:34653, stockInicial:10, stockMin:3},
+      {id:'p8',  sku:'VP-008', modelo:'Rustic Round', tamano:'M', color:'sandstone', precioRef:48000, costo:25157, stockInicial:10, stockMin:3},
+      {id:'p9',  sku:'VP-009', modelo:'Essential', tamano:'L', color:'macchiato', precioRef:63000, costo:36468, stockInicial:10, stockMin:3},
+      {id:'p10', sku:'VP-010', modelo:'Essential', tamano:'M', color:'macchiato', precioRef:48000, costo:26563, stockInicial:10, stockMin:3},
+      {id:'p11', sku:'VP-011', modelo:'Essential', tamano:'L', color:'cemento', precioRef:63000, costo:36468, stockInicial:10, stockMin:3},
+      {id:'p12', sku:'VP-012', modelo:'Essential', tamano:'L', color:'terracota', precioRef:63000, costo:36468, stockInicial:10, stockMin:3},
+      {id:'p13', sku:'VP-013', modelo:'Elipse', tamano:'XL', color:'grafito', precioRef:125000, costo:80878, stockInicial:10, stockMin:3},
+      {id:'p14', sku:'VP-014', modelo:'Elipse', tamano:'L', color:'grafito', precioRef:65000, costo:37664, stockInicial:10, stockMin:3},
+      {id:'p15', sku:'VP-015', modelo:'Elipse', tamano:'M', color:'grafito', precioRef:45000, costo:17265, stockInicial:10, stockMin:3},
+      {id:'p16', sku:'VP-016', modelo:'Elipse', tamano:'XL', color:'óxido', precioRef:125000, costo:80878, stockInicial:10, stockMin:3},
+      {id:'p17', sku:'VP-017', modelo:'Elipse', tamano:'L', color:'óxido', precioRef:65000, costo:37664, stockInicial:10, stockMin:3},
+      {id:'p18', sku:'VP-018', modelo:'Elipse', tamano:'M', color:'óxido', precioRef:45000, costo:17265, stockInicial:10, stockMin:3},
+      {id:'p19', sku:'VP-019', modelo:'Cask', tamano:'L', color:'macchiato', precioRef:110000, costo:60918, stockInicial:10, stockMin:3},
+      {id:'p20', sku:'VP-020', modelo:'Cask', tamano:'M', color:'macchiato', precioRef:70000, costo:40589, stockInicial:10, stockMin:3},
+      {id:'p21', sku:'VP-021', modelo:'Cask', tamano:'L', color:'grafito', precioRef:83000, costo:47969, stockInicial:10, stockMin:3},
+      {id:'p22', sku:'VP-022', modelo:'Cask', tamano:'M', color:'grafito', precioRef:58000, costo:31401, stockInicial:10, stockMin:3},
+      {id:'p23', sku:'VP-023', modelo:'Cask', tamano:'S', color:'grafito', precioRef:45000, costo:23147, stockInicial:10, stockMin:3},
+      {id:'p24', sku:'VP-024', modelo:'Cask', tamano:'L', color:'blanco', precioRef:83000, costo:47969, stockInicial:10, stockMin:3},
+      {id:'p25', sku:'VP-025', modelo:'Cask', tamano:'M', color:'blanco', precioRef:58000, costo:31401, stockInicial:10, stockMin:3},
+      {id:'p26', sku:'VP-026', modelo:'Cask', tamano:'L', color:'gris', precioRef:83000, costo:47969, stockInicial:10, stockMin:3},
+      {id:'p27', sku:'VP-027', modelo:'Cask', tamano:'M', color:'gris', precioRef:58000, costo:31401, stockInicial:10, stockMin:3},
+      {id:'p28', sku:'VP-028', modelo:'Bios planter', tamano:'Único', color:'negro', precioRef:83000, costo:54077, stockInicial:10, stockMin:3},
+      {id:'p29', sku:'VP-029', modelo:'Bios tall', tamano:'Único', color:'negro', precioRef:73000, costo:47305, stockInicial:10, stockMin:3},
+      {id:'p30', sku:'VP-030', modelo:'Bios tall', tamano:'Único', color:'sandstone', precioRef:73000, costo:47305, stockInicial:10, stockMin:3},
+      {id:'p31', sku:'VP-031', modelo:'Garland', tamano:'Único', color:'Natural', precioRef:45000, costo:30810, stockInicial:10, stockMin:3},
+      {id:'p32', sku:'VP-032', modelo:'Flute', tamano:'L', color:'Natural', precioRef:63000, costo:35353, stockInicial:10, stockMin:3},
+      {id:'p33', sku:'VP-033', modelo:'Flute', tamano:'S', color:'Natural', precioRef:43000, costo:19044, stockInicial:10, stockMin:3},
+      {id:'p34', sku:'VP-034', modelo:'Flute tall', tamano:'L', color:'Natural', precioRef:65000, costo:32405, stockInicial:10, stockMin:3},
+      {id:'p35', sku:'VP-035', modelo:'European bowl', tamano:'Estándar', color:'grafito', precioRef:43000, costo:18407, stockInicial:10, stockMin:3},
+      {id:'p36', sku:'VP-036', modelo:'European bowl', tamano:'Estándar', color:'sandstone', precioRef:43000, costo:18407, stockInicial:10, stockMin:3},
+      {id:'p37', sku:'VP-037', modelo:'European bowl', tamano:'XL', color:'grafito', precioRef:80000, costo:47279, stockInicial:10, stockMin:3},
+      {id:'p38', sku:'VP-038', modelo:'European bowl', tamano:'XL', color:'blanco', precioRef:80000, costo:47279, stockInicial:10, stockMin:3},
+      {id:'p39', sku:'VP-039', modelo:'Drizzle Round', tamano:'M', color:'Natural', precioRef:45000, costo:22045, stockInicial:10, stockMin:3},
+      {id:'p40', sku:'VP-040', modelo:'Autoregante bowl', tamano:'L', color:'Natural', precioRef:115000, costo:94010, stockInicial:10, stockMin:3},
+      {id:'p41', sku:'VP-041', modelo:'Autoregante bowl', tamano:'M', color:'Natural', precioRef:90000, costo:64260, stockInicial:10, stockMin:3},
+      {id:'p42', sku:'VP-042', modelo:'Autoregante tinaja', tamano:'L', color:'Natural', precioRef:120000, costo:92820, stockInicial:10, stockMin:3},
+      {id:'p43', sku:'VP-043', modelo:'Autoregante tinaja', tamano:'M', color:'Natural', precioRef:95000, costo:70805, stockInicial:10, stockMin:3},
+      {id:'p44', sku:'VP-044', modelo:'Macetero Fierro', tamano:'XL', color:'Natural', precioRef:118990, costo:65450, stockInicial:10, stockMin:3},
+      {id:'p45', sku:'VP-045', modelo:'Macetero Fierro', tamano:'L', color:'Natural', precioRef:100990, costo:89250, stockInicial:10, stockMin:3},
+      {id:'p46', sku:'VP-046', modelo:'Macetero Fierro', tamano:'M', color:'Natural', precioRef:87990, costo:53550, stockInicial:10, stockMin:3},
+      {id:'p47', sku:'VP-047', modelo:'Macetero Fierro con base', tamano:'XL', color:'Natural', precioRef:178500, costo:0, stockInicial:10, stockMin:3},
+      {id:'p48', sku:'VP-048', modelo:'Macetero Fierro con base', tamano:'L', color:'Natural', precioRef:142800, costo:0, stockInicial:10, stockMin:3},
+      {id:'p49', sku:'VP-049', modelo:'Macetero Fierro con base', tamano:'M', color:'Natural', precioRef:130900, costo:0, stockInicial:10, stockMin:3},
+      {id:'p50', sku:'VP-050', modelo:'Paila', tamano:'M', color:'cemento', precioRef:75990, costo:0, stockInicial:10, stockMin:3}
+    ],
+    clients: [
+      {id:'c1', nombre:'Maca Pizarro', ciudad:'Rancagua', comuna:'Rancagua', direccion:'', telefono:'', email:''},
+      {id:'c2', nombre:'Plantas Chile', ciudad:'Santiago', comuna:'Santiago Centro', direccion:'', telefono:'', email:''},
+      {id:'c3', nombre:'Carolina Fuenzalida', ciudad:'Santiago', comuna:'Providencia', direccion:'', telefono:'', email:''},
+      {id:'c4', nombre:'Lyn Guzmán', ciudad:'Rancagua', comuna:'Rancagua', direccion:'', telefono:'', email:''},
+      {id:'c5', nombre:'Garden4all', ciudad:'Santiago', comuna:'Vitacura', direccion:'', telefono:'', email:''},
+      {id:'c6', nombre:'Tere Baudrand', ciudad:'Santiago', comuna:'Las Condes', direccion:'', telefono:'', email:''},
+      {id:'c7', nombre:'Anita Valenzuela', ciudad:'Santiago', comuna:'Vitacura', direccion:'', telefono:'', email:''},
+      {id:'c8', nombre:'Natalia Ferrer', ciudad:'Talca', comuna:'Talca', direccion:'', telefono:'', email:''}
+    ],
+    sales: [
+      {id:'s1', fecha:'2026-05-12', fechaEntrega:'2026-06-10', clienteId:'c1', items:[{productId:'p16',descripcion:'Elipse óxido XL',cantidad:1,precio:125000}], cuenta:'Santander', pagado:false, docTipo:'pendiente', docNumero:'', ciudad:'Rancagua', comuna:'Rancagua', direccion:'', estadoDespacho:'pendiente', courier:'', costoEnvio:0, notas:'Fuera de stock al momento de la venta'},
+      {id:'s2', fecha:'2026-05-15', fechaEntrega:'2026-05-18', clienteId:'c2', items:[{productId:'p46',descripcion:'Macetero Fierro M',cantidad:5,precio:87990}], cuenta:'Santander', pagado:true, docTipo:'factura', docNumero:'8', ciudad:'Santiago', comuna:'Santiago Centro', direccion:'', estadoDespacho:'entregado', courier:'Starken', costoEnvio:12000, notas:''},
+      {id:'s3', fecha:'2026-05-18', fechaEntrega:'2026-06-09', clienteId:'c3', items:[{productId:'p9',descripcion:'Essential macchiato L',cantidad:3,precio:63000}], cuenta:'Santander', pagado:true, docTipo:'pendiente', docNumero:'', ciudad:'Santiago', comuna:'Providencia', direccion:'', estadoDespacho:'pendiente', courier:'', costoEnvio:0, notas:'Falta emitir factura'},
+      {id:'s4', fecha:'2026-05-20', fechaEntrega:'2026-05-23', clienteId:'c4', items:[{productId:'p32',descripcion:'Flute L',cantidad:1,precio:63000},{productId:'p33',descripcion:'Flute S',cantidad:1,precio:43000}], cuenta:'Santander', pagado:true, docTipo:'factura', docNumero:'11', ciudad:'Rancagua', comuna:'Rancagua', direccion:'', estadoDespacho:'entregado', courier:'Pullman', costoEnvio:9000, notas:''},
+      {id:'s5', fecha:'2026-05-22', fechaEntrega:'2026-05-25', clienteId:'c8', items:[{productId:'p34',descripcion:'Flute tall L',cantidad:2,precio:65000}], cuenta:'Santander', pagado:true, docTipo:'no_aplica', docNumero:'', ciudad:'Talca', comuna:'Talca', direccion:'', estadoDespacho:'entregado', courier:'Pullman', costoEnvio:11000, notas:''},
+      {id:'s6', fecha:'2026-05-28', fechaEntrega:'2026-05-31', clienteId:'c5', items:[{productId:'p45',descripcion:'Macetero Fierro L',cantidad:5,precio:100990}], cuenta:'Santander', pagado:true, docTipo:'factura', docNumero:'12', ciudad:'Santiago', comuna:'Vitacura', direccion:'', estadoDespacho:'entregado', courier:'Propio', costoEnvio:15000, notas:''},
+      {id:'s7', fecha:'2026-06-02', fechaEntrega:'2026-06-12', clienteId:'c6', items:[{productId:'p17',descripcion:'Elipse óxido L',cantidad:3,precio:65000}], cuenta:'Link de pago', pagado:true, docTipo:'boleta', docNumero:'87', ciudad:'Santiago', comuna:'Las Condes', direccion:'', estadoDespacho:'en_camino', courier:'Starken', costoEnvio:13000, notas:''},
+      {id:'s8', fecha:'2026-06-04', fechaEntrega:'2026-06-15', clienteId:'c7', items:[{productId:'p24',descripcion:'Cask blanco L',cantidad:1,precio:83000}], cuenta:'Santander', pagado:true, docTipo:'boleta', docNumero:'88', ciudad:'Santiago', comuna:'Vitacura', direccion:'', estadoDespacho:'pendiente', courier:'', costoEnvio:0, notas:''}
+    ],
+    purchases: [
+      {id:'pu1', fecha:'2026-05-05', proveedor:'Importadora Vietnam', items:[{productId:'p9',cantidad:24,costo:36468},{productId:'p15',cantidad:16,costo:17265}], notas:'Contenedor mayo'},
+      {id:'pu2', fecha:'2026-05-25', proveedor:'Importadora Vietnam', items:[{productId:'p46',cantidad:12,costo:53550},{productId:'p45',cantidad:10,costo:89250}], notas:''}
+    ],
+    adjustments: [],
+    orders: [],
+    counter: { boleta: 92, factura: 12, oc: 0 }
+  };
+}
+
+/* ---------- State ---------- */
+let DB;            // se declara antes de load() para evitar el TDZ al llamar save()
+DB = load();
+let SESSION = null;
+let CURRENT = 'dashboard';
+
+function load(){
+  try{ const r = localStorage.getItem(LS_KEY); if(r) return JSON.parse(r);}catch(e){}
+  const s = seed(); save(s); return s;
+}
+function save(db){ DB = db||DB; try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ console.warn('No se pudo guardar', e);} }
+
+/* ---------- Helpers de negocio ---------- */
+const productById = id => DB.products.find(p=>p.id===id);
+const clientById = id => DB.clients.find(c=>c.id===id);
+const productName = p => `${p.modelo} ${p.tamano!=='Único'?p.tamano:''} ${p.color!=='Natural'?'· '+p.color:''}`.replace(/\s+/g,' ').trim();
+const saleTotal = s => s.items.reduce((a,i)=>a+i.cantidad*i.precio,0);
+const saleCost  = s => s.items.reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
+// Nombre limpio de un item: usa el catálogo y, si no, limpia la descripción (quita "xN" duplicado).
+const itemLabel = i => { const p=productById(i.productId); return p?productName(p):String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim(); };
+// Lista de productos de una venta en líneas alineadas (cantidad × nombre).
+const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabel(i)}</span></div>`).join('');
+
+function stockOf(productId){
+  const p = productById(productId); if(!p) return 0;
+  let s = p.stockInicial;
+  DB.sales.forEach(v=>v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }));
+  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }));
+  DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
+  return s;
+}
+function clientBalance(clientId){
+  return DB.sales.filter(s=>s.clienteId===clientId && !s.pagado).reduce((a,s)=>a+saleTotal(s),0);
+}
+
+/* ---------- Auth & layout ---------- */
+const NAV = [
+  {id:'dashboard', label:'Dashboard', roles:['admin','vendedor','bodega'], icon:'M3 12l9-9 9 9M5 10v10h14V10'},
+  {id:'ventas',    label:'Ventas',    roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
+  {id:'despachos', label:'Despachos', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
+  {id:'calendario', label:'Calendario', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
+  {id:'clientes',  label:'Clientes', roles:['admin','vendedor'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87'},
+  {id:'cobranzas', label:'Cobranzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
+  {id:'stock',     label:'Stock',     roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
+  {id:'productos', label:'Productos', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
+  {id:'compras',   label:'Compras',   roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'}
+];
+
+function initLogin(){
+  document.getElementById('loginUser').innerHTML = DB.users.map(u=>`<option value="${u.id}">${u.nombre} — ${u.rol}</option>`).join('');
+}
+function doLogin(){
+  const uid = document.getElementById('loginUser').value;
+  const pass = document.getElementById('loginPass').value || '123';
+  const u = DB.users.find(x=>x.id===uid);
+  if(!u || u.pass!==pass){ document.getElementById('loginErr').classList.remove('hidden'); return; }
+  SESSION = u;
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  buildNav(); renderUserBox(); go('dashboard');
+}
+function doLogout(){ SESSION=null; location.reload(); }
+
+function buildNav(){
+  const nav = document.getElementById('navMenu');
+  nav.innerHTML = NAV.filter(n=>n.roles.includes(SESSION.rol)).map(n=>`
+    <button onclick="go('${n.id}')" data-nav="${n.id}" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-clay-800 text-clay-200 transition">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${n.icon}"/></svg>
+      <span>${n.label}</span>
+    </button>`).join('');
+}
+function renderUserBox(){
+  const initials = SESSION.nombre.split(' ').map(s=>s[0]).slice(0,2).join('');
+  document.getElementById('userBox').innerHTML = `
+    <div class="w-9 h-9 rounded-full bg-sage-500 flex items-center justify-center font-semibold text-white text-sm">${initials}</div>
+    <div class="min-w-0"><div class="text-sm font-medium truncate">${SESSION.nombre}</div><div class="text-xs text-clay-400 capitalize">${SESSION.rol}</div></div>`;
+}
+function toggleSidebar(open){
+  const sb=document.getElementById('sidebar'), ov=document.getElementById('overlay');
+  if(open){ sb.classList.remove('-translate-x-full'); ov.classList.remove('hidden'); }
+  else { sb.classList.add('-translate-x-full'); ov.classList.add('hidden'); }
+}
+
+function go(view){
+  CURRENT = view;
+  document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
+  toggleSidebar(false);
+  const titles={dashboard:'Dashboard',ventas:'Ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras'};
+  document.getElementById('pageTitle').textContent = titles[view];
+  document.getElementById('headerActions').innerHTML = headerAction(view);
+  const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
+  ({dashboard:renderDashboard,ventas:renderVentas,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras})[view]();
+}
+function headerAction(view){
+  const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
+  if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nueva venta');
+  if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
+  if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
+  return '';
+}
+
+/* ---------- Componentes UI ---------- */
+function statCard(label,value,sub,color){
+  return `<div class="card p-5">
+    <div class="text-sm text-clay-500">${label}</div>
+    <div class="text-2xl font-bold mt-1 ${color||''}">${value}</div>
+    ${sub?`<div class="text-xs text-clay-400 mt-1">${sub}</div>`:''}
+  </div>`;
+}
+function pill(text,kind){
+  const c={green:'bg-sage-100 text-sage-700',red:'bg-red-100 text-red-700',amber:'bg-amber-100 text-amber-700',gray:'bg-clay-100 text-clay-600',blue:'bg-blue-100 text-blue-700'}[kind]||'bg-clay-100 text-clay-600';
+  return `<span class="badge ${c}">${text}</span>`;
+}
+const payPill = s => s.pagado?pill('Pagado','green'):pill('Por cobrar','red');
+const dispPill = s => ({pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')})[s.estadoDespacho];
+function docLabel(s){
+  if(s.docTipo==='no_aplica') return '<span class="text-clay-300">No aplica</span>';
+  if(s.docTipo==='pendiente') return pill('Pendiente','amber');
+  return `${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}`;
+}
+function entregaCell(s){
+  if(!s.fechaEntrega) return '<span class="text-clay-300">— sin fecha</span>';
+  const atrasado = s.estadoDespacho!=='entregado' && s.fechaEntrega < todayISO();
+  const hoy = s.fechaEntrega === todayISO();
+  return `<span class="${atrasado?'text-red-600 font-semibold':hoy?'text-amber-600 font-semibold':''}">${s.fechaEntrega}${atrasado?' ⚠️':hoy?' · hoy':''}</span>`;
+}
+
+/* ===================== DASHBOARD ===================== */
+function renderDashboard(){
+  const now=new Date(), m=now.getMonth(), y=now.getFullYear();
+  const inMonth = s => { const d=new Date(s.fecha); return d.getMonth()===m && d.getFullYear()===y; };
+  const ventasMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleTotal(s),0);
+  const porCobrar = DB.sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
+  const stockBajo = DB.products.filter(p=>stockOf(p.id)<=p.stockMin);
+  const despPend  = DB.sales.filter(s=>s.estadoDespacho!=='entregado');
+  const margenMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleTotal(s)-saleCost(s),0);
+  const docsPend = DB.sales.filter(s=>s.docTipo==='pendiente');
+
+  const v=document.getElementById('view');
+  v.innerHTML = `
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Ventas del mes',fmt(ventasMes),DB.sales.filter(inMonth).length+' ventas','text-clay-800')}
+    ${statCard('Margen del mes',fmt(margenMes),'Utilidad estimada','text-sage-600')}
+    <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' ventas impagas · ver →','text-red-600')}</button>
+    <button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>
+  </div>
+  ${docsPend.length?`<button onclick="goVentasPendientes()" class="w-full text-left card p-4 mb-6 flex items-center gap-3 hover:border-amber-300 transition" style="border-color:#fcd34d;background:#fffbeb">
+    <span class="text-xl">📌</span>
+    <div class="flex-1"><div class="font-semibold text-amber-800">Tienes ${docsPend.length} documento${docsPend.length>1?'s':''} pendiente${docsPend.length>1?'s':''} por emitir</div><div class="text-xs text-amber-700">Boletas o facturas que aún debes generar. Haz clic para verlas.</div></div>
+    <span class="text-amber-700 text-sm font-medium">Ver →</span>
+  </button>`:''}
+  <div class="grid lg:grid-cols-3 gap-4 mb-6">
+    <div class="card p-5 lg:col-span-2"><div class="font-semibold mb-3">Ventas por mes</div><canvas id="chMes" height="120"></canvas></div>
+    <div class="card p-5"><div class="font-semibold mb-3">Ventas por ciudad</div><canvas id="chCiudad" height="120"></canvas></div>
+  </div>
+  <div class="grid lg:grid-cols-2 gap-4">
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3"><div class="font-semibold">Stock bajo</div><button onclick="go('stock')" class="text-xs text-clay-600 hover:underline">Ver stock →</button></div>
+      ${stockBajo.length? stockBajo.map(p=>`<div class="flex items-center justify-between py-2 border-b border-clay-100 last:border-0">
+        <div class="text-sm">${productName(p)} <span class="text-clay-400">· ${p.sku}</span></div>
+        <div>${pill(stockOf(p.id)+' u · mín '+p.stockMin, stockOf(p.id)<=0?'red':'amber')}</div></div>`).join('') : '<div class="text-sm text-clay-400 py-4 text-center">Todo el stock está sobre el mínimo 👍</div>'}
+    </div>
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3"><div class="font-semibold">Top productos (por venta)</div></div>
+      <canvas id="chTop" height="160"></canvas>
+    </div>
+  </div>`;
+
+  // Charts
+  const byMonth={}; DB.sales.forEach(s=>{const k=s.fecha.slice(0,7); byMonth[k]=(byMonth[k]||0)+saleTotal(s);});
+  const mk=Object.keys(byMonth).sort();
+  drawChart('chMes','bar',mk,mk.map(k=>byMonth[k]),'#496150');
+  const byCity={}; DB.sales.forEach(s=>{byCity[s.ciudad]=(byCity[s.ciudad]||0)+saleTotal(s);});
+  drawChart('chCiudad','doughnut',Object.keys(byCity),Object.values(byCity),['#3a4e40','#5f7f4d','#7d977f','#a7bdaa','#9fb98f']);
+  const byProd={}; DB.sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const n=p?productName(p):i.descripcion;byProd[n]=(byProd[n]||0)+i.cantidad*i.precio;}));
+  const top=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  drawChart('chTop','bar',top.map(t=>t[0]),top.map(t=>t[1]),'#5f7f4d',true);  // verde herbal para top productos
+}
+let charts={};
+function drawChart(id,type,labels,data,color,horizontal){
+  if(charts[id]) charts[id].destroy();
+  const ctx=document.getElementById(id); if(!ctx||!window.Chart) return;
+  charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,backgroundColor:Array.isArray(color)?color:color,borderRadius:6,borderWidth:0}]},
+    options:{indexAxis:horizontal?'y':'x',plugins:{legend:{display:type==='doughnut',position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+      scales:type==='doughnut'?{}:{y:{ticks:{callback:v=>'$'+(v/1000)+'k',font:{size:10}},grid:{color:'#e6ece7'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}});
+}
+
+/* ===================== VENTAS ===================== */
+function renderVentas(){
+  const v=document.getElementById('view');
+  const rows=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  v.innerHTML=`
+  <div class="card overflow-hidden">
+    <div class="p-4 flex flex-wrap gap-2 items-center border-b border-clay-100">
+      <input id="fVenta" oninput="filterVentas()" placeholder="Buscar cliente o producto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <select id="fDoc" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Todos los documentos</option>
+        <option value="pendiente">📌 Documentos pendientes</option>
+        <option value="boleta">Boleta</option>
+        <option value="factura">Factura</option>
+        <option value="no_aplica">No aplica</option>
+      </select>
+      <select id="fPago" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Pago: todos</option>
+        <option value="no">Por cobrar</option>
+        <option value="si">Pagado</option>
+      </select>
+      <div id="vCount" class="text-sm text-clay-500 ml-auto">${rows.length} ventas</div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="vtbl">
+        <thead class="bg-clay-50 text-clay-500 text-xs uppercase">
+          <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
+        </thead>
+        <tbody>
+        ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}">
+          <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
+          <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
+          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="text-xs text-clay-400">${[s.ciudad,s.comuna].filter(Boolean).join(' · ')}</div></td>
+          <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
+          <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
+          <td class="px-4 py-3">${payPill(s)}</td>
+          <td class="px-4 py-3">${dispPill(s)}</td>
+          <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap">
+            ${SESSION.rol!=='bodega'?`<button onclick="openConfirmacion('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-clay-600 hover:text-clay-900 px-1.5">Editar</button>`:''}
+          </td></tr>`;}).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openSale(id){
+  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef}],cuenta:'Santander',pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',courier:'',costoEnvio:0,notas:''};
+  EDIT = JSON.parse(JSON.stringify(s));
+  renderSaleModal();
+}
+let EDIT=null;
+function renderSaleModal(){
+  const s=EDIT;
+  const cliObj = clientById(s.clienteId);
+  const clientName = s.clienteNombre || (cliObj?.nombre) || '';
+  const cliTel = cliObj?.telefono || '';
+  const cliEmail = cliObj?.email || '';
+  const clientList=DB.clients.map(c=>`<option value="${c.nombre.replace(/"/g,'&quot;')}">`).join('');
+  const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');
+  const total=saleTotal(s);
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${s.id?'Editar venta':'Nueva venta'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div><label class="text-sm font-medium">Cliente</label>
+        <input id="s_cli" list="clientList" value="${clientName.replace(/"/g,'&quot;')}" placeholder="Escribe el nombre del cliente" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">
+        <datalist id="clientList">${clientList}</datalist></div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-xs text-clay-500">Celular del cliente (opcional)</label><input id="s_cli_tel" value="${cliTel.replace(/"/g,'&quot;')}" placeholder="+56 9 ..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-xs text-clay-500">Email del cliente (opcional)</label><input id="s_cli_email" value="${cliEmail.replace(/"/g,'&quot;')}" placeholder="correo@ejemplo.cl" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div class="text-xs text-clay-400 -mt-2">Escribe el cliente libremente. Si es nuevo, se crea solo en tu base con estos datos.</div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Fecha de venta</label><input id="s_fecha" type="date" value="${s.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Fecha de entrega</label><input id="s_entrega" type="date" value="${s.fechaEntrega||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos</label>
+          <button onclick="addSaleItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div class="space-y-2" id="s_items">
+          ${s.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('')}
+        </div>
+        <div class="text-xs text-clay-400 mt-1">El precio viene del catálogo pero lo puedes <b>modificar libremente</b> en cada línea.</div>
+      </div>
+
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-sm font-medium">Cuenta / pago</label><select id="s_cuenta" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">${ACCOUNTS.map(a=>`<option ${a===s.cuenta?'selected':''}>${a}</option>`).join('')}</select></div>
+        <div><label class="text-sm font-medium">Estado de pago</label><select id="s_pagado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="false" ${!s.pagado?'selected':''}>Por cobrar</option><option value="true" ${s.pagado?'selected':''}>Pagado</option></select></div>
+        <div><label class="text-sm font-medium">Documento</label>
+          <div class="flex gap-2">
+            <select id="s_doc" class="border border-clay-200 rounded-xl px-2 py-2 mt-1"><option value="pendiente" ${s.docTipo==='pendiente'?'selected':''}>Pendiente</option><option value="boleta" ${s.docTipo==='boleta'?'selected':''}>Boleta</option><option value="factura" ${s.docTipo==='factura'?'selected':''}>Factura</option><option value="no_aplica" ${s.docTipo==='no_aplica'?'selected':''}>No aplica</option></select>
+            <input id="s_docnum" value="${s.docNumero}" placeholder="N°" class="w-20 border border-clay-200 rounded-xl px-2 py-2 mt-1">
+          </div></div>
+      </div>
+
+      <div class="bg-clay-50 rounded-xl p-4">
+        <div class="text-sm font-semibold mb-2">Despacho</div>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <div><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" placeholder="Ciudad" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
+          <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
+          <div><label class="text-xs text-clay-500">Courier</label><input id="s_courier" value="${s.courier}" placeholder="Starken, Pullman..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        </div>
+      </div>
+      <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <div>${s.id&&SESSION.rol==='admin'?`<button onclick="deleteSale('${s.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
+      <div class="flex items-center gap-4">
+        <div class="text-right"><div class="text-xs text-clay-400">Total</div><div id="s_total" class="text-xl font-bold">${fmt(total)}</div></div>
+        <button onclick="saveSale()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar</button>
+      </div>
+    </div>
+  `);
+}
+function saleItemRow(it,ix,prodOpt){
+  return `<div class="grid grid-cols-12 gap-2 items-center s-item" data-ix="${ix}">
+    <select onchange="onSaleProd(${ix},this.value)" class="col-span-5 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select>
+    <input type="number" min="1" value="${it.cantidad}" oninput="onSaleQty(${ix},this.value)" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center" title="Cantidad">
+    <input type="number" value="${it.precio}" oninput="onSalePrice(${ix},this.value)" class="col-span-4 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right" title="Precio unitario (editable)">
+    <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center">✕</button>
+  </div>`;
+}
+function syncSaleFromForm(){
+  EDIT.clienteNombre=document.getElementById('s_cli').value.trim();
+  EDIT.fecha=document.getElementById('s_fecha').value;
+  EDIT.fechaEntrega=document.getElementById('s_entrega').value;
+  EDIT.cuenta=document.getElementById('s_cuenta').value;
+  EDIT.pagado=document.getElementById('s_pagado').value==='true';
+  EDIT.docTipo=document.getElementById('s_doc').value;
+  EDIT.docNumero=document.getElementById('s_docnum').value;
+  EDIT.ciudad=document.getElementById('s_ciudad').value.trim();
+  EDIT.comuna=document.getElementById('s_comuna').value.trim();
+  EDIT.direccion=document.getElementById('s_dir').value;
+  EDIT.estadoDespacho=document.getElementById('s_disp').value;
+  EDIT.courier=document.getElementById('s_courier').value;
+  EDIT.costoEnvio=+document.getElementById('s_envio').value||0;
+  EDIT.notas=document.getElementById('s_notas').value;
+}
+// Busca un cliente por nombre (sin distinguir mayúsculas) o lo crea automáticamente.
+// Si el cliente ya existe, completa los datos que estén vacíos con lo ingresado.
+function resolveClient(nombre, ciudad, comuna, direccion, telefono, email){
+  const n=(nombre||'').trim(); if(!n) return null;
+  let c=DB.clients.find(x=>x.nombre.toLowerCase()===n.toLowerCase());
+  if(!c){
+    c={id:uid('c'),nombre:n,ciudad:ciudad||'',comuna:comuna||'',direccion:direccion||'',telefono:telefono||'',email:email||''};
+    DB.clients.push(c);
+  } else {
+    if(telefono && !c.telefono) c.telefono=telefono;
+    if(email && !c.email) c.email=email;
+    if(comuna && !c.comuna) c.comuna=comuna;
+    if(ciudad && !c.ciudad) c.ciudad=ciudad;
+  }
+  return c;
+}
+function onSaleProd(ix,pid){const p=productById(pid);EDIT.items[ix].productId=pid;EDIT.items[ix].descripcion=productName(p);EDIT.items[ix].precio=p.precioRef;refreshSaleItems();}
+function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateSaleTotal();}
+function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateSaleTotal();}
+function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef});refreshSaleItems();}
+function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
+function refreshSaleItems(){const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
+function updateSaleTotal(){document.getElementById('s_total').textContent=fmt(saleTotal(EDIT));}
+function saveSale(){
+  syncSaleFromForm();
+  if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
+  if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
+  const esNueva=!EDIT.id;
+  const tel=(document.getElementById('s_cli_tel')?.value||'').trim();
+  const email=(document.getElementById('s_cli_email')?.value||'').trim();
+  const cli=resolveClient(EDIT.clienteNombre, EDIT.ciudad, EDIT.comuna, EDIT.direccion, tel, email);
+  EDIT.clienteId=cli.id;
+  if(EDIT.id){const ix=DB.sales.findIndex(x=>x.id===EDIT.id);DB.sales[ix]=EDIT;}
+  else{
+    EDIT.id=uid('s');
+    if(EDIT.docTipo==='boleta'&&!EDIT.docNumero){DB.counter.boleta++;EDIT.docNumero=String(DB.counter.boleta);}
+    if(EDIT.docTipo==='factura'&&!EDIT.docNumero){DB.counter.factura++;EDIT.docNumero=String(DB.counter.factura);}
+    DB.sales.push(EDIT);
+  }
+  const sid=EDIT.id;
+  save();closeModal();go(CURRENT==='despachos'?'despachos':'ventas');
+  if(esNueva) openConfirmacion(sid);
+}
+function deleteSale(id){if(!confirm('¿Eliminar esta venta?'))return;DB.sales=DB.sales.filter(s=>s.id!==id);save();closeModal();go('ventas');}
+
+/* ----- Comprobante de compra (imagen descargable para el cliente) ----- */
+function comprobanteHTML(s){
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const subtotal=saleTotal(s);
+  const envio=s.costoEnvio||0;
+  const total=subtotal+envio;
+  const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
+  const row=(l,r,extra)=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;${extra||''}"><span style="color:#5d7860;">${l}</span><span>${r}</span></div>`;
+  return `
+  <div id="comprobante" style="width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
+    <div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;">
+      <div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div>
+      <div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div>
+      <div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div>
+    </div>
+    <div style="padding:24px;">
+      <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#5f7f4d;color:#ffffff;font-size:12px;">✓</span> ¡Compra confirmada!
+      </div>
+      ${row('Cliente',`<b>${nombre}</b>`)}
+      ${row('Fecha',s.fecha)}
+      ${s.fechaEntrega?row('Entrega estimada',`<b>${s.fechaEntrega}</b>`):''}
+      <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Detalle de tu compra</div>
+      ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span><span style="font-weight:600;white-space:nowrap;">${fmt(i.cantidad*i.precio)}</span></div>`).join('')}
+      <div style="border-top:1px dashed #cbd8cd;margin:14px 0;"></div>
+      ${row('Subtotal',fmt(subtotal))}
+      ${envio>0?row('Envío',fmt(envio)):''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;background:#f3f6f1;border-radius:10px;padding:13px 15px;"><span style="font-weight:700;">Total</span><span style="font-weight:700;font-size:19px;color:#3a4e40;">${fmt(total)}</span></div>
+      ${(s.cuenta||lugar)?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div>`:''}
+      ${s.cuenta?`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span style="color:#5d7860;">Medio de pago</span><span>${s.cuenta}</span></div>`:''}
+      ${lugar?`<div style="display:flex;justify-content:space-between;font-size:12px;"><span style="color:#5d7860;">Despacho a</span><span>${lugar}</span></div>`:''}
+    </div>
+    <div style="background:#f3f6f1;padding:16px 24px;text-align:center;border-top:1px solid #e6ece7;">
+      <div style="font-size:13px;color:#3a5030;font-weight:600;">¡Gracias por tu compra! 🌿</div>
+      <div style="font-size:11px;color:#7d977f;margin-top:2px;">Viet Pottery · maceteros con alma</div>
+    </div>
+  </div>`;
+}
+function openConfirmacion(saleId){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <h3 class="text-lg font-bold">Comprobante para el cliente</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 bg-clay-50 flex flex-col items-center gap-4">
+      <div style="overflow-x:auto;max-width:100%;">${comprobanteHTML(s)}</div>
+      <div class="flex gap-2 w-full max-w-[420px]">
+        <button onclick="descargarComprobante('${s.id}')" class="flex-1 bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar imagen</button>
+        <button onclick="closeModal()" class="px-4 py-2.5 rounded-xl border border-clay-200">Cerrar</button>
+      </div>
+      <div class="text-xs text-clay-400 text-center max-w-[420px]">Descarga la imagen y envíasela al cliente por WhatsApp o Instagram para confirmar su compra.</div>
+    </div>
+  `);
+}
+function descargarComprobante(saleId){
+  const node=document.getElementById('comprobante');
+  if(!node||!window.html2canvas){ alert('No se pudo generar la imagen. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const s=DB.sales.find(x=>x.id===saleId);
+  const c=s?clientById(s.clienteId):null;
+  const nombre=(c?c.nombre:(s&&s.clienteNombre)||'cliente').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  html2canvas(node,{scale:3,backgroundColor:'#ffffff',useCORS:true}).then(canvas=>{
+    const a=document.createElement('a');
+    a.download='viet-pottery-confirmacion-'+nombre+'.png';
+    a.href=canvas.toDataURL('image/png');
+    a.click();
+  }).catch(()=>alert('No se pudo generar la imagen.'));
+}
+
+/* ===================== DESPACHOS ===================== */
+function renderDespachos(){
+  const v=document.getElementById('view');
+  const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
+  const sales=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  v.innerHTML=`<div class="grid lg:grid-cols-3 gap-4">
+    ${cols.map(([key,title,color])=>{
+      const list=sales.filter(s=>s.estadoDespacho===key);
+      return `<div class="card p-4">
+        <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
+        <div class="space-y-2">
+        ${list.length?list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="${SESSION.rol!=='bodega'?`openSale('${s.id}')`:`advanceDispatch('${s.id}')`}">
+          <div class="flex justify-between items-start"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400">${s.fecha}</div></div>
+          <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
+          <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
+          <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key!=='entregado'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">${key==='pendiente'?'Marcar en camino →':'Marcar entregado ✓'}</button>`:pill('OK','green')}</div>
+        </div>`;}).join(''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
+        </div>
+      </div>`;}).join('')}
+  </div>`;
+}
+function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);s.estadoDespacho=s.estadoDespacho==='pendiente'?'en_camino':'entregado';save();go('despachos');}
+function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fDoc'); if(d){ d.value='pendiente'; filterVentas(); } }
+
+/* ===================== CALENDARIO ===================== */
+let CAL=null; // {y, m}
+function calNav(delta){ if(!CAL){const n=new Date();CAL={y:n.getFullYear(),m:n.getMonth()};} let m=CAL.m+delta, y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={y,m}; renderCalendario(); }
+function calToday(){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; renderCalendario(); }
+function renderCalendario(){
+  if(!CAL){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; }
+  const {y,m}=CAL;
+  const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const dow=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const first=new Date(y,m,1);
+  const lead=(first.getDay()+6)%7;            // Lunes como primer día
+  const dim=new Date(y,m+1,0).getDate();
+  const estColor={pendiente:'bg-amber-100 text-amber-800',en_camino:'bg-blue-100 text-blue-800',entregado:'bg-sage-100 text-sage-700'};
+
+  const byDay={}; const sinFecha=[];
+  DB.sales.forEach(s=>{
+    if(!s.fechaEntrega){ sinFecha.push(s); return; }
+    const [yy,mm,dd]=s.fechaEntrega.split('-').map(Number);
+    if(yy===y && (mm-1)===m){ (byDay[dd]=byDay[dd]||[]).push(s); }
+  });
+  const t=new Date(); const isToday=d=> d===t.getDate() && m===t.getMonth() && y===t.getFullYear();
+  const entregasMes=Object.values(byDay).reduce((a,l)=>a+l.length,0);
+
+  let cells='';
+  for(let i=0;i<lead;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
+  for(let d=1; d<=dim; d++){
+    const list=byDay[d]||[];
+    cells+=`<div class="bg-white border ${isToday(d)?'border-clay-500 ring-1 ring-clay-300':'border-clay-100'} rounded-lg p-1.5 min-h-[96px]">
+      <div class="text-xs font-semibold ${isToday(d)?'text-clay-700':'text-clay-400'} mb-1">${d}</div>
+      ${list.map(s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="block w-full text-left">${tag}</button>`:tag;}).join('')}
+    </div>`;
+  }
+  const trail=(7-((lead+dim)%7))%7;
+  for(let i=0;i<trail;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
+
+  const v=document.getElementById('view');
+  v.innerHTML=`
+  <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+    <div class="flex items-center gap-2">
+      <button onclick="calNav(-1)" class="w-9 h-9 rounded-lg border border-clay-200 hover:bg-clay-100">←</button>
+      <div class="text-lg font-bold w-48 text-center">${monthNames[m]} ${y}</div>
+      <button onclick="calNav(1)" class="w-9 h-9 rounded-lg border border-clay-200 hover:bg-clay-100">→</button>
+      <button onclick="calToday()" class="px-3 h-9 rounded-lg border border-clay-200 hover:bg-clay-100 text-sm">Hoy</button>
+      <span class="text-sm text-clay-500 ml-1">${entregasMes} entrega${entregasMes!==1?'s':''} este mes</span>
+    </div>
+    <div class="flex items-center gap-3 text-xs text-clay-500">
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-200 inline-block"></span>Pendiente</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-200 inline-block"></span>En camino</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-sage-200 inline-block"></span>Entregado</span>
+    </div>
+  </div>
+  <div class="card p-3 overflow-x-auto">
+    <div class="min-w-[760px]">
+      <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(d=>`<div class="text-xs font-semibold text-clay-500 text-center py-1">${d}</div>`).join('')}</div>
+      <div class="grid grid-cols-7 gap-1.5">${cells}</div>
+    </div>
+  </div>
+  ${sinFecha.length?`<div class="card p-4 mt-4">
+    <div class="font-semibold mb-2 flex items-center gap-2">⚠️ Pedidos sin fecha de entrega ${pill(sinFecha.length,'amber')}</div>
+    <div class="divide-y divide-clay-100">${sinFecha.map(s=>{const c=clientById(s.clienteId);return `<div class="flex items-center justify-between text-sm py-2 gap-2"><div class="min-w-0"><span class="font-medium">${c?c.nombre:(s.clienteNombre||'—')}</span> <span class="text-clay-400">· ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</span></div>${SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="shrink-0 text-clay-600 hover:text-clay-900 text-xs font-medium">Asignar fecha →</button>`:''}</div>`;}).join('')}</div>
+  </div>`:''}
+  `;
+}
+
+/* ===================== CLIENTES (CRM) ===================== */
+function renderClientes(){
+  const v=document.getElementById('view');
+  const totalComprado=DB.sales.reduce((a,s)=>a+saleTotal(s),0);
+  const ticket=DB.sales.length?Math.round(totalComprado/DB.sales.length):0;
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Clientes',DB.clients.length,'','')}
+    ${statCard('Ventas totales',DB.sales.length,'','')}
+    ${statCard('Total comprado',fmt(totalComprado),'histórico','text-sage-600')}
+    ${statCard('Ticket promedio',fmt(ticket),'por venta','')}
+  </div>
+  <div class="card overflow-hidden">
+    <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ctbl',this.value)" placeholder="Buscar cliente, ciudad o contacto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
+    <div class="overflow-x-auto"><table class="w-full text-sm" id="ctbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Contacto</th><th class="text-left px-4 py-3">Ciudad</th><th class="text-left px-4 py-3">Comuna</th><th class="text-right px-4 py-3">Compras</th><th class="text-right px-4 py-3">Total comprado</th><th class="text-left px-4 py-3">Última compra</th><th class="px-4 py-3"></th></tr></thead><tbody>
+    ${DB.clients.map(c=>{const cs=DB.sales.filter(s=>s.clienteId===c.id);const tot=cs.reduce((a,s)=>a+saleTotal(s),0);const ult=cs.length?cs.map(s=>s.fecha).sort().slice(-1)[0]:'';return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-4 py-3 font-medium">${c.nombre}</td>
+      <td class="px-4 py-3 text-clay-600 text-xs">${[c.telefono,c.email].filter(Boolean).join('<br>')||'<span class="text-clay-300">—</span>'}</td>
+      <td class="px-4 py-3 text-clay-600">${c.ciudad||'—'}</td>
+      <td class="px-4 py-3 text-clay-600">${c.comuna||'—'}</td>
+      <td class="px-4 py-3 text-right">${cs.length}</td>
+      <td class="px-4 py-3 text-right">${fmt(tot)}</td>
+      <td class="px-4 py-3 text-clay-500 whitespace-nowrap">${ult||'<span class="text-clay-300">—</span>'}</td>
+      <td class="px-4 py-3 text-right">${SESSION.rol!=='bodega'?`<button onclick="openClient('${c.id}')" class="text-clay-600 hover:text-clay-900">Editar</button>`:''}</td>
+    </tr>`;}).join('')}
+    </tbody></table></div>
+  </div>`;
+}
+
+/* ===================== COBRANZAS ===================== */
+function diasDesde(iso){ if(!iso) return 0; const d=new Date(iso+'T00:00:00'); return Math.max(0,Math.floor((Date.now()-d.getTime())/86400000)); }
+function markPaid(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.pagado=true; save(); go('cobranzas'); }
+function renderCobranzas(){
+  const v=document.getElementById('view');
+  const impagas=DB.sales.filter(s=>!s.pagado).sort((a,b)=>a.fecha.localeCompare(b.fecha)); // más antiguas primero
+  const totalCobrar=impagas.reduce((a,s)=>a+saleTotal(s),0);
+  const clientesDeuda=new Set(impagas.map(s=>s.clienteId)).size;
+  const vencido30=impagas.filter(s=>diasDesde(s.fecha)>30).reduce((a,s)=>a+saleTotal(s),0);
+
+  // Resumen por cliente
+  const porCliente={};
+  impagas.forEach(s=>{ porCliente[s.clienteId]=(porCliente[s.clienteId]||0)+saleTotal(s); });
+  const resumen=Object.entries(porCliente).map(([cid,monto])=>({cid,monto})).sort((a,b)=>b.monto-a.monto);
+
+  const ageBadge=d=> d>30?pill(d+' días','red'):d>15?pill(d+' días','amber'):pill(d+' días','gray');
+
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Total por cobrar',fmt(totalCobrar),'','text-red-600')}
+    ${statCard('Ventas por cobrar',impagas.length,'','')}
+    ${statCard('Clientes con deuda',clientesDeuda,'','')}
+    ${statCard('Vencido +30 días',fmt(vencido30),'antigüedad alta','text-red-600')}
+  </div>
+
+  ${impagas.length===0?`<div class="card p-12 text-center text-clay-500"><div class="text-4xl mb-3">✅</div><div class="font-medium text-clay-700">No tienes cuentas por cobrar</div><div class="text-sm">Todo al día.</div></div>`:`
+  <div class="card overflow-hidden mb-5">
+    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-3 flex-wrap">
+      <div class="font-semibold">Ventas por cobrar</div>
+      <div class="text-xs text-clay-400">${impagas.length} pendiente${impagas.length!==1?'s':''} · ordenadas de la más antigua</div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm min-w-[680px]">
+        <thead class="bg-clay-50 text-clay-500 text-xs uppercase">
+          <tr>
+            <th class="text-left font-semibold px-5 py-3">Cliente</th>
+            <th class="text-left font-semibold px-3 py-3">Fecha venta</th>
+            <th class="text-center font-semibold px-3 py-3">Antigüedad</th>
+            <th class="text-right font-semibold px-3 py-3">Monto</th>
+            <th class="text-left font-semibold px-3 py-3">Cuenta</th>
+            <th class="text-left font-semibold px-3 py-3">Doc</th>
+            <th class="px-5 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+        ${impagas.map(s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+          <td class="px-5 py-3"><div class="font-medium">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div></td>
+          <td class="px-3 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
+          <td class="px-3 py-3 text-center whitespace-nowrap">${ageBadge(d)}</td>
+          <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
+          <td class="px-3 py-3 text-clay-600 whitespace-nowrap">${s.cuenta||'—'}</td>
+          <td class="px-3 py-3 whitespace-nowrap">${docLabel(s)}</td>
+          <td class="px-5 py-3 text-right"><button onclick="markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg whitespace-nowrap">Marcar pagado ✓</button></td>
+        </tr>`;}).join('')}
+        </tbody>
+        <tfoot>
+          <tr class="border-t-2 border-clay-200 bg-clay-50/60">
+            <td class="px-5 py-3 font-semibold" colspan="3">Total por cobrar</td>
+            <td class="px-3 py-3 text-right font-bold text-red-600 whitespace-nowrap">${fmt(totalCobrar)}</td>
+            <td colspan="3"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
+      <div class="font-semibold">Deuda por cliente</div>
+      <div class="text-xs text-clay-400">${resumen.length} cliente${resumen.length!==1?'s':''} · de mayor a menor</div>
+    </div>
+    <div class="p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      ${resumen.map(r=>{const c=clientById(r.cid);const ventas=impagas.filter(s=>s.clienteId===r.cid).length;return `<div class="flex items-center justify-between gap-3 border border-clay-100 rounded-xl px-4 py-3">
+        <div class="min-w-0"><div class="font-medium truncate">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400">${ventas} venta${ventas!==1?'s':''} por cobrar</div></div>
+        <div class="font-bold text-red-600 whitespace-nowrap">${fmt(r.monto)}</div>
+      </div>`;}).join('')}
+    </div>
+  </div>`}`;
+}
+function openClient(id,fromSale){
+  const c=id?clientById(id):{id:null,nombre:'',ciudad:'',comuna:'',direccion:'',telefono:'',email:''};
+  EDITC=JSON.parse(JSON.stringify(c));EDITC._fromSale=!!fromSale;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">${c.id?'Editar cliente':'Nuevo cliente'}</h3><button onclick="${fromSale?'renderSaleModal()':'closeModal()'}" class="text-clay-400 text-xl">✕</button></div>
+    <div class="p-5 space-y-3">
+      <div><label class="text-sm font-medium">Nombre</label><input id="c_nombre" value="${(c.nombre||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-sm font-medium">Ciudad</label><input id="c_ciudad" list="cityList" value="${(c.ciudad||'').replace(/"/g,'&quot;')}" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(x=>`<option value="${x}">`).join('')}</datalist></div>
+        <div><label class="text-sm font-medium">Comuna</label><input id="c_comuna" value="${(c.comuna||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Teléfono</label><input id="c_tel" value="${(c.telefono||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div><label class="text-sm font-medium">Dirección</label><input id="c_dir" value="${(c.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Email</label><input id="c_email" value="${c.email}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2"><button onclick="${fromSale?'renderSaleModal()':'closeModal()'}" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveClient()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div>
+  `);
+}
+let EDITC=null;
+function saveClient(){
+  EDITC.nombre=document.getElementById('c_nombre').value.trim();
+  EDITC.ciudad=document.getElementById('c_ciudad').value.trim();
+  EDITC.comuna=document.getElementById('c_comuna').value.trim();
+  EDITC.telefono=document.getElementById('c_tel').value;
+  EDITC.direccion=document.getElementById('c_dir').value;
+  EDITC.email=document.getElementById('c_email').value;
+  if(!EDITC.nombre){alert('Ingresa el nombre');return;}
+  const fromSale=EDITC._fromSale;delete EDITC._fromSale;
+  if(EDITC.id){const ix=DB.clients.findIndex(c=>c.id===EDITC.id);DB.clients[ix]=EDITC;}
+  else{EDITC.id=uid('c');DB.clients.push(EDITC);if(fromSale&&EDIT){EDIT.clienteId=EDITC.id;}}
+  save();
+  if(fromSale){renderSaleModal();}else{closeModal();go('clientes');}
+}
+
+/* ===================== STOCK ===================== */
+function renderStock(){
+  const v=document.getElementById('view');
+  const prods=DB.products;
+  const valorStock=prods.reduce((a,p)=>a+stockOf(p.id)*p.costo,0);
+  const unidades=prods.reduce((a,p)=>a+stockOf(p.id),0);
+  const bajo=prods.filter(p=>stockOf(p.id)<=p.stockMin).length;
+  const puede=SESSION.rol!=='vendedor';
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Unidades en stock',unidades,'','')}
+    ${statCard('Valor de inventario',fmt(valorStock),'a costo','text-sage-600')}
+    ${statCard('Productos con stock bajo',bajo,'',bajo>0?'text-amber-600':'')}
+    ${statCard('SKUs',prods.length,'','')}
+  </div>
+  <div class="card overflow-hidden">
+    <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
+      <input id="fStock" oninput="filterStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <select id="fStockEstado" onchange="filterStock()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Todos los estados</option>
+        <option value="ok">OK</option>
+        <option value="bajo">Stock bajo</option>
+        <option value="agotado">Agotado</option>
+      </select>
+      <button onclick="descargarPlanillaInventario()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl flex items-center gap-1.5" title="Descargar planilla en PDF para imprimir y tomar inventario"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Planilla de inventario</button>
+      <div id="stCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[640px]" id="sttbl">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+        <th class="text-left font-semibold px-5 py-3">SKU</th>
+        <th class="text-left font-semibold px-3 py-3">Producto</th>
+        <th class="text-right font-semibold px-3 py-3">Stock</th>
+        <th class="text-right font-semibold px-3 py-3">Mínimo</th>
+        <th class="text-left font-semibold px-3 py-3">Estado</th>
+        <th class="text-right font-semibold px-3 py-3">Valor</th>
+        <th class="px-5 py-3"></th>
+      </tr></thead><tbody>
+      ${prods.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
+        <td class="px-5 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
+        <td class="px-3 py-3"><div class="font-medium">${productName(p)}</div></td>
+        <td class="px-3 py-3 text-right font-semibold">${st}</td>
+        <td class="px-3 py-3 text-right text-clay-400">${p.stockMin}</td>
+        <td class="px-3 py-3">${estado}</td>
+        <td class="px-3 py-3 text-right whitespace-nowrap">${fmt(st*p.costo)}</td>
+        <td class="px-5 py-3 text-right whitespace-nowrap">
+          <span class="text-clay-300 text-xs mr-2 hidden sm:inline">historial</span>
+          ${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">Ajustar</button>`:''}
+        </td>
+      </tr>`;}).join('')}
+      </tbody></table></div>
+  </div>
+  <div class="text-xs text-clay-400 mt-3 px-1">💡 Haz clic en cualquier producto para ver su trazabilidad (historial de movimientos).</div>`;
+}
+function filterStock(){
+  const q=(document.getElementById('fStock').value||'').toLowerCase();
+  const est=document.getElementById('fStockEstado').value;
+  let shown=0;
+  document.querySelectorAll('#sttbl tbody tr').forEach(tr=>{
+    const vis=tr.textContent.toLowerCase().includes(q) && (!est||tr.dataset.estado===est);
+    tr.style.display=vis?'':'none'; if(vis) shown++;
+  });
+  const el=document.getElementById('stCount'); if(el) el.textContent=shown+' productos';
+}
+/* ----- Trazabilidad: historial de movimientos de un producto ----- */
+function stockMovements(productId){
+  const moves=[];
+  const p=productById(productId);
+  if(p) moves.push({fecha:'', orden:0, tipo:'Stock inicial', detalle:'Carga base del producto', cantidad:p.stockInicial});
+  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId) moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
+  DB.sales.forEach(s=>s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}));
+  (DB.adjustments||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:1, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
+  moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
+  let bal=0; moves.forEach(m=>{ bal+=m.cantidad; m.saldo=bal; });
+  return moves;
+}
+function openTrazabilidad(productId){
+  const p=productById(productId); if(!p) return;
+  const moves=stockMovements(productId).reverse(); // más reciente arriba
+  const st=stockOf(productId);
+  const entradas=moves.filter(m=>m.cantidad>0).reduce((a,m)=>a+m.cantidad,0);
+  const salidas=moves.filter(m=>m.cantidad<0).reduce((a,m)=>a+Math.abs(m.cantidad),0);
+  const tcolor={'Stock inicial':'gray','Compra':'green','Venta':'blue','Ajuste':'amber'};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <div><h3 class="text-lg font-bold">${productName(p)}</h3><div class="text-xs text-clay-400">${p.sku} · Trazabilidad de inventario</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Stock actual</div><div class="text-xl font-bold">${st}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Entradas</div><div class="text-xl font-bold text-sage-600">+${entradas}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Salidas</div><div class="text-xl font-bold text-red-600">−${salidas}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Valor actual</div><div class="text-xl font-bold">${fmt(st*p.costo)}</div></div>
+      </div>
+      <div class="overflow-x-auto border border-clay-100 rounded-xl">
+        <table class="w-full text-sm min-w-[480px]">
+          <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+            <th class="text-left font-semibold px-4 py-2.5">Fecha</th>
+            <th class="text-left font-semibold px-3 py-2.5">Movimiento</th>
+            <th class="text-left font-semibold px-3 py-2.5">Detalle</th>
+            <th class="text-right font-semibold px-3 py-2.5">Cantidad</th>
+            <th class="text-right font-semibold px-4 py-2.5">Saldo</th>
+          </tr></thead><tbody>
+          ${moves.map(m=>`<tr class="border-t border-clay-100">
+            <td class="px-4 py-2.5 whitespace-nowrap text-clay-500">${m.fecha||'inicial'}</td>
+            <td class="px-3 py-2.5">${pill(m.tipo,tcolor[m.tipo]||'gray')}</td>
+            <td class="px-3 py-2.5 text-clay-600">${m.detalle}</td>
+            <td class="px-3 py-2.5 text-right font-semibold ${m.cantidad>=0?'text-sage-600':'text-red-600'}">${m.cantidad>=0?'+':'−'}${Math.abs(m.cantidad)}</td>
+            <td class="px-4 py-2.5 text-right font-medium">${m.saldo}</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      ${SESSION.rol!=='vendedor'?`<button onclick="openAdjust('${p.id}')" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Ajustar stock</button>`:''}
+      <button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button>
+    </div>
+  `);
+}
+/* ----- Planilla de inventario imprimible (PDF) ----- */
+function descargarPlanillaInventario(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF();
+  doc.autoTable({
+    head:[['SKU','Producto','Stock\nsistema','Conteo\nfísico','Diferencia']],
+    body:[...DB.products].sort((a,b)=>a.sku.localeCompare(b.sku)).map(p=>[p.sku, productName(p), String(stockOf(p.id)), '', '']),
+    styles:{fontSize:9,cellPadding:3,minCellHeight:9,lineColor:[205,216,205],lineWidth:0.2,textColor:[35,51,42],valign:'middle'},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{0:{cellWidth:24},2:{halign:'center',cellWidth:24},3:{cellWidth:30},4:{cellWidth:28}},
+    margin:{top:32,left:14,right:14},
+    didDrawPage:function(){
+      doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Toma de inventario',14,12);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170);
+      doc.text('Fecha: ____ / ____ / ______      Responsable: ______________________',14,20);
+      doc.setTextColor(255,255,255); doc.text('Pág. '+doc.internal.getNumberOfPages(),196,12,{align:'right'});
+    }
+  });
+  doc.save('inventario-viet-pottery-'+todayISO()+'.pdf');
+}
+function openAdjust(pid){
+  const p=productById(pid);
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">Ajuste de stock</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
+  <div class="p-5 space-y-3">
+    <div class="text-sm text-clay-500">${productName(p)} · ${p.sku} · stock actual <b>${stockOf(pid)}</b></div>
+    <div><label class="text-sm font-medium">Cantidad a ajustar (+ entra, − sale)</label><input id="adj_q" type="number" value="0" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Motivo</label><input id="adj_m" placeholder="Merma, conteo, regalo..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+  </div>
+  <div class="p-5 border-t border-clay-100 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveAdjust('${pid}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Aplicar</button></div>`);
+}
+function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!q){closeModal();return;}DB.adjustments.push({id:uid('a'),productId:pid,cantidad:q,motivo:document.getElementById('adj_m').value,fecha:todayISO()});save();closeModal();go('stock');}
+
+/* ===================== PRODUCTOS ===================== */
+function renderProductos(){
+  const v=document.getElementById('view');
+  v.innerHTML=`<div class="card overflow-hidden">
+    <div class="p-4 border-b border-clay-100"><input oninput="filterTable('ptbl',this.value)" placeholder="Buscar..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-72"></div>
+    <div class="overflow-x-auto"><table class="w-full text-sm" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-4 py-3">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-left px-4 py-3">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-right px-4 py-3">Margen</th><th class="text-right px-4 py-3">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3"></th>':''}</tr></thead><tbody>
+    ${DB.products.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-4 py-3 text-clay-500">${p.sku}</td><td class="px-4 py-3 font-medium">${p.modelo}</td><td class="px-4 py-3">${p.tamano}</td><td class="px-4 py-3">${p.color}</td>
+      <td class="px-4 py-3 text-right text-clay-500">${fmt(p.costo)}</td><td class="px-4 py-3 text-right font-semibold">${fmt(p.precioRef)}</td>
+      <td class="px-4 py-3 text-right">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</td>
+      <td class="px-4 py-3 text-right">${stockOf(p.id)}</td>
+      ${SESSION.rol!=='vendedor'?`<td class="px-4 py-3 text-right"><button onclick="openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900">Editar</button></td>`:''}
+    </tr>`;}).join('')}
+    </tbody></table></div></div>`;
+}
+function openProduct(id){
+  const p=id?productById(id):{id:null,sku:'VP-'+String(DB.products.length+1).padStart(3,'0'),modelo:'',tamano:'M',color:'Natural',precioRef:0,costo:0,stockInicial:0,stockMin:2};
+  EDITP=JSON.parse(JSON.stringify(p));
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">${p.id?'Editar producto':'Nuevo producto'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
+  <div class="p-5 grid sm:grid-cols-2 gap-3">
+    <div><label class="text-sm font-medium">SKU</label><input id="p_sku" value="${p.sku}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Modelo</label><input id="p_modelo" value="${p.modelo}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Tamaño</label><input id="p_tam" value="${p.tamano}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Color / terminación</label><input id="p_color" value="${p.color}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Costo</label><input id="p_costo" type="number" value="${p.costo}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Precio referencia</label><input id="p_precio" type="number" value="${p.precioRef}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">${p.id?'Stock inicial (base)':'Stock inicial'}</label><input id="p_stock" type="number" value="${p.stockInicial}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Stock mínimo (alerta)</label><input id="p_min" type="number" value="${p.stockMin}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+  </div>
+  <div class="p-5 border-t border-clay-100 flex justify-between"><div>${p.id&&SESSION.rol==='admin'?`<button onclick="deleteProduct('${p.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div><div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveProduct()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div></div>`);
+}
+let EDITP=null;
+function saveProduct(){
+  Object.assign(EDITP,{sku:val('p_sku'),modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:+val('p_costo')||0,precioRef:+val('p_precio')||0,stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
+  if(!EDITP.modelo){alert('Ingresa el modelo');return;}
+  if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
+  save();closeModal();go('productos');
+}
+function deleteProduct(id){if(!confirm('¿Eliminar producto?'))return;DB.products=DB.products.filter(p=>p.id!==id);save();closeModal();go('productos');}
+
+/* ===================== COMPRAS ===================== */
+function renderCompras(){
+  if(!DB.orders) DB.orders=[];
+  const v=document.getElementById('view');
+  const orders=[...DB.orders].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const rows=[...DB.purchases].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const pendientes=DB.orders.filter(o=>o.estado!=='recibido').length;
+  const totalC=DB.purchases.reduce((a,p)=>a+p.items.reduce((x,i)=>x+i.cantidad*i.costo,0),0);
+  const ordTotal=o=>o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
+  const puede = SESSION.rol!=='vendedor';
+
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Pedidos a proveedor',DB.orders.length,'órdenes de compra','')}
+    ${statCard('Pendientes de recibir',pendientes,'','text-amber-600')}
+    ${statCard('Compras recibidas',DB.purchases.length,'suman al stock','')}
+    ${statCard('Inversión recibida',fmt(totalC),'a costo','text-sage-600')}
+  </div>
+
+  <div class="card overflow-hidden mb-6">
+    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
+      <div><div class="font-semibold">Pedidos a proveedor</div><div class="text-xs text-clay-400">Órdenes de compra. Genera el PDF y envíalo al proveedor.</div></div>
+      ${puede?`<button onclick="openOrder()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nuevo pedido</button>`:''}
+    </div>
+    ${orders.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[720px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">N° OC</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Proveedor</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
+    ${orders.map(o=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-3 font-semibold whitespace-nowrap">${o.numero}</td>
+      <td class="px-3 py-3 whitespace-nowrap text-clay-500">${o.fecha}</td>
+      <td class="px-3 py-3 font-medium">${o.proveedor}</td>
+      <td class="px-3 py-3 text-clay-600 text-xs">${o.items.map(i=>{const p=productById(i.productId);return `${i.cantidad}× ${p?productName(p):'?'}`;}).join('<br>')}</td>
+      <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(ordTotal(o))}</td>
+      <td class="px-3 py-3 whitespace-nowrap">${o.estado==='recibido'?pill('Recibido','green'):pill('Pendiente','amber')}</td>
+      <td class="px-5 py-3 text-right whitespace-nowrap">
+        <button onclick="downloadOrderPDF('${o.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">PDF</button>
+        ${puede&&o.estado!=='recibido'?`<button onclick="recibirOrder('${o.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2.5 py-1.5 rounded-lg ml-1">Recibir</button>`:''}
+        ${puede?`<button onclick="openOrder('${o.id}')" class="text-xs text-clay-600 hover:text-clay-900 px-1.5 ml-1">Editar</button>`:''}
+      </td>
+    </tr>`).join('')}
+    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes pedidos a proveedor. Crea el primero con "Nuevo pedido".</div>`}
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
+      <div><div class="font-semibold">Compras recibidas</div><div class="text-xs text-clay-400">Mercadería que llegó y sumó al stock.</div></div>
+      ${puede?`<button onclick="openPurchase()" class="text-sm text-clay-700 font-medium">+ Registrar recibida</button>`:''}
+    </div>
+    ${rows.length?`<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">Fecha</th><th class="text-left px-3 py-3">Proveedor</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="px-5 py-3"></th></tr></thead><tbody>
+    ${rows.map(c=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-3 whitespace-nowrap text-clay-500">${c.fecha}</td><td class="px-3 py-3 font-medium">${c.proveedor}</td>
+      <td class="px-3 py-3 text-clay-600 text-xs">${c.items.map(i=>{const p=productById(i.productId);return `${i.cantidad}× ${p?productName(p):'?'}`;}).join('<br>')}</td>
+      <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(c.items.reduce((a,i)=>a+i.cantidad*i.costo,0))}</td>
+      <td class="px-5 py-3 text-right">${puede?`<button onclick="openPurchase('${c.id}')" class="text-clay-600 hover:text-clay-900 text-sm">Ver</button>`:''}</td>
+    </tr>`).join('')}
+    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Sin compras recibidas todavía.</div>`}
+  </div>`;
+}
+
+/* ----- Pedidos a proveedor (órdenes de compra) ----- */
+let EDITO=null;
+function openOrder(id){
+  if(!DB.orders) DB.orders=[];
+  const o=id?DB.orders.find(x=>x.id===id):{id:null,numero:'',fecha:todayISO(),fechaEntrega:'',proveedor:'',items:[{productId:DB.products[0].id,cantidad:1,costo:DB.products[0].costo}],notas:'',estado:'enviado'};
+  EDITO=JSON.parse(JSON.stringify(o));renderOrderModal();
+}
+function renderOrderModal(){
+  const o=EDITO;const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
+  const prodOpt=sel=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)}</option>`).join('');
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><h3 class="text-lg font-bold">${o.id?'Pedido '+o.numero:'Nuevo pedido a proveedor'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
+  <div class="p-5 space-y-4">
+    <div class="grid sm:grid-cols-3 gap-3">
+      <div class="sm:col-span-1"><label class="text-sm font-medium">Proveedor</label><input id="o_prov" value="${(o.proveedor||'').replace(/"/g,'&quot;')}" placeholder="Nombre del proveedor" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Fecha del pedido</label><input id="o_fecha" type="date" value="${o.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Entrega estimada</label><input id="o_entrega" type="date" value="${o.fechaEntrega||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos a pedir</label><button onclick="addOItem()" class="text-sm text-clay-700 font-medium">+ Agregar</button></div>
+      <div class="grid grid-cols-12 gap-2 text-xs text-clay-400 px-1 mb-1"><div class="col-span-6">Producto</div><div class="col-span-2 text-center">Cantidad</div><div class="col-span-3 text-right">Costo unit.</div><div class="col-span-1"></div></div>
+      <div id="o_items" class="space-y-2">${o.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="EDITO.items[${ix}].productId=this.value" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITO.items[${ix}].cantidad=+this.value;oTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="number" value="${it.costo}" oninput="EDITO.items[${ix}].costo=+this.value;oTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removeOItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
+    </div>
+    <div><label class="text-sm font-medium">Notas para el proveedor</label><input id="o_notas" value="${(o.notas||'').replace(/"/g,'&quot;')}" placeholder="Condiciones, dirección de entrega, etc." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+  </div>
+  <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+    <div>${o.id&&SESSION.rol==='admin'?`<button onclick="deleteOrder('${o.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
+    <div class="flex items-center gap-4"><div class="text-right"><div class="text-xs text-clay-400">Total estimado</div><div id="o_total" class="text-xl font-bold">${fmt(total)}</div></div><button onclick="saveOrder(true)" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar y generar PDF</button></div>
+  </div>`);
+}
+function oTotal(){document.getElementById('o_total').textContent=fmt(EDITO.items.reduce((a,i)=>a+i.cantidad*i.costo,0));}
+function addOItem(){syncO();const p=DB.products[0];EDITO.items.push({productId:p.id,cantidad:1,costo:p.costo});renderOrderModal();}
+function removeOItem(ix){if(EDITO.items.length<=1)return;syncO();EDITO.items.splice(ix,1);renderOrderModal();}
+function syncO(){EDITO.proveedor=val('o_prov');EDITO.fecha=val('o_fecha');EDITO.fechaEntrega=val('o_entrega');EDITO.notas=val('o_notas');}
+function saveOrder(genPDF){
+  syncO();
+  if(!EDITO.proveedor){alert('Ingresa el proveedor');return;}
+  if(!DB.orders) DB.orders=[];
+  if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
+  if(EDITO.id){const ix=DB.orders.findIndex(o=>o.id===EDITO.id);DB.orders[ix]=EDITO;}
+  else{ DB.counter.oc++; EDITO.numero='OC-'+String(DB.counter.oc).padStart(4,'0'); EDITO.id=uid('o'); DB.orders.push(EDITO); }
+  const oid=EDITO.id;
+  save();closeModal();go('compras');
+  if(genPDF) downloadOrderPDF(oid);
+}
+function deleteOrder(id){if(!confirm('¿Eliminar este pedido?'))return;DB.orders=DB.orders.filter(o=>o.id!==id);save();closeModal();go('compras');}
+function recibirOrder(id){
+  const o=DB.orders.find(x=>x.id===id); if(!o) return;
+  if(!confirm('¿Marcar el pedido '+o.numero+' como recibido? Esto sumará los productos al stock.')) return;
+  DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:o.proveedor,items:JSON.parse(JSON.stringify(o.items)),notas:'Recepción de '+o.numero});
+  o.estado='recibido';
+  save();go('compras');
+}
+function downloadOrderPDF(id){
+  const o=DB.orders.find(x=>x.id===id); if(!o) return;
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF();
+  const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
+  const unidades=o.items.reduce((a,i)=>a+i.cantidad,0);
+  // Encabezado
+  doc.setFillColor(35,51,42); doc.rect(0,0,210,34,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.text('Viet Pottery',14,18);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text('Maceteros con alma',14,25);
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('ORDEN DE COMPRA',196,16,{align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(o.numero,196,23,{align:'right'});
+  doc.setFontSize(9); doc.text('Fecha: '+o.fecha,196,29,{align:'right'});
+  // Datos proveedor
+  doc.setTextColor(35,51,42); doc.setFontSize(10);
+  doc.setFont('helvetica','bold'); doc.text('Proveedor',14,46);
+  doc.setFont('helvetica','normal'); doc.text(o.proveedor||'-',14,52);
+  if(o.fechaEntrega){ doc.setFont('helvetica','bold'); doc.text('Entrega estimada',130,46); doc.setFont('helvetica','normal'); doc.text(o.fechaEntrega,130,52); }
+  // Tabla de items
+  doc.autoTable({
+    startY:60,
+    head:[['SKU','Producto','Cantidad','Costo unit.','Subtotal']],
+    body:o.items.map(i=>{const p=productById(i.productId);return [p?p.sku:'-', p?productName(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
+    styles:{fontSize:9,cellPadding:3,lineColor:[230,236,231],textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[244,247,244]},
+    columnStyles:{2:{halign:'center'},3:{halign:'right'},4:{halign:'right'}},
+    margin:{left:14,right:14}
+  });
+  let y=doc.lastAutoTable.finalY+10;
+  doc.setFontSize(10); doc.setTextColor(93,120,96); doc.text('Total de unidades: '+unidades,14,y);
+  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(58,78,64); doc.text('Total estimado: '+fmt(total),196,y,{align:'right'});
+  doc.setFont('helvetica','normal');
+  if(o.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+o.notas,182),14,y); }
+  // Pie
+  doc.setFontSize(8); doc.setTextColor(150,150,150);
+  doc.text('Orden de compra generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
+  doc.save('orden-compra-'+o.numero+'.pdf');
+}
+function openPurchase(id){
+  const c=id?DB.purchases.find(x=>x.id===id):{id:null,fecha:todayISO(),proveedor:'',items:[{productId:DB.products[0].id,cantidad:1,costo:DB.products[0].costo}],notas:''};
+  EDITPU=JSON.parse(JSON.stringify(c));renderPurchaseModal();
+}
+let EDITPU=null;
+function renderPurchaseModal(){
+  const c=EDITPU;const total=c.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
+  const prodOpt=sel=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)}</option>`).join('');
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><h3 class="text-lg font-bold">${c.id?'Compra':'Nueva compra'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
+  <div class="p-5 space-y-4">
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div><label class="text-sm font-medium">Proveedor</label><input id="pu_prov" value="${c.proveedor}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Fecha</label><input id="pu_fecha" type="date" value="${c.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos (suman al stock)</label><button onclick="addPuItem()" class="text-sm text-clay-700 font-medium">+ Agregar</button></div>
+      <div id="pu_items" class="space-y-2">${c.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="EDITPU.items[${ix}].productId=this.value" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITPU.items[${ix}].cantidad=+this.value;puTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="number" value="${it.costo}" oninput="EDITPU.items[${ix}].costo=+this.value;puTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removePuItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
+    </div>
+    <div><label class="text-sm font-medium">Notas</label><input id="pu_notas" value="${c.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+  </div>
+  <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white"><div>${c.id&&SESSION.rol==='admin'?`<button onclick="deletePurchase('${c.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div><div class="flex items-center gap-4"><div class="text-right"><div class="text-xs text-clay-400">Total</div><div id="pu_total" class="text-xl font-bold">${fmt(total)}</div></div><button onclick="savePurchase()" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar</button></div></div>`);
+}
+function puTotal(){document.getElementById('pu_total').textContent=fmt(EDITPU.items.reduce((a,i)=>a+i.cantidad*i.costo,0));}
+function addPuItem(){syncPu();const p=DB.products[0];EDITPU.items.push({productId:p.id,cantidad:1,costo:p.costo});renderPurchaseModal();}
+function removePuItem(ix){if(EDITPU.items.length<=1)return;syncPu();EDITPU.items.splice(ix,1);renderPurchaseModal();}
+function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');EDITPU.notas=val('pu_notas');}
+function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);}save();closeModal();go('compras');}
+function deletePurchase(id){if(!confirm('¿Eliminar compra?'))return;DB.purchases=DB.purchases.filter(p=>p.id!==id);save();closeModal();go('compras');}
+
+/* ---------- Utils UI ---------- */
+function val(id){return document.getElementById(id).value;}
+function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
+function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;}
+function filterTable(tid,q){q=q.toLowerCase();document.querySelectorAll(`#${tid} tbody tr`).forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';});}
+function filterVentas(){
+  const q=(document.getElementById('fVenta').value||'').toLowerCase();
+  const doc=document.getElementById('fDoc').value;
+  const pago=document.getElementById('fPago').value;
+  let shown=0;
+  document.querySelectorAll('#vtbl tbody tr').forEach(tr=>{
+    const okQ=tr.textContent.toLowerCase().includes(q);
+    const okDoc=!doc||tr.dataset.doc===doc;
+    const okPago=!pago||tr.dataset.pago===pago;
+    const vis=okQ&&okDoc&&okPago;
+    tr.style.display=vis?'':'none'; if(vis) shown++;
+  });
+  const el=document.getElementById('vCount'); if(el) el.textContent=shown+' ventas';
+}
+
+/* ---------- Init ---------- */
+initLogin();
+</script>
+</body>
+</html>
