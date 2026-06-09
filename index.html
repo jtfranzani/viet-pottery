@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.09-18';
+const APP_VERSION = '2026.06.09-19';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -503,6 +503,54 @@ function pdfHeader(doc, titulo, numero, fecha){
     doc.setFontSize(9); if(fecha) doc.text('Fecha: '+fecha,196,29,{align:'right'});
     doc.setTextColor(35,51,42);
   }
+}
+/* ===== Formato profesional de documentos (cotización / orden de compra) ===== */
+const EMPRESA = { razon:'Franzani y Ovalle SpA', rut:'78.062.668-2', marca:'Viet Pottery', tagline:'Maceteros con alma' };
+function pdfProHeader(doc, titulo, numero, fecha){
+  const dark=[35,51,42], green=[58,78,64], muted=[120,135,120];
+  if(LOGO_DATAURL){ const h=18, w=(LOGO_W&&LOGO_H)?Math.min(42,h*(LOGO_W/LOGO_H)):18; try{ doc.addImage(LOGO_DATAURL,'PNG',14,10,w,h); }catch(e){} }
+  else { doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(green[0],green[1],green[2]); doc.text(EMPRESA.marca,14,20); }
+  // Datos de la empresa (izquierda)
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(dark[0],dark[1],dark[2]); doc.text(EMPRESA.razon,14,34);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(muted[0],muted[1],muted[2]);
+  doc.text('RUT: '+EMPRESA.rut,14,39);
+  doc.text(EMPRESA.marca+' · '+EMPRESA.tagline,14,44);
+  // Bloque título (derecha)
+  doc.setFillColor(green[0],green[1],green[2]); doc.roundedRect(132,10,64,25,2.5,2.5,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text(titulo,164,20,{align:'center'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  if(numero) doc.text('N° '+numero,164,27,{align:'center'});
+  doc.text('Fecha: '+(fecha||''),164,32,{align:'center'});
+  // Línea divisoria
+  doc.setDrawColor(green[0],green[1],green[2]); doc.setLineWidth(0.5); doc.line(14,49,196,49);
+  doc.setTextColor(dark[0],dark[1],dark[2]);
+  return 49;
+}
+function pdfProParty(doc, y, label, lines, metaPairs){
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(120,135,120); doc.text(label.toUpperCase(),14,y+9);
+  doc.setTextColor(35,51,42); doc.setFontSize(10);
+  let ly=y+15; (lines||[]).forEach((ln,i)=>{ doc.setFont('helvetica', i===0?'bold':'normal'); doc.setTextColor(i===0?35:90, i===0?51:100, i===0?42:90); doc.text(ln||'-',14,ly); ly+=5; });
+  if(metaPairs&&metaPairs.length){
+    let ry=y+9; doc.setFontSize(9);
+    metaPairs.forEach(([k,v])=>{ doc.setFont('helvetica','normal'); doc.setTextColor(120,135,120); doc.text(k,140,ry); doc.setFont('helvetica','bold'); doc.setTextColor(35,51,42); doc.text(String(v),196,ry,{align:'right'}); ry+=6; });
+  }
+  return Math.max(ly, y+32);
+}
+function pdfProTotals(doc, y, rows, totalLabel, totalValue){
+  const x0=132, x1=196;
+  doc.setFontSize(10);
+  rows.forEach(([k,v])=>{ doc.setFont('helvetica','normal'); doc.setTextColor(90,100,90); doc.text(k,x0,y); doc.setTextColor(35,51,42); doc.text(v,x1,y,{align:'right'}); y+=6; });
+  doc.setFillColor(58,78,64); doc.roundedRect(x0-4,y-4,x1-x0+8,11,2,2,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(12.5);
+  doc.text(totalLabel,x0,y+3.5); doc.text(totalValue,x1,y+3.5,{align:'right'});
+  doc.setTextColor(35,51,42); doc.setFont('helvetica','normal');
+  return y+13;
+}
+function pdfProFooter(doc, nota){
+  const py=288; doc.setDrawColor(220,228,221); doc.setLineWidth(0.3); doc.line(14,py-5,196,py-5);
+  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.setFont('helvetica','normal');
+  doc.text(EMPRESA.razon+'  ·  RUT '+EMPRESA.rut+'  ·  '+EMPRESA.marca,14,py);
+  doc.text(nota||('Generado el '+new Date().toLocaleDateString('es-CL')),196,py,{align:'right'});
 }
 
 function buildNav(){
@@ -1134,29 +1182,32 @@ function downloadQuotePDF(id){
   const { jsPDF }=window.jspdf; const doc=new jsPDF();
   const sub=saleSubtotal(q); const envio=q.costoEnvio||0; const total=sub+envio;
   const neto=Math.round(total/1.19); const iva=total-neto;
-  pdfHeader(doc,'COTIZACIÓN',q.numero||'',q.fecha||'');
-  doc.setTextColor(35,51,42); doc.setFontSize(10);
-  doc.setFont('helvetica','bold'); doc.text('Cliente',14,46); doc.setFont('helvetica','normal'); doc.text(q.clienteNombre||'-',14,52);
-  if(q.fechaValidez){ doc.setFont('helvetica','bold'); doc.text('Válido hasta',140,46); doc.setFont('helvetica','normal'); doc.text(q.fechaValidez,140,52); }
+  const y0=pdfProHeader(doc,'COTIZACIÓN', q.numero||'', q.fecha||'');
+  // Datos del cliente + meta
+  const cli=[q.clienteNombre||'-'];
+  if(q.telefono) cli.push('Tel: '+q.telefono);
+  if(q.email) cli.push(q.email);
+  const lugar=[q.direccion,q.comuna,q.ciudad].filter(Boolean).map(titleCase).join(', '); if(lugar) cli.push(lugar);
+  const meta=[]; if(q.fecha) meta.push(['Emisión', q.fecha]); if(q.fechaValidez) meta.push(['Válido hasta', q.fechaValidez]);
+  const yp=pdfProParty(doc, y0, 'Cliente', cli, meta);
   doc.autoTable({
-    startY:60,
-    head:[['Producto','Cant.','Precio','Dcto','Subtotal']],
+    startY:yp+4,
+    head:[['Producto','Cant.','P. unit.','Dcto','Subtotal']],
     body:q.items.map(i=>{const p=productById(i.productId); return [p?productName(p):(i.descripcion||'-'), String(i.cantidad), fmt(i.precio), (i.descuento||0)+'%', fmt(lineTotal(i))];}),
-    styles:{fontSize:9,cellPadding:3,textColor:[35,51,42]},
-    headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
-    alternateRowStyles:{fillColor:[244,247,244]},
-    columnStyles:{1:{halign:'center'},2:{halign:'right'},3:{halign:'center'},4:{halign:'right'}},
+    styles:{fontSize:9.5,cellPadding:3.5,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{0:{fontStyle:'bold'},1:{halign:'center',cellWidth:18},2:{halign:'right',cellWidth:28},3:{halign:'center',cellWidth:18},4:{halign:'right',cellWidth:30}},
     margin:{left:14,right:14}
   });
   let y=doc.lastAutoTable.finalY+10;
+  const rows=[]; if(envio>0) rows.push(['Envío', fmt(envio)]); rows.push(['Neto', fmt(neto)]); rows.push(['IVA (19%)', fmt(iva)]);
   doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Valores en pesos chilenos, IVA incluido.',14,y+2);
-  doc.setTextColor(35,51,42); doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  if(envio>0){ doc.text('Envío',150,y); doc.text(fmt(envio),196,y,{align:'right'}); y+=6; }
-  doc.text('Neto',150,y); doc.text(fmt(neto),196,y,{align:'right'});
-  y+=6; doc.text('IVA (19%)',150,y); doc.text(fmt(iva),196,y,{align:'right'});
-  y+=7; doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(58,78,64); doc.text('Total',150,y); doc.text(fmt(total),196,y,{align:'right'}); doc.setFont('helvetica','normal'); doc.setTextColor(35,51,42);
-  if(q.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+q.notas,182),14,y); }
-  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Cotización generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
+  y=pdfProTotals(doc, y, rows, 'Total', fmt(total));
+  y+=6;
+  if(q.fechaValidez){ doc.setFontSize(9); doc.setTextColor(90,100,90); doc.text('Esta cotización es válida hasta el '+q.fechaValidez+'. Precios sujetos a disponibilidad de stock.',14,y); y+=6; }
+  if(q.notas){ y+=2; doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(58,78,64); doc.text('Notas',14,y); doc.setFont('helvetica','normal'); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize(q.notas,182),14,y+5); }
+  pdfProFooter(doc, 'Cotización · '+new Date().toLocaleDateString('es-CL'));
   savePdfDoc(doc, 'cotizacion-'+(q.numero||'viet-pottery')+'.pdf');
 }
 
@@ -2600,37 +2651,28 @@ function downloadOrderPDF(id){
   const doc=new jsPDF();
   const total=o.items.reduce((a,i)=>a+i.cantidad*i.costo,0);
   const unidades=o.items.reduce((a,i)=>a+i.cantidad,0);
-  // Encabezado (con logo si está disponible)
-  pdfHeader(doc,'ORDEN DE COMPRA',o.numero,o.fecha);
-  // Datos proveedor
-  doc.setTextColor(35,51,42); doc.setFontSize(10);
-  doc.setFont('helvetica','bold'); doc.text('Proveedor',14,46);
-  doc.setFont('helvetica','normal'); doc.text(o.proveedor||'-',14,52);
-  if(o.fechaEntrega){ doc.setFont('helvetica','bold'); doc.text('Entrega estimada',130,46); doc.setFont('helvetica','normal'); doc.text(o.fechaEntrega,130,52); }
-  // Tabla de items
+  const y0=pdfProHeader(doc,'ORDEN DE COMPRA', o.numero, o.fecha);
+  const prov=[o.proveedor||'-'];
+  const meta=[]; if(o.fecha) meta.push(['Emisión', o.fecha]); if(o.fechaEntrega) meta.push(['Entrega estimada', o.fechaEntrega]);
+  const yp=pdfProParty(doc, y0, 'Proveedor', prov, meta);
   doc.autoTable({
-    startY:60,
-    head:[['SKU','Producto','Cantidad','Costo unit.','Subtotal']],
+    startY:yp+4,
+    head:[['SKU','Producto','Cant.','Costo unit.','Subtotal']],
     body:o.items.map(i=>{const p=productById(i.productId);return [p?p.sku:'-', p?productName(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
-    styles:{fontSize:9,cellPadding:3,lineColor:[230,236,231],textColor:[35,51,42]},
+    styles:{fontSize:9.5,cellPadding:3.5,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
     headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
-    alternateRowStyles:{fillColor:[244,247,244]},
-    columnStyles:{2:{halign:'center'},3:{halign:'right'},4:{halign:'right'}},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{0:{cellWidth:24},1:{fontStyle:'bold'},2:{halign:'center',cellWidth:18},3:{halign:'right',cellWidth:30},4:{halign:'right',cellWidth:30}},
     margin:{left:14,right:14}
   });
   const neto=Math.round(total/1.19); const iva=total-neto;
   let y=doc.lastAutoTable.finalY+10;
-  doc.setFontSize(10); doc.setTextColor(93,120,96); doc.text('Total de unidades: '+unidades,14,y);
-  doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Valores en pesos chilenos, IVA incluido.',14,y+6);
-  doc.setTextColor(35,51,42); doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  doc.text('Neto',150,y); doc.text(fmt(neto),196,y,{align:'right'});
-  y+=6; doc.text('IVA (19%)',150,y); doc.text(fmt(iva),196,y,{align:'right'});
-  y+=7; doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(58,78,64); doc.text('Total',150,y); doc.text(fmt(total),196,y,{align:'right'});
-  doc.setFont('helvetica','normal');
-  if(o.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+o.notas,182),14,y); }
-  // Pie
-  doc.setFontSize(8); doc.setTextColor(150,150,150);
-  doc.text('Orden de compra generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
+  doc.setFontSize(10); doc.setTextColor(93,120,96); doc.setFont('helvetica','bold'); doc.text('Total de unidades: '+unidades,14,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Valores en pesos chilenos, IVA incluido.',14,y+6);
+  y=pdfProTotals(doc, y, [['Neto', fmt(neto)],['IVA (19%)', fmt(iva)]], 'Total', fmt(total));
+  y+=6;
+  if(o.notas){ y+=2; doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(58,78,64); doc.text('Notas',14,y); doc.setFont('helvetica','normal'); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize(o.notas,182),14,y+5); }
+  pdfProFooter(doc, 'Orden de compra · '+new Date().toLocaleDateString('es-CL'));
   savePdfDoc(doc, 'orden-compra-'+o.numero+'.pdf');
 }
 function openPurchase(id){
