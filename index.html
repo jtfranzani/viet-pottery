@@ -164,6 +164,32 @@ const milesParse = v => parseInt(String(v||'').replace(/[^\d]/g,''),10)||0;
 function moneyInput(el){ const n=milesParse(el.value); el.value = n? n.toLocaleString('es-CL') : ''; return n; }
 const todayISO = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
+// Guarda/comparte un PDF de jsPDF. En celular usa el menú nativo "Compartir" (evita el bug del enlace blob: en iOS).
+async function savePdfDoc(doc, filename){
+  try{
+    const blob = doc.output('blob');
+    const file = new File([blob], filename, {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:filename});
+      return;
+    }
+  }catch(e){ if(e && e.name==='AbortError') return; /* si falla, baja por descarga normal */ }
+  try{ doc.save(filename); }
+  catch(e){ try{ window.open(doc.output('bloburl'),'_blank'); }catch(_){ alert('No se pudo generar el PDF en este dispositivo.'); } }
+}
+// Guarda/comparte una imagen (canvas). En celular usa el menú nativo "Compartir".
+async function saveCanvasImage(canvas, filename){
+  const dataUrl = canvas.toDataURL('image/png');
+  try{
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], filename, {type:'image/png'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:filename});
+      return;
+    }
+  }catch(e){ if(e && e.name==='AbortError') return; }
+  const a=document.createElement('a'); a.download=filename; a.href=dataUrl; document.body.appendChild(a); a.click(); a.remove();
+}
 
 /* ---------- Seed data (derivado del Excel real) ---------- */
 function seed(){
@@ -813,7 +839,7 @@ function downloadReportePDF(){
       margin:{left:14,right:14}
     });
   });
-  doc.save('reporte-ventas-'+d.from+'_a_'+d.to+'.pdf');
+  savePdfDoc(doc, 'reporte-ventas-'+d.from+'_a_'+d.to+'.pdf');
 }
 
 /* ===================== PRESUPUESTOS (cotizaciones) ===================== */
@@ -976,7 +1002,7 @@ function downloadQuotePDF(id){
   y+=7; doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(58,78,64); doc.text('Total',150,y); doc.text(fmt(total),196,y,{align:'right'}); doc.setFont('helvetica','normal'); doc.setTextColor(35,51,42);
   if(q.notas){ y+=12; doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(doc.splitTextToSize('Notas: '+q.notas,182),14,y); }
   doc.setFontSize(8); doc.setTextColor(150,150,150); doc.text('Cotización generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
-  doc.save('cotizacion-'+(q.numero||'viet-pottery')+'.pdf');
+  savePdfDoc(doc, 'cotizacion-'+(q.numero||'viet-pottery')+'.pdf');
 }
 
 /* ===================== VENTAS ===================== */
@@ -1415,10 +1441,7 @@ function descargarComprobante(saleId){
   const c=s?clientById(s.clienteId):null;
   const nombre=(c?c.nombre:(s&&s.clienteNombre)||'cliente').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
   html2canvas(node,{scale:3,backgroundColor:'#ffffff',useCORS:true}).then(canvas=>{
-    const a=document.createElement('a');
-    a.download='viet-pottery-confirmacion-'+nombre+'.png';
-    a.href=canvas.toDataURL('image/png');
-    a.click();
+    saveCanvasImage(canvas,'viet-pottery-confirmacion-'+nombre+'.png');
   }).catch(()=>alert('No se pudo generar la imagen.'));
 }
 
@@ -1539,7 +1562,7 @@ function generateHojaRuta(fecha){
   yy+=6; doc.text('Comunas en la ruta: '+(comunas.join(', ')||'-'),14,yy);
   doc.setFontSize(8); doc.setTextColor(150,150,150);
   doc.text('Hoja de ruta generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
-  doc.save('hoja-de-ruta-'+fecha+'.pdf');
+  savePdfDoc(doc, 'hoja-de-ruta-'+fecha+'.pdf');
 }
 function openDiaEntregas(fecha){
   const list=DB.sales.filter(s=>s.fechaEntrega===fecha).sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
@@ -1941,7 +1964,7 @@ function descargarPlanillaInventario(){
       doc.setTextColor(255,255,255); doc.text('Pág. '+doc.internal.getNumberOfPages(),196,12,{align:'right'});
     }
   });
-  doc.save('inventario-viet-pottery-'+todayISO()+'.pdf');
+  savePdfDoc(doc, 'inventario-viet-pottery-'+todayISO()+'.pdf');
 }
 function openAdjust(pid){
   const p=productById(pid);
@@ -2183,7 +2206,7 @@ function downloadOrderPDF(id){
   // Pie
   doc.setFontSize(8); doc.setTextColor(150,150,150);
   doc.text('Orden de compra generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,288);
-  doc.save('orden-compra-'+o.numero+'.pdf');
+  savePdfDoc(doc, 'orden-compra-'+o.numero+'.pdf');
 }
 function openPurchase(id){
   const c=id?DB.purchases.find(x=>x.id===id):{id:null,fecha:todayISO(),proveedor:'',items:[{productId:DB.products[0].id,cantidad:1,costo:DB.products[0].costo}],notas:''};
@@ -2325,7 +2348,16 @@ function descargarRespaldoExcel(){
     'Fecha':pu.fecha||'','Proveedor':pu.proveedor||'','Productos':itemsStr(pu.items),'Total (con IVA)':(pu.items||[]).reduce((a,i)=>a+i.cantidad*i.costo,0),'Notas':pu.notas||''
   })));
 
-  XLSX.writeFile(wb,'respaldo-viet-pottery-'+todayISO()+'.xlsx');
+  const fname='respaldo-viet-pottery-'+todayISO()+'.xlsx';
+  (async()=>{
+    try{
+      const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+      const blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const file=new File([blob],fname,{type:blob.type});
+      if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fname}); return; }
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+    }catch(e){ if(e&&e.name==='AbortError') return; try{ XLSX.writeFile(wb,fname); }catch(_){ alert('No se pudo generar el Excel en este dispositivo.'); } }
+  })();
 }
 
 /* ---------- Utils UI ---------- */
