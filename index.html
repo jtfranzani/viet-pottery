@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.09-9';
+const APP_VERSION = '2026.06.09-18';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -585,14 +585,24 @@ function renderDashboard(){
   const despPend  = DB.sales.filter(s=>s.estadoDespacho!=='entregado');
   const margenMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0);
   const docsPend = DB.sales.filter(s=>s.docTipo==='pendiente');
+  const facPorPagar = (DB.invoices||[]).filter(f=>f.estado!=='pagado');
+  const facPorPagarMonto = facPorPagar.reduce((a,f)=>a+(f.monto||0),0);
+  const presPend = (DB.quotes||[]).filter(q=>q.estado==='abierto');
+  const esAdmin = SESSION.rol==='admin';
+  const esVendedor = SESSION.rol!=='bodega';
+
+  const cards=[];
+  cards.push(statCard('Ventas del mes',fmt(ventasMes),'Prod. '+fmt(productosMes)+' + envío '+fmt(enviosMes),'text-clay-800'));
+  cards.push(statCard('Margen del mes',fmt(margenMes),'Utilidad estimada (sin envío)','text-sage-600'));
+  cards.push(`<button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' impagas · ya incluido en ventas →','text-red-600')}</button>`);
+  cards.push(`<button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>`);
+  if(esVendedor) cards.push(`<button onclick="go('presupuestos')" class="block text-left w-full">${statCard('Presupuestos pendientes',presPend.length,presPend.length?'Por cerrar · seguimiento →':'Sin pendientes 👍','text-blue-600')}</button>`);
+  if(esAdmin) cards.push(`<button onclick="go('facturas')" class="block text-left w-full">${statCard('Facturas por pagar',fmt(facPorPagarMonto),facPorPagar.length+' factura'+(facPorPagar.length!==1?'s':'')+' · ver →','text-amber-600')}</button>`);
 
   const v=document.getElementById('view');
   v.innerHTML = `
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Ventas del mes',fmt(ventasMes),'Prod. '+fmt(productosMes)+' + envío '+fmt(enviosMes),'text-clay-800')}
-    ${statCard('Margen del mes',fmt(margenMes),'Utilidad estimada (sin envío)','text-sage-600')}
-    <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' impagas · ya incluido en ventas →','text-red-600')}</button>
-    <button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>
+  <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+    ${cards.join('')}
   </div>
   <div class="text-xs text-clay-400 -mt-3 mb-6 px-1">Nota: "Ventas del mes" incluye el envío. "Por cobrar" es la parte de tus ventas aún no pagada (de cualquier fecha), no se suma a las ventas.</div>
   ${docsPend.length?`<button onclick="goVentasPendientes()" class="w-full text-left card p-4 mb-6 flex items-center gap-3 hover:border-amber-300 transition" style="border-color:#fcd34d;background:#fffbeb">
@@ -935,7 +945,7 @@ function renderPresupuestos(){
     </div>
     ${quotes.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">N°</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
-    ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+    ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openQuoteDetail('${q.id}')">
       <td class="px-5 py-3 font-semibold whitespace-nowrap">${q.numero||'—'}</td>
       <td class="px-3 py-3 whitespace-nowrap text-clay-500">${q.fecha||''}</td>
       <td class="px-3 py-3 font-medium">${q.clienteNombre||'—'}</td>
@@ -943,15 +953,93 @@ function renderPresupuestos(){
       <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(q))}</td>
       <td class="px-3 py-3 whitespace-nowrap">${quoteEstadoPill(q.estado)}</td>
       <td class="px-5 py-3 text-right whitespace-nowrap">
-        <button onclick="downloadQuotePDF('${q.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1">PDF</button>
-        ${puede&&q.estado==='abierto'?`<button onclick="convertirPresupuesto('${q.id}')" class="text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2.5 py-1.5 rounded-lg mr-1">Convertir a venta</button><button onclick="openQuote('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Editar</button><button onclick="marcarPerdido('${q.id}')" class="text-clay-400 hover:text-red-600 text-xs px-1.5">Perdido</button>`:''}
-        ${q.estado==='perdido'?`<button onclick="reabrirPresupuesto('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Reabrir</button>`:''}
+        <button onclick="event.stopPropagation();downloadQuotePDF('${q.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1">PDF</button>
+        ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2.5 py-1.5 rounded-lg mr-1">Convertir a venta</button><button onclick="event.stopPropagation();openQuote('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Editar</button><button onclick="event.stopPropagation();marcarPerdido('${q.id}')" class="text-clay-400 hover:text-red-600 text-xs px-1.5">Perdido</button>`:''}
+        ${q.estado==='perdido'?`<button onclick="event.stopPropagation();reabrirPresupuesto('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Reabrir</button>`:''}
         ${q.estado==='ganado'?`<span class="text-xs text-sage-600">✓ vendido</span>`:''}
       </td>
     </tr>`).join('')}
     </tbody></table></div>${pagControlsHTML('prestbl')}`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
   </div>`;
   pagRender('prestbl');
+}
+function openQuoteDetail(id){
+  const q=DB.quotes.find(x=>x.id===id); if(!q) return;
+  const puede=SESSION.rol!=='bodega';
+  const subtotal=saleSubtotal(q), envio=q.costoEnvio||0, total=subtotal+envio;
+  const lugar=[q.direccion,q.comuna,q.ciudad].filter(Boolean).map(titleCase).join(', ');
+  const vencido = q.estado==='abierto' && q.fechaValidez && q.fechaValidez<todayISO();
+  const COL={done:'#5f7f4d',blue:'#2563eb',amber:'#b45309',red:'#dc2626',gray:'#c2cdc3'};
+  const step=(color,title,sub,last)=>`
+    <div style="display:flex;gap:12px;">
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <span style="width:14px;height:14px;border-radius:50%;background:${COL[color]||COL.gray};flex-shrink:0;margin-top:2px;"></span>
+        ${last?'':`<span style="width:2px;flex:1;background:#e6ece7;margin:2px 0;"></span>`}
+      </div>
+      <div style="padding-bottom:${last?'0':'14px'};">
+        <div class="text-sm font-medium text-clay-800">${title}</div>
+        <div class="text-xs text-clay-500 mt-0.5">${sub}</div>
+      </div>
+    </div>`;
+  const estMap={abierto:['amber','Cotizando','Esperando confirmación del cliente'],ganado:['done','Ganado','Convertido a venta 🎉'],perdido:['gray','Perdido','El cliente no concretó']};
+  const em=estMap[q.estado]||estMap.abierto;
+  const historial=`
+    ${step('done','Presupuesto creado','Fecha '+(q.fecha||'—')+(q.numero?' · N° '+q.numero:''))}
+    ${q.fechaValidez?step(vencido?'red':'blue','Validez', 'Válido hasta '+q.fechaValidez+(vencido?' · vencido':'')):''}
+    ${step(em[0],em[1],em[2],true)}
+  `;
+  const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
+      <button onclick="go('presupuestos');closeModal()" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver a presupuestos</button>
+      <div class="flex items-center justify-between">
+        <div><h3 class="text-lg font-bold leading-tight">${q.clienteNombre||'—'}</h3><div class="text-xs text-clay-500 mt-0.5">Presupuesto ${q.numero?'N° '+q.numero:''} · ${q.fecha||''}</div></div>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+      </div>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Cliente</div>
+          <div class="font-medium text-sm">${q.clienteNombre||'—'}</div>
+          ${q.telefono?`<div class="text-xs text-clay-500 mt-0.5">📞 ${q.telefono}</div>`:''}
+          ${q.email?`<div class="text-xs text-clay-500 mt-0.5">✉️ ${q.email}</div>`:''}
+          ${lugar?`<div class="text-xs text-clay-500 mt-0.5">📍 ${lugar}</div>`:''}
+        </div>
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado</div>
+          <div>${quoteEstadoPill(q.estado)}${vencido?' '+pill('Validez vencida','red'):''}</div>
+          <div class="text-lg font-bold mt-2">${fmt(total)}</div>
+        </div>
+      </div>
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos cotizados</div>
+        <div class="divide-y divide-clay-100">
+          ${q.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+        </div>
+        <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
+          <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+          ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
+          <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
+        </div>
+      </div>
+      ${q.notas?`<div class="text-sm text-clay-600"><span class="text-clay-400">Notas:</span> ${q.notas}</div>`:''}
+      <div>
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-3">Historial del presupuesto</div>
+        ${historial}
+      </div>
+      <div class="border-t border-clay-100 pt-4">
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
+        <div class="flex flex-wrap gap-2">
+          ${actBtn(`downloadQuotePDF('${q.id}')`,'📄 Descargar PDF')}
+          ${puede&&q.estado==='abierto'?actBtn(`convertirPresupuesto('${q.id}')`,'✓ Convertir a venta',true):''}
+          ${puede&&q.estado==='abierto'?actBtn(`openQuote('${q.id}')`,'✏️ Editar'):''}
+          ${puede&&q.estado==='abierto'?actBtn(`marcarPerdido('${q.id}')`,'Marcar perdido'):''}
+          ${puede&&q.estado==='perdido'?actBtn(`reabrirPresupuesto('${q.id}')`,'Reabrir'):''}
+        </div>
+      </div>
+    </div>
+  `);
 }
 function openQuote(id){
   CONVERT_QUOTE_ID=null;
@@ -1037,8 +1125,8 @@ function convertirPresupuesto(qid){
         ciudad:q.ciudad||'Santiago',comuna:q.comuna||'',direccion:q.direccion||'',estadoDespacho:'pendiente',tipoDespacho:q.tipoDespacho||'Viet',courier:'',costoEnvio:q.costoEnvio||0,notas:q.notas||''};
   renderSaleModal();
 }
-function marcarPerdido(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;if(!confirm('¿Marcar el presupuesto '+(q.numero||'')+' como perdido?'))return;q.estado='perdido';save();go('presupuestos');}
-function reabrirPresupuesto(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;q.estado='abierto';save();go('presupuestos');}
+function marcarPerdido(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;if(!confirm('¿Marcar el presupuesto '+(q.numero||'')+' como perdido?'))return;q.estado='perdido';save();closeModal();go('presupuestos');}
+function reabrirPresupuesto(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;q.estado='abierto';save();closeModal();go('presupuestos');}
 function deleteQuote(id){if(!confirm('¿Eliminar este presupuesto?'))return;DB.quotes=(DB.quotes||[]).filter(q=>q.id!==id);save();closeModal();go('presupuestos');}
 function downloadQuotePDF(id){
   const q=DB.quotes.find(x=>x.id===id); if(!q) return;
@@ -2304,18 +2392,30 @@ function openAdjust(pid){
 function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!q){closeModal();return;}DB.adjustments.push({id:uid('a'),productId:pid,cantidad:q,motivo:document.getElementById('adj_m').value,fecha:todayISO()});save();closeModal();go('stock');}
 
 /* ===================== PRODUCTOS ===================== */
+const SIZE_RANK={XS:0,S:1,M:2,L:3,XL:4,XXL:5};
+function sizeRank(t){ const k=String(t||'').trim().toUpperCase(); if(k in SIZE_RANK) return SIZE_RANK[k]; if(k.includes('ÚNIC')||k.includes('UNIC')) return 8; return 6; }
 function renderProductos(){
   const v=document.getElementById('view');
+  // Orden: alfabético por modelo, y dentro de cada modelo de tamaño más chico a más grande, luego por color.
+  const prods=[...DB.products].sort((a,b)=>
+    (a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'})
+    || sizeRank(a.tamano)-sizeRank(b.tamano)
+    || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'}));
+  let lastModelo=null;
   v.innerHTML=`<div class="card overflow-hidden">
-    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value)" placeholder="Buscar..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-72"></div>
-    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[760px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-      <th class="text-left px-4 py-3">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-left px-4 py-3">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-right px-4 py-3">Margen</th><th class="text-right px-4 py-3">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3"></th>':''}</tr></thead><tbody>
-    ${DB.products.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
-      <td class="px-4 py-3 text-clay-500">${p.sku}</td><td class="px-4 py-3 font-medium">${p.modelo}</td><td class="px-4 py-3">${p.tamano}</td><td class="px-4 py-3">${p.color}</td>
-      <td class="px-4 py-3 text-right text-clay-500">${fmt(p.costo)}</td><td class="px-4 py-3 text-right font-semibold">${fmt(p.precioRef)}</td>
-      <td class="px-4 py-3 text-right">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</td>
-      <td class="px-4 py-3 text-right">${stockOf(p.id)}</td>
-      ${SESSION.rol!=='vendedor'?`<td class="px-4 py-3 text-right"><button onclick="openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900">Editar</button></td>`:''}
+    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
+    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-4 py-3 w-24">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-center px-3 py-3 w-20">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-center px-3 py-3 w-24">Margen</th><th class="text-center px-3 py-3 w-20">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
+    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60">
+      <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
+      <td class="px-4 py-2.5 font-medium text-clay-800">${p.modelo}</td>
+      <td class="px-3 py-2.5 text-center"><span class="inline-block bg-clay-100 text-clay-700 text-xs font-medium px-2 py-0.5 rounded-md">${p.tamano}</span></td>
+      <td class="px-4 py-2.5 text-clay-600">${p.color}</td>
+      <td class="px-4 py-2.5 text-right text-clay-500">${fmt(p.costo)}</td>
+      <td class="px-4 py-2.5 text-right font-semibold">${fmt(p.precioRef)}</td>
+      <td class="px-3 py-2.5 text-center">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</td>
+      <td class="px-3 py-2.5 text-center ${stCls}">${st}</td>
+      ${SESSION.rol!=='vendedor'?`<td class="px-4 py-2.5 text-right"><button onclick="openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900 font-medium">Editar</button></td>`:''}
     </tr>`;}).join('')}
     </tbody></table></div>${pagControlsHTML('ptbl')}</div>`;
   pagRender('ptbl');
@@ -2570,11 +2670,37 @@ function facturaEstadoCalc(f){
   return 'por_pagar';
 }
 function facturaEstadoPill(f){ const e=facturaEstadoCalc(f); return e==='pagado'?pill('Pagada','green'):e==='vencida'?pill('Vencida','red'):pill('Por pagar','amber'); }
-function diasVenc(f){ if(f.estado==='pagado'||!f.vencimiento) return ''; const ms=new Date(f.vencimiento)-new Date(todayISO()); const d=Math.round(ms/86400000); if(d<0) return `<span class="text-red-600 font-medium">vencida hace ${-d} día${-d!==1?'s':''}</span>`; if(d===0) return '<span class="text-amber-600 font-medium">vence hoy</span>'; return `<span class="text-clay-500">en ${d} día${d!==1?'s':''}</span>`; }
+// Formatea un RUT como 76.863.280-4
+function formatRut(rut){
+  if(!rut) return '';
+  let s=String(rut).replace(/[.\-\s]/g,'').toUpperCase();
+  if(s.length<2) return rut;
+  const dv=s.slice(-1); let num=s.slice(0,-1);
+  if(!/^\d+$/.test(num)) return rut;
+  num=num.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  return num+'-'+dv;
+}
+// Badge destacado con los días que faltan / lleva vencida
+function diasVencBadge(f){
+  if(f.estado==='pagado'||!f.vencimiento) return '';
+  const d=Math.round((new Date(f.vencimiento)-new Date(todayISO()))/86400000);
+  let cls,txt;
+  if(d<0){ cls='bg-red-100 text-red-700'; txt='Vencida hace '+(-d)+' día'+(-d!==1?'s':''); }
+  else if(d===0){ cls='bg-amber-100 text-amber-800'; txt='Vence hoy'; }
+  else if(d<=7){ cls='bg-amber-100 text-amber-800'; txt='En '+d+' día'+(d!==1?'s':''); }
+  else { cls='bg-clay-100 text-clay-600'; txt='En '+d+' día'+(d!==1?'s':''); }
+  return `<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${cls}">${txt}</span>`;
+}
+let FACT_ESTADO='';
 function renderFacturas(){
   const v=document.getElementById('view');
   if(!DB.invoices) DB.invoices=[];
-  const inv=[...DB.invoices].sort((a,b)=>(b.emision||'').localeCompare(a.emision||''));
+  // Más próximas a vencer primero; las pagadas al final.
+  const inv=[...DB.invoices].sort((a,b)=>{
+    const pa=a.estado==='pagado'?1:0, pb=b.estado==='pagado'?1:0;
+    if(pa!==pb) return pa-pb;
+    return (a.vencimiento||'9999-99-99').localeCompare(b.vencimiento||'9999-99-99');
+  });
   const porPagar=inv.filter(f=>f.estado!=='pagado');
   const vencidas=inv.filter(f=>facturaEstadoCalc(f)==='vencida');
   const pagadas=inv.filter(f=>f.estado==='pagado');
@@ -2582,7 +2708,7 @@ function renderFacturas(){
   const provs=[...new Set([...(DB.purchases||[]).map(p=>p.proveedor),...inv.map(f=>f.proveedor)].filter(Boolean))];
   window._FACT_PROVS=provs;
   const card=f=>{const est=facturaEstadoCalc(f);const accent= est==='vencida'?'#dc2626': est==='pagado'?'#5f7f4d':'#d97706';
-    return `<div class="fact-card card p-0 overflow-hidden cursor-pointer hover:border-clay-300" onclick="openFactura('${f.id}')" data-estado="${est}" data-text="${((f.numero||'')+' '+(f.proveedor||'')+' '+(f.rut||'')).toLowerCase().replace(/"/g,'')}">
+    return `<div class="fact-card card p-0 overflow-hidden cursor-pointer hover:border-clay-300" onclick="openFacturaDetail('${f.id}')" data-estado="${est}" data-text="${((f.numero||'')+' '+(f.proveedor||'')+' '+(f.rut||'')).toLowerCase().replace(/"/g,'')}">
       <div class="flex items-stretch">
         <div class="shrink-0" style="width:5px;background:${accent};"></div>
         <div class="flex-1 min-w-0 p-3.5 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -2593,10 +2719,11 @@ function renderFacturas(){
               ${f.pdfFactura?'<span title="Factura adjunta">📄</span>':''}
               ${f.pdfPago?'<span title="Comprobante de pago">🧾</span>':''}
             </div>
-            <div class="text-xs text-clay-500 mt-0.5">Factura N° ${f.numero||'—'}${f.rut?` · ${f.rut}`:''}</div>
-            <div class="flex gap-5 mt-2.5">
+            <div class="text-xs text-clay-500 mt-0.5">Factura N° ${f.numero||'—'}${f.rut?` · ${formatRut(f.rut)}`:''}</div>
+            <div class="flex gap-5 mt-2.5 items-start">
               <div><div class="text-[11px] text-clay-400 uppercase tracking-wide">Emisión</div><div class="text-sm font-medium text-clay-700">${f.emision||'—'}</div></div>
-              <div><div class="text-[11px] text-clay-400 uppercase tracking-wide">Vencimiento</div><div class="text-sm font-medium text-clay-700">${f.vencimiento||'—'}</div>${diasVenc(f)?`<div class="text-[11px] mt-0.5">${diasVenc(f)}</div>`:''}</div>
+              <div><div class="text-[11px] text-clay-400 uppercase tracking-wide">Vencimiento</div><div class="text-sm font-medium text-clay-700">${f.vencimiento||'—'}</div></div>
+              ${diasVencBadge(f)?`<div><div class="text-[11px] text-clay-400 uppercase tracking-wide">&nbsp;</div>${diasVencBadge(f)}</div>`:''}
             </div>
           </div>
           <div class="sm:text-right shrink-0">
@@ -2605,39 +2732,41 @@ function renderFacturas(){
             <div class="flex items-center gap-1.5 mt-2 sm:justify-end flex-wrap">
               ${f.pdfFactura?`<button onclick="event.stopPropagation();verAdjuntoFactura('${f.pdfFactura.fileId}','${(f.pdfFactura.name||'factura').replace(/'/g,"")}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Ver factura</button>`:''}
               ${f.pdfPago?`<button onclick="event.stopPropagation();verAdjuntoFactura('${f.pdfPago.fileId}','${(f.pdfPago.name||'pago').replace(/'/g,"")}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Ver pago</button>`:''}
-              ${f.estado!=='pagado'?`<button onclick="event.stopPropagation();marcarFacturaPagada('${f.id}')" class="text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1 rounded-lg">Marcar pagada</button>`:''}
+              ${f.estado!=='pagado'?`<button onclick="event.stopPropagation();subirPagoFactura('${f.id}')" class="text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-300 px-2 py-1 rounded-lg">📎 Adjuntar pago</button><button onclick="event.stopPropagation();marcarFacturaPagada('${f.id}')" class="text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1 rounded-lg">Marcar pagada</button>`:''}
+              ${(f.estado==='pagado'&&!f.pdfPago)?`<button onclick="event.stopPropagation();subirPagoFactura('${f.id}')" class="text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-300 px-2 py-1 rounded-lg">📎 Adjuntar pago</button>`:''}
             </div>
           </div>
         </div>
       </div>
     </div>`;};
+  const filterCard=(estado,label,value,sub,color)=>{const active=FACT_ESTADO===estado;return `<button data-factfilter="${estado}" onclick="setFactEstado('${estado}')" class="text-left w-full rounded-2xl transition ${active?'ring-2 ring-clay-700':''}">${statCard(label,value,sub,color)}</button>`;};
   v.innerHTML=`
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Por pagar',fmt(sum(porPagar)),porPagar.length+' factura'+(porPagar.length!==1?'s':''),'text-amber-600')}
-    ${statCard('Vencidas',fmt(sum(vencidas)),vencidas.length+' factura'+(vencidas.length!==1?'s':''),'text-red-600')}
-    ${statCard('Pagadas',fmt(sum(pagadas)),pagadas.length+' factura'+(pagadas.length!==1?'s':''),'text-sage-600')}
-    ${statCard('Total facturas',inv.length,'en el sistema','')}
+  <div class="text-xs text-clay-400 mb-2">Toca una tarjeta para filtrar por estado</div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    ${filterCard('por_pagar','Por pagar',fmt(sum(porPagar)),porPagar.length+' factura'+(porPagar.length!==1?'s':''),'text-amber-600')}
+    ${filterCard('vencida','Vencidas',fmt(sum(vencidas)),vencidas.length+' factura'+(vencidas.length!==1?'s':''),'text-red-600')}
+    ${filterCard('pagado','Pagadas',fmt(sum(pagadas)),pagadas.length+' factura'+(pagadas.length!==1?'s':''),'text-sage-600')}
+    ${filterCard('','Todas',inv.length,'ver todas','text-clay-800')}
   </div>
-  <div class="card p-4 mb-4">
-    <div class="flex flex-wrap items-center gap-2">
-      <input id="fact_q" oninput="filterFacturas()" placeholder="Buscar N° o proveedor..." class="flex-1 min-w-[180px] border border-clay-200 rounded-lg px-3 py-2 text-sm">
-      <select id="fact_estado" onchange="filterFacturas()" class="border border-clay-200 rounded-lg px-3 py-2 text-sm bg-white">
-        <option value="">Todos los estados</option>
-        <option value="por_pagar">Por pagar</option>
-        <option value="vencida">Vencidas</option>
-        <option value="pagado">Pagadas</option>
-      </select>
-    </div>
+  <div class="flex gap-2 mb-4">
+    <div class="card p-3 flex-1"><input id="fact_q" oninput="filterFacturas()" placeholder="🔍  Buscar N° o proveedor..." class="w-full border-0 focus:outline-none px-2 py-1.5 text-sm bg-transparent"></div>
+    ${porPagar.length?`<button onclick="openPagoMultiple()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 rounded-2xl flex items-center gap-1.5 whitespace-nowrap">💵 Registrar pago</button>`:''}
   </div>
   ${inv.length===0
     ? `<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">🧾</div>Aún no tienes facturas de compra. Crea la primera con "Nueva factura".<div class="text-xs text-clay-400 mt-2">Podrás adjuntar el PDF de la factura y el comprobante de pago.</div></div>`
     : `<div id="factList" class="space-y-2.5">${inv.map(card).join('')}</div>
        <div id="factEmpty" class="hidden card p-8 text-center text-clay-400 text-sm">Ninguna factura coincide con el filtro.</div>`}
   `;
+  if(inv.length) filterFacturas();
+}
+function setFactEstado(v){
+  FACT_ESTADO=v;
+  document.querySelectorAll('[data-factfilter]').forEach(b=>{ const on=b.dataset.factfilter===v; b.classList.toggle('ring-2',on); b.classList.toggle('ring-clay-700',on); });
+  filterFacturas();
 }
 function filterFacturas(){
   const q=(document.getElementById('fact_q')?.value||'').toLowerCase();
-  const est=document.getElementById('fact_estado')?.value||'';
+  const est=FACT_ESTADO;
   let visibles=0;
   document.querySelectorAll('.fact-card').forEach(el=>{
     const okQ=!q||el.dataset.text.includes(q);
@@ -2651,6 +2780,70 @@ function openFactura(id){
   FINV=f?JSON.parse(JSON.stringify(f)):{id:uid('inv'),numero:'',proveedor:'',rut:'',emision:todayISO(),plazo:30,vencimiento:addDaysISO(todayISO(),30),monto:0,estado:'por_pagar',fechaPago:'',notas:'',pdfFactura:null,pdfPago:null};
   if(!('plazo' in FINV)) FINV.plazo='';
   renderFacturaModal();
+}
+function plazoLabel(p){ if(p===''||p==null) return ''; if(String(p)==='0') return 'contado'; return p+' días'; }
+function openFacturaDetail(id){
+  const f=DB.invoices.find(x=>x.id===id); if(!f) return;
+  const est=facturaEstadoCalc(f);
+  const COL={done:'#5f7f4d',blue:'#2563eb',amber:'#b45309',red:'#dc2626',gray:'#c2cdc3'};
+  const step=(color,title,sub,last)=>`
+    <div style="display:flex;gap:12px;">
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <span style="width:14px;height:14px;border-radius:50%;background:${COL[color]||COL.gray};flex-shrink:0;margin-top:2px;"></span>
+        ${last?'':`<span style="width:2px;flex:1;background:#e6ece7;margin:2px 0;"></span>`}
+      </div>
+      <div style="padding-bottom:${last?'0':'14px'};">
+        <div class="text-sm font-medium text-clay-800">${title}</div>
+        <div class="text-xs text-clay-500 mt-0.5">${sub}</div>
+      </div>
+    </div>`;
+  const historial=`
+    ${step('done','Factura registrada','Emisión '+(f.emision||'—')+(plazoLabel(f.plazo)?' · plazo '+plazoLabel(f.plazo):''))}
+    ${step(est==='vencida'?'red':(f.estado==='pagado'?'done':'amber'),'Vencimiento',(f.vencimiento||'—'))}
+    ${step(f.pdfFactura?'done':'gray','Factura adjunta', f.pdfFactura?(f.pdfFactura.name||'archivo'):'Sin PDF adjunto aún')}
+    ${step(f.estado==='pagado'?'done':'amber','Pago', f.estado==='pagado'?('Pagada'+(f.fechaPago?' el '+f.fechaPago:'')+((f.pagoId&&DB.invoices.filter(x=>x.pagoId===f.pagoId).length>1)?' · pago en conjunto con '+(DB.invoices.filter(x=>x.pagoId===f.pagoId).length-1)+' factura(s) más':'')):'Pendiente — '+fmt(f.monto||0))}
+    ${step(f.pdfPago?'done':'gray','Comprobante de pago', f.pdfPago?(f.pdfPago.name||'archivo'):'Sin comprobante aún', true)}
+  `;
+  const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
+      <button onclick="go('facturas');closeModal()" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver a facturas</button>
+      <div class="flex items-center justify-between">
+        <div><h3 class="text-lg font-bold leading-tight">${f.proveedor||'—'}</h3><div class="text-xs text-clay-500 mt-0.5">Factura N° ${f.numero||'—'}${f.rut?' · '+formatRut(f.rut):''}</div></div>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+      </div>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado</div>
+          <div class="flex flex-wrap gap-1.5 items-center">${facturaEstadoPill(f)}${diasVencBadge(f)}</div>
+          <div class="text-lg font-bold mt-2">${fmt(f.monto||0)} <span class="text-xs font-normal text-clay-400">IVA incluido</span></div>
+        </div>
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Fechas</div>
+          <div class="text-sm text-clay-700">Emisión: <b>${f.emision||'—'}</b></div>
+          <div class="text-sm text-clay-700">Vencimiento: <b>${f.vencimiento||'—'}</b>${plazoLabel(f.plazo)?` <span class="text-xs text-clay-400">(${plazoLabel(f.plazo)})</span>`:''}</div>
+          ${f.estado==='pagado'&&f.fechaPago?`<div class="text-sm text-sage-700 mt-0.5">Pagada: <b>${f.fechaPago}</b></div>`:''}
+        </div>
+      </div>
+      ${f.notas?`<div class="text-sm text-clay-600"><span class="text-clay-400">Notas:</span> ${f.notas}</div>`:''}
+      <div>
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-3">Historial de la factura</div>
+        ${historial}
+      </div>
+      <div class="border-t border-clay-100 pt-4">
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
+        <div class="flex flex-wrap gap-2">
+          ${f.pdfFactura?actBtn(`verAdjuntoFactura('${f.pdfFactura.fileId}','${(f.pdfFactura.name||'factura').replace(/'/g,"")}')`,'📄 Ver factura'):''}
+          ${f.pdfPago?actBtn(`verAdjuntoFactura('${f.pdfPago.fileId}','${(f.pdfPago.name||'pago').replace(/'/g,"")}')`,'🧾 Ver comprobante de pago'):''}
+          ${(f.estado!=='pagado'||!f.pdfPago)?actBtn(`subirPagoFactura('${f.id}',true)`,'📎 Adjuntar pago'):''}
+          ${f.estado!=='pagado'?actBtn(`marcarFacturaPagada('${f.id}',true)`,'✓ Marcar pagada',true):''}
+          ${actBtn(`openFactura('${f.id}')`,'✏️ Editar factura')}
+        </div>
+      </div>
+    </div>
+  `);
 }
 const fileToDataURL = file => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
 function addDaysISO(iso, n){ if(!iso) return ''; const [y,m,d]=iso.split('-').map(Number); const dt=new Date(y,m-1,d+(parseInt(n,10)||0)); return repIso(dt); }
@@ -2774,22 +2967,139 @@ function saveFactura(){
   if(!FINV.numero){ alert('Ingresa el número de factura.'); return; }
   if(!FINV.proveedor){ alert('Ingresa el proveedor.'); return; }
   if(FINV.estado==='pagado'&&!FINV.fechaPago) FINV.fechaPago=todayISO();
+  if(FINV.rut) FINV.rut=formatRut(FINV.rut);
   upsertSupplier(FINV.proveedor, FINV.rut);
   const ix=DB.invoices.findIndex(x=>x.id===FINV.id);
   if(ix>=0) DB.invoices[ix]=FINV; else DB.invoices.push(FINV);
   save(); closeModal(); if(CURRENT==='facturas') renderFacturas();
 }
-function marcarFacturaPagada(id){
+function marcarFacturaPagada(id, reopenDetail){
   const f=DB.invoices.find(x=>x.id===id); if(!f) return;
-  f.estado='pagado'; if(!f.fechaPago) f.fechaPago=todayISO();
+  const hoy=todayISO();
+  if(!confirm('¿Marcar la factura N° '+(f.numero||'')+' de '+(f.proveedor||'')+' por '+fmt(f.monto||0)+' como PAGADA hoy ('+hoy+')?')) return;
+  f.estado='pagado'; if(!f.fechaPago) f.fechaPago=hoy;
   save(); if(CURRENT==='facturas') renderFacturas();
+  toastInfo('✓ Factura N° '+(f.numero||'')+' marcada como pagada el '+f.fechaPago);
+  if(reopenDetail) openFacturaDetail(id);
+}
+// Adjuntar el comprobante de pago directo desde la tarjeta/detalle: al subirlo, la factura queda pagada.
+function subirPagoFactura(id, reopenDetail){
+  const f=DB.invoices.find(x=>x.id===id); if(!f) return;
+  if(!window.FB||!FB.saveBlob){ alert('Se requiere conexión con la base de datos.'); return; }
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='application/pdf,image/*';
+  inp.onchange=async ()=>{ const file=inp.files&&inp.files[0]; if(!file) return;
+    try{
+      let dataUrl, mime=file.type||'application/octet-stream';
+      if(file.type && file.type.startsWith('image/')){ dataUrl=await compressImage(file, 1500, 0.7); mime='image/jpeg'; }
+      else { dataUrl=await fileToDataURL(file); }
+      const approxBytes=Math.round((dataUrl.length-(dataUrl.indexOf(',')+1))*0.75);
+      if(approxBytes > 850*1024){ alert('El archivo pesa demasiado para guardarlo ('+Math.round(approxBytes/1024)+' KB). Máximo ~850 KB.'); return; }
+      const fileId=uid('file');
+      await FB.saveBlob(fileId, {data:dataUrl, name:file.name, mime, ts:Date.now()});
+      if(f.pdfPago&&f.pdfPago.fileId&&FB.deleteBlob) FB.deleteBlob(f.pdfPago.fileId);
+      f.pdfPago={fileId, name:file.name, mime};
+      f.estado='pagado'; if(!f.fechaPago) f.fechaPago=todayISO();
+      save(); if(CURRENT==='facturas') renderFacturas();
+      toastInfo('✓ Comprobante guardado · factura pagada el '+f.fechaPago);
+      if(reopenDetail) openFacturaDetail(id);
+    }catch(e){ alert('No se pudo guardar el comprobante.\n'+((e&&e.message)||'')); }
+  };
+  inp.click();
 }
 function deleteFactura(id){
   if(!confirm('¿Eliminar esta factura? También se borrarán sus archivos adjuntos.')) return;
   const f=DB.invoices.find(x=>x.id===id);
-  if(f){ if(f.pdfFactura&&f.pdfFactura.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(f.pdfFactura.fileId); if(f.pdfPago&&f.pdfPago.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(f.pdfPago.fileId); }
+  const otras=fid=>fid&&DB.invoices.some(x=>x.id!==id&&((x.pdfFactura&&x.pdfFactura.fileId===fid)||(x.pdfPago&&x.pdfPago.fileId===fid)));
+  if(f){
+    if(f.pdfFactura&&f.pdfFactura.fileId&&window.FB&&FB.deleteBlob&&!otras(f.pdfFactura.fileId)) FB.deleteBlob(f.pdfFactura.fileId);
+    if(f.pdfPago&&f.pdfPago.fileId&&window.FB&&FB.deleteBlob&&!otras(f.pdfPago.fileId)) FB.deleteBlob(f.pdfPago.fileId);
+  }
   DB.invoices=DB.invoices.filter(x=>x.id!==id);
   save(); closeModal(); if(CURRENT==='facturas') renderFacturas();
+}
+/* ---- Pago de varias facturas en una sola transferencia ---- */
+let PAGO=null; // {sel:{}, pdfPago}
+function openPagoMultiple(){ PAGO={sel:{}, pdfPago:null}; renderPagoMultiple(); }
+function renderPagoMultiple(){
+  const pend=DB.invoices.filter(f=>f.estado!=='pagado').sort((a,b)=>(a.vencimiento||'9999-99-99').localeCompare(b.vencimiento||'9999-99-99'));
+  const m=PAGO.pdfPago;
+  const row=f=>{const checked=!!PAGO.sel[f.id];return `<label class="flex items-center gap-3 px-3 py-2.5 border-b border-clay-100 last:border-0 cursor-pointer hover:bg-clay-50">
+      <input type="checkbox" ${checked?'checked':''} onchange="togglePagoSel('${f.id}',this.checked)" class="w-4 h-4 accent-clay-700">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium truncate">${f.proveedor||'—'} <span class="text-clay-400 font-normal">· N° ${f.numero||'—'}</span></div>
+        <div class="text-xs text-clay-400">Vence ${f.vencimiento||'—'} ${diasVencBadge(f)}</div>
+      </div>
+      <div class="text-sm font-semibold whitespace-nowrap">${fmt(f.monto||0)}</div>
+    </label>`;};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Registrar pago</h3><div class="text-xs text-clay-400">Selecciona las facturas que cubre esta transferencia</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      ${pend.length===0?`<div class="text-center text-clay-400 py-6 text-sm">No hay facturas por pagar.</div>`:`
+      <div class="border border-clay-200 rounded-xl overflow-hidden max-h-72 overflow-y-auto">${pend.map(row).join('')}</div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Fecha del pago</label><input id="pagoFecha" type="date" value="${todayISO()}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div class="border border-clay-200 rounded-xl p-3">
+          <div class="text-xs font-medium text-clay-600 mb-2">Comprobante de la transferencia (opcional)</div>
+          <div id="pagoComprobanteSlot">
+            ${m?`<div class="flex items-center justify-between gap-2"><span class="text-sm text-clay-700 truncate flex items-center gap-1.5">📎 ${m.name||'archivo'}</span><button type="button" onclick="quitarPagoComprobante()" class="text-xs text-red-500 hover:underline px-1">Quitar</button></div>`
+              :`<button type="button" onclick="subirPagoComprobante()" class="w-full text-sm font-medium text-clay-700 bg-white hover:bg-clay-50 border border-dashed border-clay-300 px-3 py-2.5 rounded-lg flex items-center justify-center gap-2">⬆️ Subir comprobante</button>`}
+          </div>
+        </div>
+      </div>
+      <div class="bg-clay-50 rounded-xl p-4 flex items-center justify-between">
+        <div class="text-sm text-clay-600"><span id="pagoCount">0</span> factura(s) seleccionada(s)</div>
+        <div class="text-right"><div class="text-xs text-clay-400">Total seleccionado</div><div class="text-xl font-bold" id="pagoTotal">$0</div></div>
+      </div>`}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2.5 rounded-xl border border-clay-200 text-sm">Cancelar</button>
+      <button id="pagoConfirm" onclick="confirmarPagoMultiple()" disabled class="bg-clay-700 hover:bg-clay-800 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl">Confirmar pago</button>
+    </div>
+  `);
+  actualizarPagoTotal();
+}
+function togglePagoSel(id, checked){ if(checked) PAGO.sel[id]=true; else delete PAGO.sel[id]; actualizarPagoTotal(); }
+function actualizarPagoTotal(){
+  const ids=Object.keys(PAGO.sel);
+  const tot=ids.reduce((a,id)=>{const f=DB.invoices.find(x=>x.id===id);return a+(f?f.monto||0:0);},0);
+  const t=document.getElementById('pagoTotal'); if(t) t.textContent=fmt(tot);
+  const c=document.getElementById('pagoCount'); if(c) c.textContent=ids.length;
+  const b=document.getElementById('pagoConfirm'); if(b) b.disabled=ids.length===0;
+}
+function subirPagoComprobante(){
+  if(!window.FB||!FB.saveBlob){ alert('Se requiere conexión con la base de datos.'); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/pdf,image/*';
+  inp.onchange=async ()=>{ const file=inp.files&&inp.files[0]; if(!file) return;
+    const slot=document.getElementById('pagoComprobanteSlot'); if(slot) slot.innerHTML='<div class="text-sm text-clay-400 py-2 text-center">Guardando… ⏳</div>';
+    try{
+      let dataUrl, mime=file.type||'application/octet-stream';
+      if(file.type && file.type.startsWith('image/')){ dataUrl=await compressImage(file,1500,0.7); mime='image/jpeg'; }
+      else { dataUrl=await fileToDataURL(file); }
+      const approxBytes=Math.round((dataUrl.length-(dataUrl.indexOf(',')+1))*0.75);
+      if(approxBytes>850*1024){ alert('El archivo pesa demasiado ('+Math.round(approxBytes/1024)+' KB). Máximo ~850 KB.'); renderPagoMultiple(); return; }
+      const fileId=uid('file');
+      await FB.saveBlob(fileId,{data:dataUrl,name:file.name,mime,ts:Date.now()});
+      PAGO.pdfPago={fileId,name:file.name,mime};
+      renderPagoMultiple();
+    }catch(e){ alert('No se pudo guardar el comprobante.\n'+((e&&e.message)||'')); renderPagoMultiple(); }
+  };
+  inp.click();
+}
+function quitarPagoComprobante(){ if(PAGO.pdfPago&&PAGO.pdfPago.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(PAGO.pdfPago.fileId); PAGO.pdfPago=null; renderPagoMultiple(); }
+function confirmarPagoMultiple(){
+  const ids=Object.keys(PAGO.sel);
+  if(ids.length===0){ alert('Selecciona al menos una factura.'); return; }
+  const fechaEl=document.getElementById('pagoFecha'); const fecha=(fechaEl&&fechaEl.value)||todayISO();
+  const tot=ids.reduce((a,id)=>{const f=DB.invoices.find(x=>x.id===id);return a+(f?f.monto||0:0);},0);
+  if(!confirm('¿Registrar el pago de '+ids.length+' factura(s) por un total de '+fmt(tot)+' con fecha '+fecha+'?')) return;
+  const pagoId=uid('pago');
+  ids.forEach(id=>{ const f=DB.invoices.find(x=>x.id===id); if(!f) return; f.estado='pagado'; f.fechaPago=fecha; f.pagoId=pagoId; if(PAGO.pdfPago) f.pdfPago={fileId:PAGO.pdfPago.fileId,name:PAGO.pdfPago.name,mime:PAGO.pdfPago.mime}; });
+  save(); closeModal(); if(CURRENT==='facturas') renderFacturas();
+  toastInfo('✓ '+ids.length+' factura(s) pagadas · '+fmt(tot)+' · '+fecha);
 }
 
 /* ===================== USUARIOS Y PERMISOS ===================== */
