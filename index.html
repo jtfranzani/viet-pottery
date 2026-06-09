@@ -138,9 +138,31 @@
    ========================================================= */
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
+// Mapa ciudad -> región (Chile). Permite agrupar ventas por región sin pedir el dato manualmente.
+const REGION_MAP = {
+  'arica':'Arica y Parinacota','iquique':'Tarapacá','alto hospicio':'Tarapacá',
+  'antofagasta':'Antofagasta','calama':'Antofagasta','copiapo':'Atacama','copiapó':'Atacama',
+  'la serena':'Coquimbo','coquimbo':'Coquimbo','ovalle':'Coquimbo',
+  'valparaiso':'Valparaíso','valparaíso':'Valparaíso','vina del mar':'Valparaíso','viña del mar':'Valparaíso','quilpue':'Valparaíso','quilpué':'Valparaíso','villa alemana':'Valparaíso','san antonio':'Valparaíso','quillota':'Valparaíso','los andes':'Valparaíso',
+  'santiago':'Metropolitana','rancagua':"O'Higgins",'san fernando':"O'Higgins",'rengo':"O'Higgins",'machali':"O'Higgins",'machalí':"O'Higgins",
+  'talca':'Maule','curico':'Maule','curicó':'Maule','linares':'Maule','cauquenes':'Maule',
+  'chillan':'Ñuble','chillán':'Ñuble',
+  'concepcion':'Biobío','concepción':'Biobío','talcahuano':'Biobío','los angeles':'Biobío','los ángeles':'Biobío','coronel':'Biobío',
+  'temuco':'Araucanía','villarrica':'Araucanía','pucon':'Araucanía','pucón':'Araucanía','angol':'Araucanía',
+  'valdivia':'Los Ríos','la union':'Los Ríos','la unión':'Los Ríos',
+  'osorno':'Los Lagos','puerto montt':'Los Lagos','puerto varas':'Los Lagos','castro':'Los Lagos','ancud':'Los Lagos',
+  'coyhaique':'Aysén','coihaique':'Aysén',
+  'punta arenas':'Magallanes','puerto natales':'Magallanes'
+};
+const regionOf = ciudad => { const k=String(ciudad||'').trim().toLowerCase(); return REGION_MAP[k] || (k?'Otra región':'Sin ubicación'); };
 const ACCOUNTS = ['Transferencia B. Santander Viet','Transferencia B. Estado C.F','Efectivo','Link de Pago'];
 const fmt = n => '$' + (Math.round(n||0)).toLocaleString('es-CL');
-const todayISO = () => new Date().toISOString().slice(0,10);
+// Formato de miles para campos de monto (sin $): 34600 -> "34.600"
+const milesIn = n => (n? Math.round(n).toLocaleString('es-CL') : '');
+const milesParse = v => parseInt(String(v||'').replace(/[^\d]/g,''),10)||0;
+// Reformatea el input mientras se escribe y devuelve el número.
+function moneyInput(el){ const n=milesParse(el.value); el.value = n? n.toLocaleString('es-CL') : ''; return n; }
+const todayISO = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
 
 /* ---------- Seed data (derivado del Excel real) ---------- */
@@ -460,8 +482,11 @@ function entregaCell(s){
 /* ===================== DASHBOARD ===================== */
 function renderDashboard(){
   const now=new Date(), m=now.getMonth(), y=now.getFullYear();
-  const inMonth = s => { const d=new Date(s.fecha); return d.getMonth()===m && d.getFullYear()===y; };
+  const ym = y+'-'+String(m+1).padStart(2,'0');
+  const inMonth = s => (s.fecha||'').slice(0,7)===ym;   // comparación por texto YYYY-MM (sin zona horaria)
   const ventasMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleTotal(s),0);
+  const productosMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s),0);
+  const enviosMes = DB.sales.filter(inMonth).reduce((a,s)=>a+(s.costoEnvio||0),0);
   const porCobrar = DB.sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
   const stockBajo = DB.products.filter(p=>stockOf(p.id)<=p.stockMin);
   const despPend  = DB.sales.filter(s=>s.estadoDespacho!=='entregado');
@@ -471,11 +496,12 @@ function renderDashboard(){
   const v=document.getElementById('view');
   v.innerHTML = `
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Ventas del mes',fmt(ventasMes),DB.sales.filter(inMonth).length+' ventas','text-clay-800')}
-    ${statCard('Margen del mes',fmt(margenMes),'Utilidad estimada','text-sage-600')}
-    <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' ventas impagas · ver →','text-red-600')}</button>
+    ${statCard('Ventas del mes',fmt(ventasMes),'Prod. '+fmt(productosMes)+' + envío '+fmt(enviosMes),'text-clay-800')}
+    ${statCard('Margen del mes',fmt(margenMes),'Utilidad estimada (sin envío)','text-sage-600')}
+    <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' impagas · ya incluido en ventas →','text-red-600')}</button>
     <button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>
   </div>
+  <div class="text-xs text-clay-400 -mt-3 mb-6 px-1">Nota: "Ventas del mes" incluye el envío. "Por cobrar" es la parte de tus ventas aún no pagada (de cualquier fecha), no se suma a las ventas.</div>
   ${docsPend.length?`<button onclick="goVentasPendientes()" class="w-full text-left card p-4 mb-6 flex items-center gap-3 hover:border-amber-300 transition" style="border-color:#fcd34d;background:#fffbeb">
     <span class="text-xl">📌</span>
     <div class="flex-1"><div class="font-semibold text-amber-800">Tienes ${docsPend.length} documento${docsPend.length>1?'s':''} pendiente${docsPend.length>1?'s':''} por emitir</div><div class="text-xs text-amber-700">Boletas o facturas que aún debes generar. Haz clic para verlas.</div></div>
@@ -518,7 +544,7 @@ function drawChart(id,type,labels,data,color,horizontal){
 }
 
 /* ===================== REPORTES ===================== */
-let REP={preset:'mes', from:'', to:'', sort:'cantidad'};
+let REP={preset:'mes', from:'', to:'', sort:'cantidad', dir:'desc', cat:'todas', geo:'region', tab:'resumen'};
 function repIso(d){const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const da=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${da}`;}
 function repRange(){
   const t=new Date(); t.setHours(0,0,0,0); const today=repIso(t);
@@ -529,20 +555,61 @@ function repRange(){
   if(REP.preset==='personalizado') return [REP.from||today, REP.to||today];
   return ['0000-01-01','9999-12-31'];
 }
-function setRepPreset(p){ REP.preset=p; if(p==='personalizado' && (!REP.from||!REP.to)){ const t=new Date(); REP.from=repIso(new Date(t.getFullYear(),t.getMonth(),1)); REP.to=repIso(t); } renderReportes(); }
-function setRepFrom(v){ REP.from=v; renderReportes(); }
-function setRepTo(v){ REP.to=v; renderReportes(); }
-function setRepSort(v){ REP.sort=v; renderReportes(); }
+function setRepPreset(p){ REP.preset=p; REP.cat='todas'; if(p==='personalizado' && (!REP.from||!REP.to)){ const t=new Date(); REP.from=repIso(new Date(t.getFullYear(),t.getMonth(),1)); REP.to=repIso(t); } renderReportes(); }
+function setRepFrom(v){ REP.from=v; REP.cat='todas'; renderReportes(); }
+function setRepTo(v){ REP.to=v; REP.cat='todas'; renderReportes(); }
+function setRepSort(v){ if(REP.sort===v){ REP.dir=REP.dir==='asc'?'desc':'asc'; } else { REP.sort=v; REP.dir='desc'; } renderReportes(); }
+function setRepCat(c){ REP.cat=c; renderReportes(); }
+function setRepGeo(g){ REP.geo=g; renderReportes(); }
+function setRepTab(t){ REP.tab=t; renderReportes(); }
+function geoAgg(sales, level){
+  const g={};
+  sales.forEach(s=>{
+    let label, ctx='', key;
+    if(level==='region'){ label=regionOf(s.ciudad); key=label.toLowerCase(); }
+    else if(level==='ciudad'){ label=titleCase(s.ciudad)||'Sin ciudad'; ctx=regionOf(s.ciudad); key=label.toLowerCase(); }
+    else { label=titleCase(s.comuna)||'Sin comuna'; ctx=titleCase(s.ciudad)||''; key=(label+'|'+ctx).toLowerCase(); }
+    if(!g[key]) g[key]={label,ctx,nVentas:0,unidades:0,monto:0,clientes:new Set()};
+    const o=g[key];
+    o.nVentas++; o.unidades+=s.items.reduce((x,i)=>x+i.cantidad,0); o.monto+=saleSubtotal(s);
+    o.clientes.add(s.clienteId||s.clienteNombre||'');
+  });
+  const arr=Object.values(g).map(o=>({label:o.label,ctx:o.ctx,nVentas:o.nVentas,unidades:o.unidades,monto:o.monto,nClientes:o.clientes.size,ticket:o.nVentas?Math.round(o.monto/o.nVentas):0}));
+  arr.sort((a,b)=>b.monto-a.monto);
+  return arr;
+}
 function repData(){
   const [from,to]=repRange();
   const sales=DB.sales.filter(s=>s.fecha>=from && s.fecha<=to);
-  const byProd={};
-  sales.forEach(s=>s.items.forEach(i=>{const k=i.productId||i.descripcion; if(!byProd[k])byProd[k]={pid:i.productId,desc:i.descripcion,cant:0,monto:0}; byProd[k].cant+=i.cantidad; byProd[k].monto+=lineTotal(i);}));
-  let top=Object.values(byProd); top.sort((a,b)=> REP.sort==='monto'? b.monto-a.monto : b.cant-a.cant);
-  return {from,to,sales,top,
+  const byProd={}, byCat={};
+  sales.forEach(s=>s.items.forEach(i=>{
+    const p=productById(i.productId);
+    const k=i.productId||i.descripcion;
+    const cat=p?p.modelo:'Otros';
+    const lt=lineTotal(i);
+    const ct=(p?p.costo:0)*i.cantidad;
+    if(!byProd[k])byProd[k]={pid:i.productId,desc:i.descripcion,cat:cat,cant:0,monto:0,costo:0};
+    byProd[k].cant+=i.cantidad; byProd[k].monto+=lt; byProd[k].costo+=ct;
+    if(!byCat[cat])byCat[cat]={cat:cat,cant:0,monto:0,costo:0};
+    byCat[cat].cant+=i.cantidad; byCat[cat].monto+=lt; byCat[cat].costo+=ct;
+  }));
+  const all=Object.values(byProd);
+  all.forEach(r=>{r.margen=r.monto-r.costo; r.margenpct=r.monto? r.margen/r.monto*100 : 0;});
+  const cats=Object.values(byCat);
+  cats.forEach(c=>{c.margen=c.monto-c.costo; c.margenpct=c.monto? c.margen/c.monto*100 : 0;});
+  cats.sort((a,b)=>b.monto-a.monto);
+  const keyOf={cantidad:'cant', monto:'monto', costo:'costo', margen:'margen', margenpct:'margenpct'};
+  const k=keyOf[REP.sort]||'cant'; const dir=REP.dir==='asc'?1:-1;
+  let top=all.filter(r=> REP.cat==='todas' || r.cat===REP.cat);
+  top.sort((a,b)=>(a[k]-b[k])*dir);
+  const mejorMargen=all.slice().sort((a,b)=>b.margen-a.margen)[0]||null;
+  const mejorPct=all.slice().sort((a,b)=>b.margenpct-a.margenpct)[0]||null;
+  const peorPct=all.slice().sort((a,b)=>a.margenpct-b.margenpct)[0]||null;
+  return {from,to,sales,top,cats,all,mejorMargen,mejorPct,peorPct,
     nVentas:sales.length,
     unidades:sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0),
     ingresos:sales.reduce((a,s)=>a+saleSubtotal(s),0),
+    costos:sales.reduce((a,s)=>a+saleCost(s),0),
     margen:sales.reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0),
     envios:sales.reduce((a,s)=>a+(s.costoEnvio||0),0),
     porCobrar:sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0)};
@@ -560,25 +627,26 @@ function renderReportes(){
   const vietN=d.sales.filter(s=>tipoDespachoOf(s)==='Viet').length;
   const franN=d.sales.filter(s=>tipoDespachoOf(s)==='Fran').length;
   const presetBtn=(p,l)=>`<button onclick="setRepPreset('${p}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${REP.preset===p?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${l}</button>`;
-  v.innerHTML=`
-  <div class="card p-4 mb-6">
-    <div class="flex flex-wrap items-center gap-2">
-      ${presetBtn('hoy','Hoy')}${presetBtn('semana','Esta semana')}${presetBtn('mes','Este mes')}${presetBtn('anio','Este año')}${presetBtn('todo','Total')}${presetBtn('personalizado','Personalizado')}
-      ${REP.preset==='personalizado'?`<div class="flex items-center gap-2"><input type="date" value="${REP.from}" onchange="setRepFrom(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"><span class="text-clay-400 text-sm">a</span><input type="date" value="${REP.to}" onchange="setRepTo(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"></div>`:''}
-      <div class="ml-auto flex items-center gap-3">
-        <span class="text-sm text-clay-500 hidden sm:inline">${d.from} → ${d.to}</span>
-        <button onclick="downloadReportePDF()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>PDF</button>
-      </div>
-    </div>
-  </div>
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  const tot=d.top.reduce((a,r)=>({cant:a.cant+r.cant,monto:a.monto+r.monto,costo:a.costo+r.costo,margen:a.margen+r.margen}),{cant:0,monto:0,costo:0,margen:0});
+  const rentCard=(t,r,col,val)=>`<div class="card p-4"><div class="text-xs text-clay-500">${t}</div>${r?`<div class="text-base font-bold mt-1 leading-tight">${repName(r)}</div><div class="text-sm ${col} font-semibold mt-1">${val(r)}</div><div class="text-xs text-clay-400 mt-0.5">${r.cant} u · venta ${fmt(r.monto)}</div>`:'<div class="text-sm text-clay-400 mt-2">—</div>'}</div>`;
+  const sortTh=(key,label,cls)=>{const act=REP.sort===key;const arr=act?(REP.dir==='asc'?' ↑':' ↓'):'';return `<th class="text-right py-3 ${cls}"><button onclick="setRepSort('${key}')" class="uppercase font-medium ${act?'text-clay-800':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
+  const geo=geoAgg(d.sales, REP.geo);
+  const geoMax=geo.reduce((m,g)=>Math.max(m,g.monto),0)||1;
+  const geoLabels={region:'Región',ciudad:'Ciudad',comuna:'Comuna'};
+  const geoBtn=(k)=>`<button onclick="setRepGeo('${k}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${REP.geo===k?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${geoLabels[k]}</button>`;
+  const tabBtn=(t,l)=>`<button onclick="setRepTab('${t}')" class="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${REP.tab===t?'bg-clay-700 text-white shadow-sm':'text-clay-600 hover:bg-clay-100'}">${l}</button>`;
+  const empty=`<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">📊</div>No hay ventas en este período. Prueba con otro rango.</div>`;
+  // ---- TAB: Resumen de ventas ----
+  const resumenHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
     ${statCard('Ventas (productos)',fmt(d.ingresos),'Ticket prom. '+fmt(ticket),'text-clay-800')}
     ${statCard('Margen estimado',fmt(d.margen),d.ingresos?Math.round(d.margen/d.ingresos*100)+'% sobre ventas':'','text-sage-600')}
     ${statCard('Unidades vendidas',d.unidades,d.nVentas+' venta'+(d.nVentas!==1?'s':''),'')}
-    ${statCard('Envíos cobrados',fmt(d.envios),'Por cobrar '+fmt(d.porCobrar),'')}
+    ${statCard('Envíos cobrados',fmt(d.envios),'cobrados al cliente','')}
+    <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(d.porCobrar),'ir a cobranzas →','text-red-600')}</button>
   </div>
-  ${d.nVentas===0?`<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">📊</div>No hay ventas en este período. Prueba con otro rango.</div>`:`
-  <div class="grid lg:grid-cols-3 gap-4 items-start mb-4">
+  ${d.nVentas===0?empty:`
+  <div class="grid lg:grid-cols-3 gap-4 items-start">
     <div class="card p-5 lg:col-span-2">
       <div class="font-semibold mb-3">Ventas por ${byMonth?'mes':'día'}</div>
       <canvas id="chRep" height="110"></canvas>
@@ -589,28 +657,109 @@ function renderReportes(){
       ${masV?`<div class="text-sm text-clay-500 mt-1">${masV.cant} unidades · ${fmt(masV.monto)}</div>`:''}
       <div class="border-t border-clay-100 mt-4 pt-3 text-xs text-clay-400">Despachos: Viet ${vietN} · Fran ${franN}</div>
     </div>
+  </div>`}`;
+  // ---- TAB: Venta productos ----
+  const productosHTML=d.nVentas===0?empty:`
+  <div class="grid sm:grid-cols-3 gap-4 mb-4">
+    ${rentCard('🥇 Más rentable (margen $)',d.mejorMargen,'text-sage-600',r=>fmt(r.margen)+' de margen')}
+    ${rentCard('📈 Mejor margen %',d.mejorPct,'text-sage-600',r=>Math.round(r.margenpct)+'% de margen')}
+    ${rentCard('⚠️ Menor margen %',d.peorPct,'text-amber-600',r=>Math.round(r.margenpct)+'% de margen')}
   </div>
   <div class="card overflow-hidden">
-    <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
-      <div class="font-semibold">Productos vendidos en el período</div>
-      <div class="flex items-center gap-2 text-sm"><span class="text-clay-400">Ordenar por:</span>
-        <select onchange="setRepSort(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 bg-white"><option value="cantidad" ${REP.sort==='cantidad'?'selected':''}>Cantidad</option><option value="monto" ${REP.sort==='monto'?'selected':''}>Monto ($)</option></select>
+    <div class="px-5 py-4 border-b border-clay-100">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div class="font-semibold">Productos vendidos en el período</div>
+        <span class="text-xs text-clay-400">Toca una columna para ordenar de mayor a menor ↓</span>
+      </div>
+      <div class="flex gap-2 overflow-x-auto mt-3 pb-1">
+        <button onclick="setRepCat('todas')" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${REP.cat==='todas'?'bg-clay-700 text-white':'bg-clay-100 text-clay-600 hover:bg-clay-200'}">Todas · ${fmt(d.ingresos)}</button>
+        ${d.cats.map(c=>`<button onclick="setRepCat('${c.cat.replace(/'/g,"\\'")}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${REP.cat===c.cat?'bg-clay-700 text-white':'bg-clay-100 text-clay-600 hover:bg-clay-200'}">${c.cat} · ${fmt(c.monto)}</button>`).join('')}
       </div>
     </div>
     <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-      <th class="text-left px-5 py-3">#</th><th class="text-left px-3 py-3">Producto</th><th class="text-right px-3 py-3">Unidades</th><th class="text-right px-5 py-3">Monto</th></tr></thead><tbody>
+      <th class="text-left px-5 py-3">#</th><th class="text-left px-3 py-3">Producto</th><th class="text-left px-3 py-3 hidden sm:table-cell">Categoría</th>
+      ${sortTh('cantidad','Unidades','px-3')}${sortTh('monto','Venta','px-3')}${sortTh('costo','Costo','px-3 hidden sm:table-cell')}${sortTh('margen','Margen $','px-3')}${sortTh('margenpct','Margen %','px-5')}
+      </tr></thead><tbody>
     ${d.top.map((r,ix)=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-5 py-2.5 text-clay-400">${ix+1}</td>
       <td class="px-3 py-2.5 font-medium">${repName(r)}</td>
+      <td class="px-3 py-2.5 text-clay-500 hidden sm:table-cell">${r.cat}</td>
       <td class="px-3 py-2.5 text-right font-semibold">${r.cant}</td>
-      <td class="px-5 py-2.5 text-right">${fmt(r.monto)}</td>
+      <td class="px-3 py-2.5 text-right">${fmt(r.monto)}</td>
+      <td class="px-3 py-2.5 text-right text-clay-500 hidden sm:table-cell">${fmt(r.costo)}</td>
+      <td class="px-3 py-2.5 text-right font-semibold text-sage-600">${fmt(r.margen)}</td>
+      <td class="px-5 py-2.5 text-right font-medium ${r.margenpct<20?'text-amber-600':'text-clay-600'}">${Math.round(r.margenpct)}%</td>
     </tr>`).join('')}
     </tbody>
-    <tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-5 py-2.5 font-semibold" colspan="2">Total</td><td class="px-3 py-2.5 text-right font-bold">${d.unidades}</td><td class="px-5 py-2.5 text-right font-bold">${fmt(d.ingresos)}</td></tr></tfoot>
+    <tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60">
+      <td class="px-5 py-2.5 font-semibold" colspan="2">Total${REP.cat==='todas'?'':' · '+REP.cat}</td>
+      <td class="px-3 py-2.5 hidden sm:table-cell"></td>
+      <td class="px-3 py-2.5 text-right font-bold">${tot.cant}</td>
+      <td class="px-3 py-2.5 text-right font-bold">${fmt(tot.monto)}</td>
+      <td class="px-3 py-2.5 text-right font-bold text-clay-500 hidden sm:table-cell">${fmt(tot.costo)}</td>
+      <td class="px-3 py-2.5 text-right font-bold text-sage-600">${fmt(tot.margen)}</td>
+      <td class="px-5 py-2.5 text-right font-bold">${tot.monto?Math.round(tot.margen/tot.monto*100):0}%</td>
+    </tr></tfoot>
     </table></div>
-  </div>`}
+  </div>`;
+  // ---- TAB: Ventas por ubicación ----
+  const ubicacionHTML=d.nVentas===0?empty:`
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-clay-100">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div class="font-semibold">Ventas por ubicación</div>
+          <div class="text-xs text-clay-400 mt-0.5">Analiza dónde están tus clientes y dónde vendes más</div>
+        </div>
+        <div class="flex items-center gap-2">${geoBtn('region')}${geoBtn('ciudad')}${geoBtn('comuna')}</div>
+      </div>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="text-left px-5 py-3">${geoLabels[REP.geo]}</th>
+      <th class="text-right px-3 py-3">N° ventas</th>
+      <th class="text-right px-3 py-3 hidden sm:table-cell">Clientes</th>
+      <th class="text-right px-3 py-3 hidden sm:table-cell">Unidades</th>
+      <th class="text-right px-3 py-3">Venta</th>
+      <th class="text-left px-3 py-3 w-40">% del total</th>
+      <th class="text-right px-5 py-3 hidden sm:table-cell">Ticket prom.</th></tr></thead><tbody>
+    ${geo.map(g=>{const pct=d.ingresos?g.monto/d.ingresos*100:0;const bar=Math.round(g.monto/geoMax*100);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      <td class="px-5 py-2.5 font-medium">${g.label}${g.ctx?`<span class="text-xs text-clay-400 font-normal"> · ${g.ctx}</span>`:''}</td>
+      <td class="px-3 py-2.5 text-right">${g.nVentas}</td>
+      <td class="px-3 py-2.5 text-right hidden sm:table-cell">${g.nClientes}</td>
+      <td class="px-3 py-2.5 text-right hidden sm:table-cell">${g.unidades}</td>
+      <td class="px-3 py-2.5 text-right font-semibold">${fmt(g.monto)}</td>
+      <td class="px-3 py-2.5"><div class="flex items-center gap-2"><div class="flex-1 bg-clay-100 rounded-full h-2 overflow-hidden"><div class="bg-clay-600 h-2 rounded-full" style="width:${bar}%"></div></div><span class="text-xs text-clay-500 w-9 text-right">${Math.round(pct)}%</span></div></td>
+      <td class="px-5 py-2.5 text-right text-clay-500 hidden sm:table-cell">${fmt(g.ticket)}</td>
+    </tr>`;}).join('')}
+    </tbody>
+    <tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60">
+      <td class="px-5 py-2.5 font-semibold">Total · ${geo.length} ${REP.geo==='region'?'regiones':REP.geo==='ciudad'?'ciudades':'comunas'}</td>
+      <td class="px-3 py-2.5 text-right font-bold">${d.nVentas}</td>
+      <td class="px-3 py-2.5 text-right font-bold hidden sm:table-cell">—</td>
+      <td class="px-3 py-2.5 text-right font-bold hidden sm:table-cell">${d.unidades}</td>
+      <td class="px-3 py-2.5 text-right font-bold">${fmt(d.ingresos)}</td>
+      <td class="px-3 py-2.5"></td>
+      <td class="px-5 py-2.5 text-right font-bold hidden sm:table-cell">${d.nVentas?fmt(Math.round(d.ingresos/d.nVentas)):0}</td>
+    </tr></tfoot>
+    </table></div>
+  </div>`;
+  v.innerHTML=`
+  <div class="card p-4 mb-4">
+    <div class="flex flex-wrap items-center gap-2">
+      ${presetBtn('hoy','Hoy')}${presetBtn('semana','Esta semana')}${presetBtn('mes','Este mes')}${presetBtn('anio','Este año')}${presetBtn('todo','Total')}${presetBtn('personalizado','Personalizado')}
+      ${REP.preset==='personalizado'?`<div class="flex items-center gap-2"><input type="date" value="${REP.from}" onchange="setRepFrom(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"><span class="text-clay-400 text-sm">a</span><input type="date" value="${REP.to}" onchange="setRepTo(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"></div>`:''}
+      <div class="ml-auto flex items-center gap-3">
+        <span class="text-sm text-clay-500 hidden sm:inline">${d.from} → ${d.to}</span>
+        <button onclick="downloadReportePDF()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>PDF</button>
+      </div>
+    </div>
+  </div>
+  <div class="flex gap-1.5 overflow-x-auto mb-6 bg-clay-100/60 p-1.5 rounded-xl w-fit max-w-full">
+    ${tabBtn('resumen','Resumen de ventas')}${tabBtn('productos','Venta productos')}${tabBtn('ubicacion','Ventas por ubicación')}
+  </div>
+  ${REP.tab==='productos'?productosHTML:REP.tab==='ubicacion'?ubicacionHTML:resumenHTML}
   `;
-  if(d.nVentas>0) drawChart('chRep','bar',bk,bk.map(k=>buckets[k]),'#496150');
+  if(REP.tab==='resumen' && d.nVentas>0) drawChart('chRep','bar',bk,bk.map(k=>buckets[k]),'#496150');
 }
 function downloadReportePDF(){
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
@@ -625,16 +774,44 @@ function downloadReportePDF(){
   y+=7; doc.text('N° de ventas: '+d.nVentas,14,y);
   y+=6; doc.text('Unidades vendidas: '+d.unidades,14,y);
   y+=6; doc.text('Ventas (productos): '+fmt(d.ingresos),14,y);
+  y+=6; doc.text('Costo de productos: '+fmt(d.costos),14,y);
   y+=6; doc.text('Margen estimado: '+fmt(d.margen)+(d.ingresos?'  ('+Math.round(d.margen/d.ingresos*100)+'%)':''),14,y);
   y+=6; doc.text('Envíos cobrados: '+fmt(d.envios),14,y);
+  // Resumen por categoría
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Ventas por categoría',14,y+10);
   doc.autoTable({
-    startY:y+8,
-    head:[['#','Producto','Unidades','Monto']],
-    body:d.top.map((r,ix)=>[String(ix+1), repName(r), String(r.cant), fmt(r.monto)]),
-    styles:{fontSize:9,cellPadding:3,textColor:[35,51,42]},
+    startY:y+14,
+    head:[['Categoría','Unidades','Venta','Costo','Margen $','Margen %']],
+    body:d.cats.map(c=>[c.cat, String(c.cant), fmt(c.monto), fmt(c.costo), fmt(c.margen), (c.monto?Math.round(c.margenpct):0)+'%']),
+    styles:{fontSize:9,cellPadding:2.5,textColor:[35,51,42]},
     headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
-    columnStyles:{0:{cellWidth:14},2:{halign:'right'},3:{halign:'right'}},
+    columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}},
     margin:{left:14,right:14}
+  });
+  // Detalle por producto
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Detalle por producto',14,doc.lastAutoTable.finalY+10);
+  doc.autoTable({
+    startY:doc.lastAutoTable.finalY+14,
+    head:[['#','Producto','Categoría','Unid.','Venta','Costo','Margen $','Mg %']],
+    body:d.all.slice().sort((a,b)=>b.monto-a.monto).map((r,ix)=>[String(ix+1), repName(r), r.cat, String(r.cant), fmt(r.monto), fmt(r.costo), fmt(r.margen), Math.round(r.margenpct)+'%']),
+    styles:{fontSize:8,cellPadding:2,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
+    columnStyles:{0:{cellWidth:10},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'},7:{halign:'right'}},
+    margin:{left:14,right:14}
+  });
+  // Ventas por ubicación (región, ciudad, comuna)
+  [['Ventas por región','region'],['Ventas por ciudad','ciudad'],['Ventas por comuna','comuna']].forEach(([titulo,lvl])=>{
+    const g=geoAgg(d.sales,lvl);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(titulo,14,doc.lastAutoTable.finalY+10);
+    doc.autoTable({
+      startY:doc.lastAutoTable.finalY+14,
+      head:[[(lvl==='region'?'Región':lvl==='ciudad'?'Ciudad':'Comuna'),'N° ventas','Clientes','Unidades','Venta','% total','Ticket']],
+      body:g.map(x=>[x.label+(x.ctx?' ('+x.ctx+')':''), String(x.nVentas), String(x.nClientes), String(x.unidades), fmt(x.monto), (d.ingresos?Math.round(x.monto/d.ingresos*100):0)+'%', fmt(x.ticket)]),
+      styles:{fontSize:8,cellPadding:2,textColor:[35,51,42]},
+      headStyles:{fillColor:[58,78,64],textColor:[255,255,255]},
+      columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}},
+      margin:{left:14,right:14}
+    });
   });
   doc.save('reporte-ventas-'+d.from+'_a_'+d.to+'.pdf');
 }
@@ -730,7 +907,7 @@ function renderQuoteModal(){
         <div class="grid sm:grid-cols-3 gap-3">
           <div><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
           <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio||0}" oninput="onSaleEnvio(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
         </div>
         <div class="mt-3"><label class="text-xs text-clay-500">Dirección (opcional)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
       </div>
@@ -820,7 +997,7 @@ function renderVentas(){
   v.innerHTML=`
   <div class="card overflow-hidden">
     <div class="p-4 flex flex-wrap gap-2 items-center border-b border-clay-100">
-      <input id="fVenta" oninput="filterVentas()" placeholder="Buscar cliente o producto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <input id="fVenta" oninput="filterVentas()" placeholder="Buscar cliente o producto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-52">
       <select id="fZona" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
         <option value="">Zona: todas</option>
         <option value="Santiago">Santiago (RM)</option>
@@ -846,6 +1023,12 @@ function renderVentas(){
         <option value="no">Por cobrar</option>
         <option value="si">Pagado</option>
       </select>
+      <select id="fDespacho" onchange="filterVentas()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+        <option value="">Despacho: todos</option>
+        <option value="pendiente">Pendiente</option>
+        <option value="en_camino">En camino</option>
+        <option value="entregado">Entregado</option>
+      </select>
       <select id="fPer" onchange="setVentasPer(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white ml-auto">
         <option value="10" ${VENTAS_PER===10?'selected':''}>10 por página</option>
         <option value="20" ${VENTAS_PER===20?'selected':''}>20 por página</option>
@@ -861,7 +1044,7 @@ function renderVentas(){
           <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
         </thead>
         <tbody>
-        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
           <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
@@ -877,7 +1060,7 @@ function renderVentas(){
       </table>
     </div>
     <div id="vcards" class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             <div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
@@ -979,7 +1162,7 @@ function renderSaleModal(){
           <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
           <div><label class="text-xs text-clay-500">Courier</label><input id="s_courier" value="${s.courier}" placeholder="Starken, Pullman..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="number" value="${s.costoEnvio}" oninput="onSaleEnvio(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
         </div>
       </div>
       <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
@@ -1004,7 +1187,7 @@ function saleItemRow(it,ix,prodOpt){
     <div class="grid grid-cols-12 gap-2 items-center">
       <select onchange="onSaleProd(${ix},this.value)" class="col-span-12 sm:col-span-5 border border-clay-200 rounded-lg px-2 py-2 text-sm bg-white">${prodOpt(it.productId)}</select>
       <input type="number" min="1" value="${it.cantidad}" oninput="onSaleQty(${ix},this.value)" class="col-span-3 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center bg-white" title="Cantidad">
-      <input type="number" value="${it.precio}" oninput="onSalePrice(${ix},this.value)" class="col-span-4 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio unitario">
+      <input type="text" inputmode="numeric" value="${milesIn(it.precio)}" oninput="onSalePrice(${ix},moneyInput(this))" class="col-span-4 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio unitario">
       <div class="col-span-4 sm:col-span-2 relative"><input type="number" min="0" max="100" value="${it.descuento||0}" oninput="onSaleDesc(${ix},this.value)" class="w-full border border-clay-200 rounded-lg pl-2 pr-6 py-2 text-sm text-right bg-white" title="Descuento %"><span class="absolute right-2 top-1/2 -translate-y-1/2 text-clay-400 text-xs">%</span></div>
       <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
     </div>
@@ -1032,7 +1215,7 @@ function syncSaleFromForm(){
   if(g('s_dir')) EDIT.direccion=g('s_dir').value;
   if(g('s_disp')) EDIT.estadoDespacho=g('s_disp').value;
   if(g('s_courier')) EDIT.courier=g('s_courier').value;
-  if(g('s_envio')) EDIT.costoEnvio=+g('s_envio').value||0;
+  if(g('s_envio')) EDIT.costoEnvio=milesParse(g('s_envio').value);
   if(g('s_notas')) EDIT.notas=g('s_notas').value;
 }
 // Busca un cliente por nombre (sin distinguir mayúsculas) o lo crea automáticamente.
@@ -1186,7 +1369,7 @@ function comprobanteHTML(s){
       : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div></div>`}
     <div style="padding:24px;">
       <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
-        <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#5f7f4d;color:#ffffff;font-size:12px;">✓</span> ¡Compra confirmada!
+        <svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg> ¡Compra confirmada!
       </div>
       ${row('Cliente',`<b>${nombre}</b>`)}
       ${row('Fecha',s.fecha)}
@@ -1427,10 +1610,13 @@ function renderCalendario(){
   for(let d=1; d<=dim; d++){
     const list=byDay[d]||[];
     const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
-    const extra=list.length-5;
+    const extra=list.length-4;
     cells+=`<div class="bg-white border ${isToday(d)?'border-clay-500 ring-1 ring-clay-300':'border-clay-100'} rounded-lg p-1.5 min-h-[96px]">
-      <div class="text-xs font-semibold ${isToday(d)?'text-clay-700':'text-clay-400'} mb-1">${d}</div>
-      ${list.slice(0,5).map(calChip).join('')}
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-xs font-bold ${isToday(d)?'text-clay-700':'text-clay-500'}">${d}</span>
+        ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
+      </div>
+      ${list.slice(0,4).map(calChip).join('')}
       ${extra>0?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${extra} más</button>`:''}
     </div>`;
   }
@@ -1795,8 +1981,8 @@ function openProduct(id){
     <div><label class="text-sm font-medium">Modelo</label><input id="p_modelo" value="${p.modelo}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Tamaño</label><input id="p_tam" value="${p.tamano}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Color / terminación</label><input id="p_color" value="${p.color}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-    <div><label class="text-sm font-medium">Costo</label><input id="p_costo" type="number" value="${p.costo}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-    <div><label class="text-sm font-medium">Precio referencia</label><input id="p_precio" type="number" value="${p.precioRef}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Costo</label><input id="p_costo" type="text" inputmode="numeric" value="${milesIn(p.costo)}" oninput="moneyInput(this)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">Precio referencia</label><input id="p_precio" type="text" inputmode="numeric" value="${milesIn(p.precioRef)}" oninput="moneyInput(this)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">${p.id?'Stock inicial (base)':'Stock inicial'}</label><input id="p_stock" type="number" value="${p.stockInicial}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Stock mínimo (alerta)</label><input id="p_min" type="number" value="${p.stockMin}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
   </div>
@@ -1804,7 +1990,7 @@ function openProduct(id){
 }
 let EDITP=null;
 function saveProduct(){
-  Object.assign(EDITP,{sku:val('p_sku'),modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:+val('p_costo')||0,precioRef:+val('p_precio')||0,stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
+  Object.assign(EDITP,{sku:val('p_sku'),modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
   if(!EDITP.modelo){alert('Ingresa el modelo');return;}
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
@@ -1890,7 +2076,7 @@ function renderOrderModal(){
     </div>
     <div><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos a pedir</label><button onclick="addOItem()" class="text-sm text-clay-700 font-medium">+ Agregar</button></div>
       <div class="grid grid-cols-12 gap-2 text-xs text-clay-400 px-1 mb-1"><div class="col-span-6">Producto</div><div class="col-span-2 text-center">Cantidad</div><div class="col-span-3 text-right">Costo unit.</div><div class="col-span-1"></div></div>
-      <div id="o_items" class="space-y-2">${o.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="EDITO.items[${ix}].productId=this.value" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITO.items[${ix}].cantidad=+this.value;oTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="number" value="${it.costo}" oninput="EDITO.items[${ix}].costo=+this.value;oTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removeOItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
+      <div id="o_items" class="space-y-2">${o.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="onOProd(${ix},this.value)" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITO.items[${ix}].cantidad=+this.value;oTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="text" inputmode="numeric" value="${milesIn(it.costo)}" oninput="EDITO.items[${ix}].costo=moneyInput(this);oTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removeOItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
     </div>
     <div><label class="text-sm font-medium">Notas para el proveedor</label><input id="o_notas" value="${(o.notas||'').replace(/"/g,'&quot;')}" placeholder="Condiciones, dirección de entrega, etc." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
   </div>
@@ -1900,6 +2086,7 @@ function renderOrderModal(){
   </div>`);
 }
 function oTotal(){const t=EDITO.items.reduce((a,i)=>a+i.cantidad*i.costo,0);const neto=Math.round(t/1.19);const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};set('o_total',fmt(t));set('o_neto',fmt(neto));set('o_iva',fmt(t-neto));}
+function onOProd(ix,pid){syncO();const p=productById(pid);EDITO.items[ix].productId=pid;if(p)EDITO.items[ix].costo=p.costo;renderOrderModal();}
 function addOItem(){syncO();const p=DB.products[0];EDITO.items.push({productId:p.id,cantidad:1,costo:p.costo});renderOrderModal();}
 function removeOItem(ix){if(EDITO.items.length<=1)return;syncO();EDITO.items.splice(ix,1);renderOrderModal();}
 function syncO(){EDITO.proveedor=val('o_prov');EDITO.fecha=val('o_fecha');EDITO.fechaEntrega=val('o_entrega');EDITO.notas=val('o_notas');}
@@ -2013,13 +2200,14 @@ function renderPurchaseModal(){
       <div><label class="text-sm font-medium">Fecha</label><input id="pu_fecha" type="date" value="${c.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     </div>
     <div><div class="flex items-center justify-between mb-1"><label class="text-sm font-medium">Productos (suman al stock)</label><button onclick="addPuItem()" class="text-sm text-clay-700 font-medium">+ Agregar</button></div>
-      <div id="pu_items" class="space-y-2">${c.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="EDITPU.items[${ix}].productId=this.value" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITPU.items[${ix}].cantidad=+this.value;puTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="number" value="${it.costo}" oninput="EDITPU.items[${ix}].costo=+this.value;puTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removePuItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
+      <div id="pu_items" class="space-y-2">${c.items.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="onPuProd(${ix},this.value)" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm">${prodOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="EDITPU.items[${ix}].cantidad=+this.value;puTotal()" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center"><input type="text" inputmode="numeric" value="${milesIn(it.costo)}" oninput="EDITPU.items[${ix}].costo=moneyInput(this);puTotal()" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right"><button onclick="removePuItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600">✕</button></div>`).join('')}</div>
     </div>
     <div><label class="text-sm font-medium">Notas</label><input id="pu_notas" value="${c.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
   </div>
   <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white"><div>${c.id&&SESSION.rol==='admin'?`<button onclick="deletePurchase('${c.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div><div class="flex items-center gap-4"><div class="text-right"><div class="text-xs text-clay-400">Total</div><div id="pu_total" class="text-xl font-bold">${fmt(total)}</div></div><button onclick="savePurchase()" class="bg-clay-700 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar</button></div></div>`);
 }
 function puTotal(){document.getElementById('pu_total').textContent=fmt(EDITPU.items.reduce((a,i)=>a+i.cantidad*i.costo,0));}
+function onPuProd(ix,pid){syncPu();const p=productById(pid);EDITPU.items[ix].productId=pid;if(p)EDITPU.items[ix].costo=p.costo;renderPurchaseModal();}
 function addPuItem(){syncPu();const p=DB.products[0];EDITPU.items.push({productId:p.id,cantidad:1,costo:p.costo});renderPurchaseModal();}
 function removePuItem(ix){if(EDITPU.items.length<=1)return;syncPu();EDITPU.items.splice(ix,1);renderPurchaseModal();}
 function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');EDITPU.notas=val('pu_notas');}
@@ -2153,9 +2341,11 @@ function ventasMatch(el){
   const zona=g('fZona')?g('fZona').value:'';
   const ciudad=g('fCiudad')?g('fCiudad').value:'';
   const comuna=g('fComuna')?g('fComuna').value:'';
+  const desp=g('fDespacho')?g('fDespacho').value:'';
   return el.textContent.toLowerCase().includes(q)
     && (!doc||el.dataset.doc===doc)
     && (!pago||el.dataset.pago===pago)
+    && (!desp||el.dataset.despacho===desp)
     && (!zona||el.dataset.zona===zona)
     && (!ciudad||el.dataset.ciudad===ciudad)
     && (!comuna||el.dataset.comuna===comuna);
