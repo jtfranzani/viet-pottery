@@ -107,7 +107,9 @@
     <div class="p-3 border-t border-clay-800">
       <div id="userBox" class="flex items-center gap-3 px-2 py-2"></div>
       <button onclick="descargarRespaldoExcel()" class="w-full text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-200 flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar respaldo (Excel)</button>
+      <button id="btnActualizar" onclick="actualizarPlataforma()" class="w-full mt-1 text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-200 flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg><span id="btnActualizarTxt">Actualizar plataforma</span></button>
       <button onclick="doLogout()" class="w-full mt-1 text-left px-3 py-2 rounded-lg hover:bg-clay-800 text-sm text-clay-300">Cerrar sesión</button>
+      <div class="px-3 mt-2 text-[11px] text-clay-500">Versión <span id="appVerLabel">—</span></div>
     </div>
   </aside>
   <div id="overlay" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/40 z-30 hidden lg:hidden"></div>
@@ -136,6 +138,9 @@
    VIET POTTERY · Plataforma de gestión
    Datos y login en la nube con Firebase (Firestore + Auth)
    ========================================================= */
+
+// >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
+const APP_VERSION = '2026.06.09-2';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Mapa ciudad -> región (Chile). Permite agrupar ventas por región sin pedir el dato manualmente.
@@ -166,6 +171,45 @@ const todayISO = () => { const d=new Date(); return d.getFullYear()+'-'+String(d
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
 // ¿Es un celular o tablet? (en computador descargamos directo; solo en móvil usamos "Compartir")
 const isMobileDevice = () => (navigator.maxTouchPoints>0) && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.platform==='MacIntel');
+
+/* ---- Actualización de la plataforma ---- */
+// Recarga la página saltando la caché (clave cuando está fijada como ícono en el inicio del celular).
+function actualizarPlataforma(){
+  const btn=document.getElementById('btnActualizarTxt'); if(btn) btn.textContent='Actualizando…';
+  const base=location.href.split('?')[0].split('#')[0];
+  location.replace(base+'?v='+Date.now());
+}
+// Revisa si hay una versión más nueva publicada y, si la hay, avisa con un banner.
+async function checkForUpdate(silent){
+  try{
+    const url=location.href.split('?')[0].split('#')[0]+'?check='+Date.now();
+    const res=await fetch(url,{cache:'no-store'});
+    if(!res.ok) return;
+    const txt=await res.text();
+    const m=txt.match(/APP_VERSION\s*=\s*'([^']+)'/);
+    const remote=m?m[1]:null;
+    if(remote && remote!==APP_VERSION){ mostrarBannerActualizacion(remote); }
+    else if(!silent){ toastInfo('Ya tienes la última versión ('+APP_VERSION+').'); }
+  }catch(e){ /* sin conexión: ignorar */ }
+}
+function mostrarBannerActualizacion(remote){
+  if(document.getElementById('updBanner')) return;
+  const b=document.createElement('div');
+  b.id='updBanner';
+  b.style.cssText='position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;max-width:92vw;';
+  b.innerHTML=`<div style="background:#23332a;color:#fff;border-radius:14px;padding:12px 16px;box-shadow:0 8px 28px rgba(0,0,0,.25);display:flex;align-items:center;gap:14px;font-size:14px;">
+    <span>🔔 Hay una nueva versión disponible.</span>
+    <button onclick="actualizarPlataforma()" style="background:#5f7f4d;color:#fff;font-weight:600;border:none;border-radius:9px;padding:7px 14px;cursor:pointer;">Actualizar ahora</button>
+    <button onclick="document.getElementById('updBanner').remove()" style="background:transparent;color:#a7bdaa;border:none;cursor:pointer;font-size:18px;line-height:1;">✕</button>
+  </div>`;
+  document.body.appendChild(b);
+}
+function toastInfo(msg){
+  const t=document.createElement('div');
+  t.style.cssText='position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;background:#23332a;color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;box-shadow:0 8px 28px rgba(0,0,0,.25);';
+  t.textContent=msg; document.body.appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .4s'; t.style.opacity='0'; setTimeout(()=>t.remove(),400); }, 2600);
+}
 // Guarda/comparte un PDF de jsPDF. En celular usa el menú nativo "Compartir" (evita el bug del enlace blob: en iOS).
 async function savePdfDoc(doc, filename){
   if(isMobileDevice()){
@@ -1468,7 +1512,8 @@ function compressImage(file, maxSide, quality){
 }
 function subirFotoEntrega(saleId){
   const inp=document.createElement('input');
-  inp.type='file'; inp.accept='image/*'; inp.setAttribute('capture','environment');
+  inp.type='file'; inp.accept='image/*';
+  // Sin 'capture': el celular ofrece elegir entre Cámara o Galería; el computador abre el explorador de archivos.
   inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
     compressImage(f,1000,0.55).then(dataUrl=>{
       const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
@@ -1640,7 +1685,9 @@ function openSaleDetail(id){
 /* ===================== DESPACHOS ===================== */
 const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':'Viet');
 let DESP_TIPO='Viet';
+let DESP_COL='pendiente'; // solo afecta la vista móvil: qué columna se muestra
 function setDespTipo(t){ DESP_TIPO=t; renderDespachos(); }
+function setDespCol(k){ DESP_COL=k; renderDespachos(); }
 function renderDespachos(){
   const v=document.getElementById('view');
   const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
@@ -1648,16 +1695,20 @@ function renderDespachos(){
   const activos=t=> all.filter(s=>tipoDespachoOf(s)===t && s.estadoDespacho!=='entregado').length;
   const sales = DESP_TIPO==='Todos'? all : all.filter(s=>tipoDespachoOf(s)===DESP_TIPO);
   const tab=(t,label,badge)=>`<button onclick="setDespTipo('${t}')" class="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 ${DESP_TIPO===t?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${badge!=null?`<span class="text-xs ${DESP_TIPO===t?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${badge}</span>`:''}</button>`;
+  const colTab=(key,label,color)=>{const n=sales.filter(s=>s.estadoDespacho===key).length;return `<button onclick="setDespCol('${key}')" class="flex-1 px-2 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${DESP_COL===key?'bg-clay-700 text-white':'text-clay-600'}">${label}<span class="text-[11px] ${DESP_COL===key?'bg-white/20':'bg-clay-200 text-clay-600'} px-1.5 rounded-full">${n}</span></button>`;};
   v.innerHTML=`
   <div class="flex flex-wrap gap-2 mb-4">
     ${tab('Viet','Despachos Viet',activos('Viet'))}
     ${tab('Fran','Despachos Fran',activos('Fran'))}
     ${tab('Todos','Todos',null)}
   </div>
+  <div class="flex gap-1.5 mb-4 bg-clay-100/70 p-1.5 rounded-xl lg:hidden">
+    ${colTab('pendiente','Pendientes','amber')}${colTab('en_camino','En camino','blue')}${colTab('entregado','Entregados','green')}
+  </div>
   <div class="grid lg:grid-cols-3 gap-4">
     ${cols.map(([key,title,color])=>{
       const list=sales.filter(s=>s.estadoDespacho===key);
-      return `<div class="card p-4">
+      return `<div class="card p-4 ${DESP_COL===key?'':'hidden'} lg:block">
         <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
         <div class="space-y-2">
         ${list.length?list.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="${SESSION.rol!=='bodega'?`openSale('${s.id}')`:`advanceDispatch('${s.id}')`}">
@@ -1792,7 +1843,7 @@ function openDiaEntregas(fecha){
       <div>
         <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas (ordenadas por zona)</div>
         <div class="space-y-2">
-          ${list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 ${SESSION.rol!=='bodega'?'cursor-pointer hover:border-clay-300':''}" ${SESSION.rol!=='bodega'?`onclick="openSale('${s.id}')"`:''}>
+          ${list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 cursor-pointer hover:border-clay-300" onclick="openSaleDetail('${s.id}')">
             <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
             <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
             <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
@@ -1827,7 +1878,7 @@ function renderCalendario(){
 
   let cells='';
   for(let i=0;i<lead;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
-  const calChip=s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="block w-full text-left">${tag}</button>`:tag;};
+  const calChip=s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return `<button onclick="openSaleDetail('${s.id}')" class="block w-full text-left">${tag}</button>`;};
   for(let d=1; d<=dim; d++){
     const list=byDay[d]||[];
     const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
@@ -2651,6 +2702,14 @@ function pagNext(id){ const st=pagState(id); st.page++; pagApply(id); }
 // Si Firebase ya cargó antes que este script, arrancamos de inmediato.
 if(window.FB) bootFirebaseApp();
 prepareLogo();
+// Mostrar versión actual y avisar si hay una más nueva publicada.
+(function(){
+  const lbl=document.getElementById('appVerLabel'); if(lbl) lbl.textContent=APP_VERSION;
+  setTimeout(()=>checkForUpdate(true), 4000);
+  // Revisa cada 15 min y al volver a la app (clave en el ícono del celular).
+  setInterval(()=>checkForUpdate(true), 15*60*1000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(true); });
+})();
 </script>
 </body>
 </html>
