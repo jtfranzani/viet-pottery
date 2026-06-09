@@ -14,7 +14,7 @@
   // ----- Firebase: autenticación y base de datos en la nube -----
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
-  import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
   const firebaseConfig = {
     apiKey: "AIzaSyAdDsvcGtkIUVHhX5o-VIivgKd_nnoqUws",
     authDomain: "viet-pottery.firebaseapp.com",
@@ -33,7 +33,12 @@
     onAuth:(cb)=>onAuthStateChanged(auth,cb),
     getData: async ()=>{ const s=await getDoc(DREF); return s.exists()?(s.data().db||null):null; },
     setData:(obj)=>setDoc(DREF,{db:obj}),
-    watch:(cb)=>onSnapshot(DREF,(s)=>{ if(s.exists()&&s.data().db) cb(s.data().db); })
+    watch:(cb)=>onSnapshot(DREF,(s)=>{ if(s.exists()&&s.data().db) cb(s.data().db); }),
+    // Archivos (PDF facturas, comprobantes): cada archivo se guarda en su propio documento
+    // de la colección 'files' (base64), separado del documento principal para no recargarlo.
+    saveBlob: (id, payload)=> setDoc(doc(db,'files',id), payload),
+    loadBlob: async (id)=>{ const s=await getDoc(doc(db,'files',id)); return s.exists()?s.data():null; },
+    deleteBlob: (id)=> deleteDoc(doc(db,'files',id))
   };
   if(window.bootFirebaseApp) window.bootFirebaseApp();
 </script>
@@ -140,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.09-6';
+const APP_VERSION = '2026.06.09-9';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -362,6 +367,8 @@ async function bootData(){
   if(!DB.users) DB.users=[];
   if(!DB.adjustments) DB.adjustments=[];
   if(!DB.quotes) DB.quotes=[];
+  if(!DB.invoices) DB.invoices=[];
+  if(!DB.suppliers) DB.suppliers=[];
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
@@ -405,6 +412,7 @@ const NAV = [
   {id:'stock',     label:'Stock',     roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'productos', label:'Productos', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
   {id:'compras',   label:'Compras',   roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
+  {id:'facturas',  label:'Facturas de compra', roles:['admin'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h4'},
   {id:'usuarios',  label:'Usuarios',  roles:['admin'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75'}
 ];
 
@@ -428,7 +436,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; rerender(); });
     showApp();
   });
 }
@@ -521,11 +529,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Ventas',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',usuarios:'Usuarios'};
+  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Ventas',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',facturas:'Facturas de compra',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,usuarios:renderUsuarios})[view]();
+  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
@@ -534,6 +542,7 @@ function headerAction(view){
   if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
   if(view==='usuarios' && SESSION.rol==='admin') return btn('openUsuario()','Nuevo usuario');
+  if(view==='facturas' && SESSION.rol==='admin') return btn('openFactura()','Nueva factura');
   return '';
 }
 
@@ -2553,6 +2562,236 @@ function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');E
 function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);}save();closeModal();go('compras');}
 function deletePurchase(id){if(!confirm('¿Eliminar compra?'))return;DB.purchases=DB.purchases.filter(p=>p.id!==id);save();closeModal();go('compras');}
 
+/* ===================== FACTURAS DE COMPRA ===================== */
+let FINV=null; // factura en edición
+function facturaEstadoCalc(f){
+  if(f.estado==='pagado') return 'pagado';
+  if(f.vencimiento && f.vencimiento < todayISO()) return 'vencida';
+  return 'por_pagar';
+}
+function facturaEstadoPill(f){ const e=facturaEstadoCalc(f); return e==='pagado'?pill('Pagada','green'):e==='vencida'?pill('Vencida','red'):pill('Por pagar','amber'); }
+function diasVenc(f){ if(f.estado==='pagado'||!f.vencimiento) return ''; const ms=new Date(f.vencimiento)-new Date(todayISO()); const d=Math.round(ms/86400000); if(d<0) return `<span class="text-red-600 font-medium">vencida hace ${-d} día${-d!==1?'s':''}</span>`; if(d===0) return '<span class="text-amber-600 font-medium">vence hoy</span>'; return `<span class="text-clay-500">en ${d} día${d!==1?'s':''}</span>`; }
+function renderFacturas(){
+  const v=document.getElementById('view');
+  if(!DB.invoices) DB.invoices=[];
+  const inv=[...DB.invoices].sort((a,b)=>(b.emision||'').localeCompare(a.emision||''));
+  const porPagar=inv.filter(f=>f.estado!=='pagado');
+  const vencidas=inv.filter(f=>facturaEstadoCalc(f)==='vencida');
+  const pagadas=inv.filter(f=>f.estado==='pagado');
+  const sum=arr=>arr.reduce((a,f)=>a+(f.monto||0),0);
+  const provs=[...new Set([...(DB.purchases||[]).map(p=>p.proveedor),...inv.map(f=>f.proveedor)].filter(Boolean))];
+  window._FACT_PROVS=provs;
+  const card=f=>{const est=facturaEstadoCalc(f);const accent= est==='vencida'?'#dc2626': est==='pagado'?'#5f7f4d':'#d97706';
+    return `<div class="fact-card card p-0 overflow-hidden cursor-pointer hover:border-clay-300" onclick="openFactura('${f.id}')" data-estado="${est}" data-text="${((f.numero||'')+' '+(f.proveedor||'')+' '+(f.rut||'')).toLowerCase().replace(/"/g,'')}">
+      <div class="flex items-stretch">
+        <div class="shrink-0" style="width:5px;background:${accent};"></div>
+        <div class="flex-1 min-w-0 p-3.5 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold text-base truncate">${f.proveedor||'—'}</span>
+              ${facturaEstadoPill(f)}
+              ${f.pdfFactura?'<span title="Factura adjunta">📄</span>':''}
+              ${f.pdfPago?'<span title="Comprobante de pago">🧾</span>':''}
+            </div>
+            <div class="text-xs text-clay-500 mt-0.5">Factura N° ${f.numero||'—'}${f.rut?` · ${f.rut}`:''}</div>
+            <div class="flex gap-5 mt-2.5">
+              <div><div class="text-[11px] text-clay-400 uppercase tracking-wide">Emisión</div><div class="text-sm font-medium text-clay-700">${f.emision||'—'}</div></div>
+              <div><div class="text-[11px] text-clay-400 uppercase tracking-wide">Vencimiento</div><div class="text-sm font-medium text-clay-700">${f.vencimiento||'—'}</div>${diasVenc(f)?`<div class="text-[11px] mt-0.5">${diasVenc(f)}</div>`:''}</div>
+            </div>
+          </div>
+          <div class="sm:text-right shrink-0">
+            <div class="font-bold text-lg whitespace-nowrap">${fmt(f.monto||0)}</div>
+            <div class="text-[11px] text-clay-400">IVA incluido</div>
+            <div class="flex items-center gap-1.5 mt-2 sm:justify-end flex-wrap">
+              ${f.pdfFactura?`<button onclick="event.stopPropagation();verAdjuntoFactura('${f.pdfFactura.fileId}','${(f.pdfFactura.name||'factura').replace(/'/g,"")}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Ver factura</button>`:''}
+              ${f.pdfPago?`<button onclick="event.stopPropagation();verAdjuntoFactura('${f.pdfPago.fileId}','${(f.pdfPago.name||'pago').replace(/'/g,"")}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Ver pago</button>`:''}
+              ${f.estado!=='pagado'?`<button onclick="event.stopPropagation();marcarFacturaPagada('${f.id}')" class="text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1 rounded-lg">Marcar pagada</button>`:''}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;};
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Por pagar',fmt(sum(porPagar)),porPagar.length+' factura'+(porPagar.length!==1?'s':''),'text-amber-600')}
+    ${statCard('Vencidas',fmt(sum(vencidas)),vencidas.length+' factura'+(vencidas.length!==1?'s':''),'text-red-600')}
+    ${statCard('Pagadas',fmt(sum(pagadas)),pagadas.length+' factura'+(pagadas.length!==1?'s':''),'text-sage-600')}
+    ${statCard('Total facturas',inv.length,'en el sistema','')}
+  </div>
+  <div class="card p-4 mb-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <input id="fact_q" oninput="filterFacturas()" placeholder="Buscar N° o proveedor..." class="flex-1 min-w-[180px] border border-clay-200 rounded-lg px-3 py-2 text-sm">
+      <select id="fact_estado" onchange="filterFacturas()" class="border border-clay-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="">Todos los estados</option>
+        <option value="por_pagar">Por pagar</option>
+        <option value="vencida">Vencidas</option>
+        <option value="pagado">Pagadas</option>
+      </select>
+    </div>
+  </div>
+  ${inv.length===0
+    ? `<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">🧾</div>Aún no tienes facturas de compra. Crea la primera con "Nueva factura".<div class="text-xs text-clay-400 mt-2">Podrás adjuntar el PDF de la factura y el comprobante de pago.</div></div>`
+    : `<div id="factList" class="space-y-2.5">${inv.map(card).join('')}</div>
+       <div id="factEmpty" class="hidden card p-8 text-center text-clay-400 text-sm">Ninguna factura coincide con el filtro.</div>`}
+  `;
+}
+function filterFacturas(){
+  const q=(document.getElementById('fact_q')?.value||'').toLowerCase();
+  const est=document.getElementById('fact_estado')?.value||'';
+  let visibles=0;
+  document.querySelectorAll('.fact-card').forEach(el=>{
+    const okQ=!q||el.dataset.text.includes(q);
+    const okE=!est||el.dataset.estado===est;
+    const show=okQ&&okE; el.style.display=show?'':'none'; if(show)visibles++;
+  });
+  const empty=document.getElementById('factEmpty'); if(empty) empty.classList.toggle('hidden',visibles>0);
+}
+function openFactura(id){
+  const f=id?DB.invoices.find(x=>x.id===id):null;
+  FINV=f?JSON.parse(JSON.stringify(f)):{id:uid('inv'),numero:'',proveedor:'',rut:'',emision:todayISO(),plazo:30,vencimiento:addDaysISO(todayISO(),30),monto:0,estado:'por_pagar',fechaPago:'',notas:'',pdfFactura:null,pdfPago:null};
+  if(!('plazo' in FINV)) FINV.plazo='';
+  renderFacturaModal();
+}
+const fileToDataURL = file => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+function addDaysISO(iso, n){ if(!iso) return ''; const [y,m,d]=iso.split('-').map(Number); const dt=new Date(y,m-1,d+(parseInt(n,10)||0)); return repIso(dt); }
+function adjuntoRow(tipo,label){
+  const key=tipo==='factura'?'pdfFactura':'pdfPago';
+  const m=FINV[key];
+  return `<div class="border border-clay-200 rounded-xl p-3">
+    <div class="text-xs font-medium text-clay-600 mb-2">${label}</div>
+    <div id="f_${tipo}_slot">
+      ${m
+        ? `<div class="flex items-center justify-between gap-2"><button type="button" onclick="verAdjuntoFactura('${m.fileId}','${(m.name||'archivo').replace(/'/g,"")}')" class="text-sm text-clay-700 underline truncate flex items-center gap-1.5">📎 ${m.name||'archivo'}</button><div class="flex gap-1.5"><button type="button" onclick="subirAdjuntoFactura('${tipo}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Cambiar</button><button type="button" onclick="quitarAdjuntoFactura('${tipo}')" class="text-xs text-red-500 hover:underline px-1">Quitar</button></div></div>`
+        : `<button type="button" onclick="subirAdjuntoFactura('${tipo}')" class="w-full text-sm font-medium text-clay-700 bg-white hover:bg-clay-50 border border-dashed border-clay-300 px-3 py-3 rounded-lg flex items-center justify-center gap-2">⬆️ Subir ${tipo==='factura'?'PDF de la factura':'comprobante de pago'}</button>`}
+    </div>
+  </div>`;
+}
+function renderFacturaModal(){
+  const f=FINV;
+  const sup=DB.suppliers||[];
+  const plazoOpts=[['','Personalizado'],['0','Contado'],['15','15 días'],['30','30 días'],['60','60 días'],['90','90 días']];
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${DB.invoices.some(x=>x.id===f.id)?'Editar factura':'Nueva factura de compra'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">N° de factura</label><input id="f_num" value="${(f.numero||'').replace(/"/g,'&quot;')}" placeholder="Folio / N°" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Monto total</label><input id="f_monto" type="text" inputmode="numeric" value="${milesIn(f.monto)}" oninput="moneyInput(this)" placeholder="Incluye IVA" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Proveedor</label><input id="f_prov" list="provList" value="${(f.proveedor||'').replace(/"/g,'&quot;')}" oninput="onFacturaProv()" placeholder="Razón social" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="provList">${sup.map(s=>`<option value="${(s.nombre||'').replace(/"/g,'&quot;')}">${s.rut?s.rut:''}</option>`).join('')}</datalist></div>
+        <div><label class="text-sm font-medium">RUT (opcional)</label><input id="f_rut" value="${(f.rut||'').replace(/"/g,'&quot;')}" placeholder="77.123.456-7" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div class="grid sm:grid-cols-4 gap-3">
+        <div><label class="text-sm font-medium">Emisión</label><input id="f_emision" type="date" value="${f.emision||''}" onchange="onFacturaFechaCambio()" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Plazo</label><select id="f_plazo" onchange="onFacturaPlazo(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">${plazoOpts.map(([v,l])=>`<option value="${v}" ${String(f.plazo)===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div><label class="text-sm font-medium">Vencimiento</label><input id="f_venc" type="date" value="${f.vencimiento||''}" onchange="onFacturaVencManual()" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Estado</label><select id="f_estado" onchange="onFacturaEstado(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="por_pagar" ${f.estado!=='pagado'?'selected':''}>Por pagar</option><option value="pagado" ${f.estado==='pagado'?'selected':''}>Pagada</option></select></div>
+      </div>
+      <div id="f_fpago_wrap" class="${f.estado==='pagado'?'':'hidden'}"><label class="text-sm font-medium">Fecha de pago</label><input id="f_fpago" type="date" value="${f.fechaPago||''}" class="w-full sm:w-1/3 border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        ${adjuntoRow('factura','Factura (PDF)')}
+        ${adjuntoRow('pago','Comprobante de pago (PDF o imagen)')}
+      </div>
+      <div><label class="text-sm font-medium">Notas</label><input id="f_notas" value="${(f.notas||'').replace(/"/g,'&quot;')}" placeholder="Detalle, glosa, etc." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <div>${DB.invoices.some(x=>x.id===f.id)?`<button onclick="deleteFactura('${f.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
+      <button onclick="saveFactura()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar factura</button>
+    </div>
+  `);
+}
+function onFacturaEstado(v){ const w=document.getElementById('f_fpago_wrap'); if(w) w.classList.toggle('hidden', v!=='pagado'); const fp=document.getElementById('f_fpago'); if(v==='pagado'&&fp&&!fp.value) fp.value=todayISO(); }
+function onFacturaPlazo(v){ FINV.plazo=v; const em=document.getElementById('f_emision'); const ve=document.getElementById('f_venc'); if(v!==''&&em&&em.value&&ve){ ve.value=addDaysISO(em.value, v); FINV.vencimiento=ve.value; } }
+function onFacturaFechaCambio(){ const em=document.getElementById('f_emision'); const pl=document.getElementById('f_plazo'); const ve=document.getElementById('f_venc'); if(em) FINV.emision=em.value; if(pl&&pl.value!==''&&em&&em.value&&ve){ ve.value=addDaysISO(em.value, pl.value); FINV.vencimiento=ve.value; } }
+function onFacturaVencManual(){ const ve=document.getElementById('f_venc'); if(ve) FINV.vencimiento=ve.value; const pl=document.getElementById('f_plazo'); if(pl){ pl.value=''; FINV.plazo=''; } }
+function onFacturaProv(){ const pi=document.getElementById('f_prov'); const ri=document.getElementById('f_rut'); if(!pi||!ri) return; const name=pi.value.trim().toLowerCase(); const sup=(DB.suppliers||[]).find(s=>(s.nombre||'').trim().toLowerCase()===name); if(sup&&sup.rut){ ri.value=sup.rut; } }
+function syncFacturaForm(){
+  const g=id=>document.getElementById(id);
+  if(g('f_num')) FINV.numero=g('f_num').value.trim();
+  if(g('f_prov')) FINV.proveedor=g('f_prov').value.trim();
+  if(g('f_rut')) FINV.rut=g('f_rut').value.trim();
+  if(g('f_emision')) FINV.emision=g('f_emision').value;
+  if(g('f_plazo')) FINV.plazo=g('f_plazo').value;
+  if(g('f_venc')) FINV.vencimiento=g('f_venc').value;
+  if(g('f_monto')) FINV.monto=milesParse(g('f_monto').value);
+  if(g('f_estado')) FINV.estado=g('f_estado').value;
+  if(g('f_fpago')) FINV.fechaPago=g('f_fpago').value;
+  if(g('f_notas')) FINV.notas=g('f_notas').value;
+}
+function subirAdjuntoFactura(tipo){
+  if(!window.FB||!FB.saveBlob){ alert('Se requiere conexión con la base de datos.'); return; }
+  syncFacturaForm();
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept= tipo==='factura'?'application/pdf':'application/pdf,image/*';
+  inp.onchange=async ()=>{ const file=inp.files&&inp.files[0]; if(!file) return;
+    const slot=document.getElementById('f_'+tipo+'_slot'); if(slot) slot.innerHTML='<div class="text-sm text-clay-400 py-2 text-center">Guardando… ⏳</div>';
+    try{
+      let dataUrl, mime=file.type||'application/octet-stream';
+      if(file.type && file.type.startsWith('image/')){ dataUrl=await compressImage(file, 1500, 0.7); mime='image/jpeg'; }
+      else { dataUrl=await fileToDataURL(file); }
+      const approxBytes=Math.round((dataUrl.length-(dataUrl.indexOf(',')+1))*0.75);
+      if(approxBytes > 850*1024){ alert('El archivo pesa demasiado para guardarlo ('+Math.round(approxBytes/1024)+' KB). Máximo ~850 KB.\nSi es una foto, tómala con menor resolución; si es un PDF, comprímelo antes de subirlo.'); renderFacturaModal(); return; }
+      const fileId=uid('file');
+      await FB.saveBlob(fileId, {data:dataUrl, name:file.name, mime, ts:Date.now()});
+      const key=tipo==='factura'?'pdfFactura':'pdfPago';
+      const prev=FINV[key]; if(prev&&prev.fileId&&FB.deleteBlob) FB.deleteBlob(prev.fileId);
+      FINV[key]={fileId, name:file.name, mime};
+      renderFacturaModal();
+    }catch(e){ alert('No se pudo guardar el archivo.\n'+((e&&e.message)||'')); renderFacturaModal(); }
+  };
+  inp.click();
+}
+async function verAdjuntoFactura(fileId, name){
+  if(!window.FB||!FB.loadBlob){ return; }
+  try{
+    const rec=await FB.loadBlob(fileId);
+    if(!rec||!rec.data){ alert('No se encontró el archivo.'); return; }
+    const blob=await (await fetch(rec.data)).blob();
+    const file=new File([blob], name||rec.name||'archivo', {type:rec.mime||blob.type});
+    if(isMobileDevice() && navigator.canShare && navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file], title:file.name}); return; }catch(e){ if(e&&e.name==='AbortError') return; } }
+    const url=URL.createObjectURL(blob); window.open(url,'_blank');
+  }catch(e){ alert('No se pudo abrir el archivo.'); }
+}
+function quitarAdjuntoFactura(tipo){
+  syncFacturaForm();
+  const key=tipo==='factura'?'pdfFactura':'pdfPago';
+  const m=FINV[key];
+  if(m&&m.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(m.fileId);
+  FINV[key]=null; renderFacturaModal();
+}
+function upsertSupplier(nombre, rut){
+  if(!nombre) return; if(!DB.suppliers) DB.suppliers=[];
+  const key=nombre.trim().toLowerCase();
+  const ex=DB.suppliers.find(s=>(s.nombre||'').trim().toLowerCase()===key);
+  if(ex){ if(rut) ex.rut=rut; }
+  else DB.suppliers.push({nombre:nombre.trim(), rut:rut||''});
+}
+function saveFactura(){
+  syncFacturaForm();
+  if(!FINV.numero){ alert('Ingresa el número de factura.'); return; }
+  if(!FINV.proveedor){ alert('Ingresa el proveedor.'); return; }
+  if(FINV.estado==='pagado'&&!FINV.fechaPago) FINV.fechaPago=todayISO();
+  upsertSupplier(FINV.proveedor, FINV.rut);
+  const ix=DB.invoices.findIndex(x=>x.id===FINV.id);
+  if(ix>=0) DB.invoices[ix]=FINV; else DB.invoices.push(FINV);
+  save(); closeModal(); if(CURRENT==='facturas') renderFacturas();
+}
+function marcarFacturaPagada(id){
+  const f=DB.invoices.find(x=>x.id===id); if(!f) return;
+  f.estado='pagado'; if(!f.fechaPago) f.fechaPago=todayISO();
+  save(); if(CURRENT==='facturas') renderFacturas();
+}
+function deleteFactura(id){
+  if(!confirm('¿Eliminar esta factura? También se borrarán sus archivos adjuntos.')) return;
+  const f=DB.invoices.find(x=>x.id===id);
+  if(f){ if(f.pdfFactura&&f.pdfFactura.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(f.pdfFactura.fileId); if(f.pdfPago&&f.pdfPago.fileId&&window.FB&&FB.deleteBlob) FB.deleteBlob(f.pdfPago.fileId); }
+  DB.invoices=DB.invoices.filter(x=>x.id!==id);
+  save(); closeModal(); if(CURRENT==='facturas') renderFacturas();
+}
+
 /* ===================== USUARIOS Y PERMISOS ===================== */
 function rolLabel(r){return r==='admin'?'Administrador':r==='vendedor'?'Vendedor':'Bodega';}
 function renderUsuarios(){
@@ -2662,6 +2901,10 @@ function descargarRespaldoExcel(){
 
   add('Compras',(DB.purchases||[]).map(pu=>({
     'Fecha':pu.fecha||'','Proveedor':pu.proveedor||'','Productos':itemsStr(pu.items),'Total (con IVA)':(pu.items||[]).reduce((a,i)=>a+i.cantidad*i.costo,0),'Notas':pu.notas||''
+  })));
+
+  add('Facturas compra',(DB.invoices||[]).map(f=>({
+    'N° factura':f.numero||'','Proveedor':f.proveedor||'','RUT':f.rut||'','Emisión':f.emision||'','Vencimiento':f.vencimiento||'','Monto':f.monto||0,'Estado':f.estado==='pagado'?'Pagada':(facturaEstadoCalc(f)==='vencida'?'Vencida':'Por pagar'),'Fecha pago':f.fechaPago||'','Factura adjunta':f.pdfFactura?'Sí':'No','Comprobante pago':f.pdfPago?'Sí':'No','Notas':f.notas||''
   })));
 
   const fname='respaldo-viet-pottery-'+todayISO()+'.xlsx';
