@@ -164,30 +164,36 @@ const milesParse = v => parseInt(String(v||'').replace(/[^\d]/g,''),10)||0;
 function moneyInput(el){ const n=milesParse(el.value); el.value = n? n.toLocaleString('es-CL') : ''; return n; }
 const todayISO = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
+// ¿Es un celular o tablet? (en computador descargamos directo; solo en móvil usamos "Compartir")
+const isMobileDevice = () => (navigator.maxTouchPoints>0) && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.platform==='MacIntel');
 // Guarda/comparte un PDF de jsPDF. En celular usa el menú nativo "Compartir" (evita el bug del enlace blob: en iOS).
 async function savePdfDoc(doc, filename){
-  try{
-    const blob = doc.output('blob');
-    const file = new File([blob], filename, {type:'application/pdf'});
-    if(navigator.canShare && navigator.canShare({files:[file]})){
-      await navigator.share({files:[file], title:filename});
-      return;
-    }
-  }catch(e){ if(e && e.name==='AbortError') return; /* si falla, baja por descarga normal */ }
+  if(isMobileDevice()){
+    try{
+      const blob = doc.output('blob');
+      const file = new File([blob], filename, {type:'application/pdf'});
+      if(navigator.canShare && navigator.canShare({files:[file]})){
+        await navigator.share({files:[file], title:filename});
+        return;
+      }
+    }catch(e){ if(e && e.name==='AbortError') return; /* si falla, baja por descarga normal */ }
+  }
   try{ doc.save(filename); }
   catch(e){ try{ window.open(doc.output('bloburl'),'_blank'); }catch(_){ alert('No se pudo generar el PDF en este dispositivo.'); } }
 }
 // Guarda/comparte una imagen (canvas). En celular usa el menú nativo "Compartir".
 async function saveCanvasImage(canvas, filename){
   const dataUrl = canvas.toDataURL('image/png');
-  try{
-    const blob = await (await fetch(dataUrl)).blob();
-    const file = new File([blob], filename, {type:'image/png'});
-    if(navigator.canShare && navigator.canShare({files:[file]})){
-      await navigator.share({files:[file], title:filename});
-      return;
-    }
-  }catch(e){ if(e && e.name==='AbortError') return; }
+  if(isMobileDevice()){
+    try{
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], filename, {type:'image/png'});
+      if(navigator.canShare && navigator.canShare({files:[file]})){
+        await navigator.share({files:[file], title:filename});
+        return;
+      }
+    }catch(e){ if(e && e.name==='AbortError') return; }
+  }
   const a=document.createElement('a'); a.download=filename; a.href=dataUrl; document.body.appendChild(a); a.click(); a.remove();
 }
 
@@ -1070,7 +1076,7 @@ function renderVentas(){
           <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
         </thead>
         <tbody>
-        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
           <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
@@ -1080,13 +1086,13 @@ function renderVentas(){
           <td class="px-4 py-3">${dispPill(s)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
+            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
           </td></tr>`;}).join('')}
         </tbody>
       </table>
     </div>
     <div id="vcards" class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             <div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
@@ -1099,7 +1105,7 @@ function renderVentas(){
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(' · ')}</div>
         <div class="flex flex-wrap gap-1.5 mt-2.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="flex gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="openEmitirSII('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}<button onclick="openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="openSale('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="flex gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
     <div class="px-4 py-3 border-t border-clay-100 flex items-center justify-between gap-3 flex-wrap">
@@ -1444,6 +1450,192 @@ function descargarComprobante(saleId){
     saveCanvasImage(canvas,'viet-pottery-confirmacion-'+nombre+'.png');
   }).catch(()=>alert('No se pudo generar la imagen.'));
 }
+/* ---- Foto de entrega + comprobante de entrega ---- */
+// Redimensiona y comprime la imagen para que ocupe poco espacio en la base de datos.
+function compressImage(file, maxSide, quality){
+  return new Promise((res,rej)=>{
+    const reader=new FileReader();
+    reader.onload=()=>{ const img=new Image(); img.onload=()=>{
+      let w=img.width, h=img.height;
+      if(w>h && w>maxSide){ h=Math.round(h*maxSide/w); w=maxSide; }
+      else if(h>=w && h>maxSide){ w=Math.round(w*maxSide/h); h=maxSide; }
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      try{ res(cv.toDataURL('image/jpeg',quality)); }catch(e){ rej(e); }
+    }; img.onerror=rej; img.src=reader.result; };
+    reader.onerror=rej; reader.readAsDataURL(file);
+  });
+}
+function subirFotoEntrega(saleId){
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='image/*'; inp.setAttribute('capture','environment');
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
+    compressImage(f,1000,0.55).then(dataUrl=>{
+      const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+      s.fotoEntrega=dataUrl; s.fotoEntregaFecha=todayISO();
+      if(s.estadoDespacho!=='entregado') s.estadoDespacho='entregado';
+      save();
+      if(CURRENT==='despachos') renderDespachos();
+      openEntrega(saleId);
+    }).catch(()=>alert('No se pudo procesar la imagen. Intenta con otra foto.'));
+  };
+  inp.click();
+}
+function quitarFotoEntrega(saleId){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  if(!confirm('¿Eliminar la foto de entrega de este pedido?')) return;
+  delete s.fotoEntrega; delete s.fotoEntregaFecha; save();
+  if(CURRENT==='despachos') renderDespachos();
+  closeModal();
+}
+function comprobanteEntregaHTML(s){
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
+  const row=(l,r)=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;"><span style="color:#5d7860;">${l}</span><span>${r}</span></div>`;
+  return `
+  <div id="comprobanteEntrega" style="width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
+    ${LOGO_DATAURL
+      ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Comprobante de entrega</div></div>`
+      : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Comprobante de entrega</div></div>`}
+    <div style="padding:24px;">
+      <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
+        <svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg> ¡Pedido entregado!
+      </div>
+      ${row('Cliente',`<b>${nombre}</b>`)}
+      ${row('Fecha de entrega',`<b>${s.fotoEntregaFecha||s.fechaEntrega||todayISO()}</b>`)}
+      ${lugar?row('Despacho a',lugar):''}
+      ${s.courier?row('Vía',s.courier):''}
+      <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Productos entregados</div>
+      ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span></div>`).join('')}
+      ${s.fotoEntrega?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${s.fotoEntrega}" alt="Foto de entrega" style="width:100%;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
+    </div>
+    <div style="background:#f3f6f1;padding:16px 24px;text-align:center;border-top:1px solid #e6ece7;">
+      <div style="font-size:13px;color:#3a5030;font-weight:600;">¡Gracias por tu compra! 🌿</div>
+      <div style="font-size:11px;color:#7d977f;margin-top:2px;">Viet Pottery · maceteros con alma</div>
+    </div>
+  </div>`;
+}
+function openEntrega(saleId){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  const dlIcon='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <h3 class="text-lg font-bold">Comprobante de entrega</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 bg-clay-50 flex flex-col items-center gap-4">
+      ${s.fotoEntrega?`<div style="overflow-x:auto;max-width:100%;">${comprobanteEntregaHTML(s)}</div>
+      <div class="flex gap-2 w-full max-w-[420px]">
+        <button onclick="descargarEntrega('${s.id}')" class="flex-1 bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
+        <button onclick="subirFotoEntrega('${s.id}')" class="px-4 py-2.5 rounded-xl border border-clay-200 text-clay-700">Cambiar foto</button>
+      </div>
+      <button onclick="quitarFotoEntrega('${s.id}')" class="text-xs text-red-500 hover:underline">Eliminar foto</button>
+      <div class="text-xs text-clay-400 text-center max-w-[420px]">Descarga la imagen y envíasela al cliente por WhatsApp para confirmar la entrega.</div>`
+      :`<div class="text-center text-clay-500 text-sm py-4 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Aún no hay foto de entrega de este pedido. Sube una desde tu galería o tómala con la cámara para generar el comprobante.</div>
+        <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 Subir / tomar foto</button>`}
+    </div>
+  `);
+}
+function descargarEntrega(saleId){
+  const node=document.getElementById('comprobanteEntrega');
+  if(!node||!window.html2canvas){ alert('No se pudo generar la imagen. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const s=DB.sales.find(x=>x.id===saleId);
+  const c=s?clientById(s.clienteId):null;
+  const nombre=(c?c.nombre:(s&&s.clienteNombre)||'cliente').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  html2canvas(node,{scale:3,backgroundColor:'#ffffff',useCORS:true}).then(canvas=>{
+    saveCanvasImage(canvas,'viet-pottery-entrega-'+nombre+'.png');
+  }).catch(()=>alert('No se pudo generar la imagen.'));
+}
+/* ---- Detalle / historial del pedido ---- */
+function saleDocText(s){
+  if(s.docTipo==='factura') return 'Factura'+(s.docNumero?' N° '+s.docNumero:'');
+  if(s.docTipo==='boleta') return 'Boleta'+(s.docNumero?' N° '+s.docNumero:'');
+  if(s.docTipo==='no_aplica') return 'Sin documento tributario';
+  return 'Documento pendiente de emitir';
+}
+function openSaleDetail(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const tel=(c&&c.telefono)||s.clienteTel||'';
+  const email=(c&&c.email)||s.clienteEmail||'';
+  const lugar=[s.direccion,s.comuna,s.ciudad].filter(Boolean).map(titleCase).join(', ');
+  const subtotal=saleSubtotal(s), envio=s.costoEnvio||0, total=subtotal+envio;
+  const tp=tipoDespachoOf(s);
+  const esBodega=SESSION.rol==='bodega';
+  // un paso del historial: estado = 'done' | 'pending' | 'info' segun color
+  const COL={done:'#5f7f4d',blue:'#2563eb',amber:'#b45309',gray:'#c2cdc3'};
+  const step=(color,title,sub,last)=>`
+    <div style="display:flex;gap:12px;">
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <span style="width:14px;height:14px;border-radius:50%;background:${COL[color]||COL.gray};flex-shrink:0;margin-top:2px;"></span>
+        ${last?'':`<span style="width:2px;flex:1;background:#e6ece7;margin:2px 0;"></span>`}
+      </div>
+      <div style="padding-bottom:${last?'0':'14px'};">
+        <div class="text-sm font-medium text-clay-800">${title}</div>
+        <div class="text-xs text-clay-500 mt-0.5">${sub}</div>
+      </div>
+    </div>`;
+  const dispMap={pendiente:['amber','Despacho pendiente','Aún no sale a reparto'],en_camino:['blue','En camino','Pedido despachado al cliente'],entregado:['done','Entregado','Pedido recibido por el cliente']};
+  const dp=dispMap[s.estadoDespacho]||dispMap.pendiente;
+  const historial=`
+    ${step('done','Pedido registrado',s.fecha+' · '+tp)}
+    ${step(s.pagado?'done':'amber', s.pagado?'Pago recibido':'Pago pendiente', s.pagado?('Pagado'+(s.cuenta?' · '+s.cuenta:'')):'Por cobrar — '+fmt(total))}
+    ${step(s.docTipo==='pendiente'?'amber':'done','Documento', saleDocText(s))}
+    ${step(dp[0],dp[1],dp[2]+(s.courier?' · '+s.courier:'')+(s.fechaEntrega?' · entrega '+s.fechaEntrega:''))}
+    ${step(s.fotoEntrega?'done':'gray','Comprobante de entrega', s.fotoEntrega?('Registrado'+(s.fotoEntregaFecha?' el '+s.fotoEntregaFecha:'')):'Sin foto de respaldo aún', true)}
+  `;
+  const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Detalle del pedido · ${s.fecha}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Cliente</div>
+          <div class="font-medium text-sm">${nombre}</div>
+          ${tel?`<div class="text-xs text-clay-500 mt-0.5">📞 ${tel}</div>`:''}
+          ${email?`<div class="text-xs text-clay-500 mt-0.5">✉️ ${email}</div>`:''}
+          <div class="text-xs text-clay-500 mt-0.5">📍 ${lugar||'sin ubicación'}</div>
+        </div>
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
+          <div class="flex flex-wrap gap-1.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}</div>
+          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}</div>
+        </div>
+      </div>
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
+        <div class="divide-y divide-clay-100">
+          ${s.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+        </div>
+        <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
+          <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+          ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
+          <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-3">Historial del pedido</div>
+        ${historial}
+      </div>
+      ${s.fotoEntrega?`<div><div class="text-xs text-clay-400 uppercase tracking-wide mb-2">Respaldo de entrega</div><button onclick="openEntrega('${s.id}')" class="block w-full"><img src="${s.fotoEntrega}" alt="Entrega" style="width:100%;max-height:200px;object-fit:cover;border-radius:12px;border:1px solid #e6ece7;"></button></div>`:''}
+      <div class="border-t border-clay-100 pt-4">
+        <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
+        <div class="flex flex-wrap gap-2">
+          ${actBtn(`openConfirmacion('${s.id}')`,'🧾 Comprobante de venta',true)}
+          ${actBtn(`openEntrega('${s.id}')`, s.fotoEntrega?'📦 Comprobante de entrega':'📷 Registrar entrega')}
+          ${!esBodega&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
+          ${!esBodega?actBtn(`openSale('${s.id}')`,'✏️ Editar pedido'):''}
+        </div>
+      </div>
+    </div>
+  `);
+}
 
 /* ===================== DESPACHOS ===================== */
 const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':'Viet');
@@ -1473,7 +1665,13 @@ function renderDespachos(){
           <div class="mt-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
+          ${s.fotoEntrega?`<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="mt-2 block w-full" title="Ver comprobante de entrega"><img src="${s.fotoEntrega}" alt="Entrega" style="width:100%;height:84px;object-fit:cover;border-radius:8px;border:1px solid #e6ece7;"></button>`:''}
           <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key!=='entregado'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">${key==='pendiente'?'Marcar en camino →':'Marcar entregado ✓'}</button>`:pill('OK','green')}</div>
+          <div class="mt-2">
+            ${s.fotoEntrega
+              ? `<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="w-full text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">🧾 Ver / compartir comprobante</button>`
+              : `<button onclick="event.stopPropagation();subirFotoEntrega('${s.id}')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📷 ${key==='entregado'?'Agregar foto de entrega':'Entregar con foto'}</button>`}
+          </div>
         </div>`;}).join(''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
         </div>
       </div>`;}).join('')}
@@ -2354,7 +2552,7 @@ function descargarRespaldoExcel(){
       const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
       const blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
       const file=new File([blob],fname,{type:blob.type});
-      if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fname}); return; }
+      if(isMobileDevice() && navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fname}); return; }
       const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click(); a.remove();
     }catch(e){ if(e&&e.name==='AbortError') return; try{ XLSX.writeFile(wb,fname); }catch(_){ alert('No se pudo generar el Excel en este dispositivo.'); } }
   })();
