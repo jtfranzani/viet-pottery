@@ -140,9 +140,17 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.09-2';
+const APP_VERSION = '2026.06.09-4';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
+// Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
+const AUTOS = ['Auto Cami','Auto Vale','Auto 3'];
+// Color distintivo de cada auto (clases de fondo/texto y de barra).
+const AUTO_CLS = {'Auto Cami':'bg-blue-100 text-blue-700','Auto Vale':'bg-purple-100 text-purple-700','Auto 3':'bg-amber-100 text-amber-700'};
+const AUTO_BAR = {'Auto Cami':'bg-blue-600','Auto Vale':'bg-purple-600','Auto 3':'bg-amber-500'};
+const autoCls = a => AUTO_CLS[a] || 'bg-clay-100 text-clay-600';
+const autoBar = a => AUTO_BAR[a] || 'bg-clay-500';
+const autoBadge = a => a?`<span class="badge ${autoCls(a)}">🚗 ${a}</span>`:'';
 // Mapa ciudad -> región (Chile). Permite agrupar ventas por región sin pedir el dato manualmente.
 const REGION_MAP = {
   'arica':'Arica y Parinacota','iquique':'Tarapacá','alto hospicio':'Tarapacá',
@@ -1239,7 +1247,9 @@ function renderSaleModal(){
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
           <div><label class="text-xs text-clay-500">Courier</label><input id="s_courier" value="${s.courier}" placeholder="Starken, Pullman..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
         </div>
+        <div class="text-xs text-clay-400 mt-2">El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.</div>
       </div>
       <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
       <div class="bg-clay-50 rounded-xl p-4">
@@ -1291,6 +1301,7 @@ function syncSaleFromForm(){
   if(g('s_dir')) EDIT.direccion=g('s_dir').value;
   if(g('s_disp')) EDIT.estadoDespacho=g('s_disp').value;
   if(g('s_courier')) EDIT.courier=g('s_courier').value;
+  if(g('s_auto')) EDIT.auto=g('s_auto').value;
   if(g('s_envio')) EDIT.costoEnvio=milesParse(g('s_envio').value);
   if(g('s_notas')) EDIT.notas=g('s_notas').value;
 }
@@ -1600,7 +1611,7 @@ function saleDocText(s){
   if(s.docTipo==='no_aplica') return 'Sin documento tributario';
   return 'Documento pendiente de emitir';
 }
-function openSaleDetail(id){
+function openSaleDetail(id, backFecha){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
   const c=clientById(s.clienteId);
   const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
@@ -1634,9 +1645,12 @@ function openSaleDetail(id){
   `;
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
-    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Detalle del pedido · ${s.fecha}</div></div>
-      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
+      ${backFecha?`<button onclick="openDiaEntregas('${backFecha}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al resumen del día</button>`:''}
+      <div class="flex items-center justify-between">
+        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Detalle del pedido · ${s.fecha}</div></div>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+      </div>
     </div>
     <div class="p-4 sm:p-5 space-y-4">
       <div class="grid sm:grid-cols-2 gap-3">
@@ -1649,8 +1663,8 @@ function openSaleDetail(id){
         </div>
         <div class="bg-clay-50 rounded-xl p-3.5">
           <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
-          <div class="flex flex-wrap gap-1.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}</div>
-          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}</div>
+          <div class="flex flex-wrap gap-1.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
+          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}</div>
         </div>
       </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
@@ -1713,7 +1727,7 @@ function renderDespachos(){
         <div class="space-y-2">
         ${list.length?list.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="${SESSION.rol!=='bodega'?`openSale('${s.id}')`:`advanceDispatch('${s.id}')`}">
           <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400 whitespace-nowrap">${s.fecha}</div></div>
-          <div class="mt-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}</div>
+          <div class="mt-1 flex flex-wrap gap-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}${autoBadge(s.auto)}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           ${s.fotoEntrega?`<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="mt-2 block w-full" title="Ver comprobante de entrega"><img src="${s.fotoEntrega}" alt="Entrega" style="width:100%;height:84px;object-fit:cover;border-radius:8px;border:1px solid #e6ece7;"></button>`:''}
@@ -1735,12 +1749,13 @@ function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fD
 let CAL=null; // {y, m}
 function calNav(delta){ if(!CAL){const n=new Date();CAL={y:n.getFullYear(),m:n.getMonth()};} let m=CAL.m+delta, y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={y,m}; renderCalendario(); }
 function calToday(){ const n=new Date(); CAL={y:n.getFullYear(),m:n.getMonth()}; renderCalendario(); }
-function generateHojaRuta(fecha){
+function generateHojaRuta(fecha, auto){
   if(!fecha){ alert('Elige un día para la hoja de ruta.'); return; }
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión.'); return; }
-  const ventas=DB.sales.filter(s=>s.fechaEntrega===fecha && s.estadoDespacho!=='entregado')
-    .sort((a,b)=> (a.ciudad||'').localeCompare(b.ciudad||'') || (a.comuna||'').localeCompare(b.comuna||'') );
-  if(ventas.length===0){ alert('No hay entregas pendientes para el '+fecha+'.'); return; }
+  let ventas=DB.sales.filter(s=>s.fechaEntrega===fecha && s.estadoDespacho!=='entregado');
+  if(auto) ventas=ventas.filter(s=>s.auto===auto);
+  ventas.sort((a,b)=> (a.ciudad||'').localeCompare(b.ciudad||'') || (a.comuna||'').localeCompare(b.comuna||'') );
+  if(ventas.length===0){ alert('No hay entregas pendientes para el '+fecha+(auto?' en '+auto:'')+'.'); return; }
   const totalUnidades=ventas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const comunas=[...new Set(ventas.map(s=>s.comuna||s.ciudad).filter(Boolean))];
   // Resumen de carga: total de cada producto a cargar ese día
@@ -1757,9 +1772,9 @@ function generateHojaRuta(fecha){
   const { jsPDF }=window.jspdf; const doc=new jsPDF();
   const drawBand=()=>{
     doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F');
-    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Hoja de ruta',14,12);
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Hoja de ruta'+(auto?' · '+auto:''),14,12);
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170);
-    doc.text('Entregas del '+fecha+'   ·   '+ventas.length+' paradas   ·   '+totalUnidades+' productos a repartir',14,20);
+    doc.text('Entregas del '+fecha+(auto?'   ·   '+auto:'')+'   ·   '+ventas.length+' paradas   ·   '+totalUnidades+' productos a repartir',14,20);
   };
   drawBand();
 
@@ -1811,19 +1826,43 @@ function generateHojaRuta(fecha){
   yy+=6; doc.text('Comunas en la ruta: '+(comunas.join(', ')||'-'),14,yy);
   doc.setFontSize(8); doc.setTextColor(150,150,150);
   doc.text('Hoja de ruta generada con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
-  savePdfDoc(doc, 'hoja-de-ruta-'+fecha+'.pdf');
+  savePdfDoc(doc, 'hoja-de-ruta-'+fecha+(auto?'-'+auto.toLowerCase().replace(/\s+/g,'-'):'')+'.pdf');
+}
+function cargaResumenArr(sales){
+  const r={};
+  sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const name=p?productName(p):(i.descripcion||'producto');const key=p?p.id:name; if(!r[key])r[key]={name,cant:0}; r[key].cant+=i.cantidad;}));
+  return Object.values(r).sort((a,b)=>b.cant-a.cant||a.name.localeCompare(b.name));
+}
+function asignarAutoEntrega(saleId, fecha, auto){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  s.auto=auto||''; save();
+  if(CURRENT==='despachos') renderDespachos();
+  openDiaEntregas(fecha); // refresca el resumen del día agrupado
 }
 function openDiaEntregas(fecha){
   const list=DB.sales.filter(s=>s.fechaEntrega===fecha).sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
   const estPill={pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')};
   const totalU=list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
-  const resumen={};
-  list.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const name=p?productName(p):(i.descripcion||'producto');const key=p?p.id:name; if(!resumen[key])resumen[key]={name,cant:0}; resumen[key].cant+=i.cantidad;}));
-  const resumenArr=Object.values(resumen).sort((a,b)=>b.cant-a.cant||a.name.localeCompare(b.name));
+  // ¿Se está repartiendo en más de un auto este día?
+  const autosUsados=AUTOS.filter(a=>list.some(s=>s.auto===a));
+  const usaAutos=autosUsados.length>0;
+  // Grupos para mostrar entregas: cada auto usado + "Sin asignar"
+  const grupos=[];
+  autosUsados.forEach(a=>{ const sub=list.filter(s=>s.auto===a); if(sub.length) grupos.push({label:a, sales:sub}); });
+  const comun=list.filter(s=>!s.auto || !AUTOS.includes(s.auto));
+  if(comun.length) grupos.push({label: usaAutos?'Sin asignar':'Entregas (ordenadas por zona)', sales:comun});
+  const autoSelect=(s)=>`<select onclick="event.stopPropagation()" onchange="asignarAutoEntrega('${s.id}','${fecha}',this.value)" class="text-xs border border-clay-200 rounded-lg px-2 py-1 bg-white"><option value="" ${!s.auto?'selected':''}>Común</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select>`;
+  const entregaCard=(s)=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 cursor-pointer hover:border-clay-300" onclick="openSaleDetail('${s.id}','${fecha}')">
+      <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
+      <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
+      <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
+      <div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>
+    </div>`;};
+  const grupoUnidades=g=>g.sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
-      <div><h3 class="text-lg font-bold">Resumen del día · ${fecha}</h3><div class="text-xs text-clay-400">${list.length} entrega${list.length!==1?'s':''} · ${totalU} producto${totalU!==1?'s':''} a repartir</div></div>
+      <div><h3 class="text-lg font-bold">Resumen del día · ${fecha}</h3><div class="text-xs text-clay-400">${list.length} entrega${list.length!==1?'s':''} · ${totalU} producto${totalU!==1?'s':''} a repartir${usaAutos?' · '+autosUsados.length+' auto'+(autosUsados.length!==1?'s':''):''}</div></div>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     ${list.length===0?`<div class="p-10 text-center text-clay-400 text-sm">No hay entregas programadas para este día.</div>`:`
@@ -1835,25 +1874,32 @@ function openDiaEntregas(fecha){
       </div>
       <div>
         <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen de carga — productos a llevar</div>
-        <div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
-          ${resumenArr.map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
+        ${usaAutos?grupos.map(g=>{const arr=cargaResumenArr(g.sales);const isComun=g.label==='Sin asignar';const cls=isComun?'bg-clay-100 text-clay-700':autoCls(g.label);return `<div class="mb-3 border border-clay-100 rounded-xl overflow-hidden">
+            <div class="flex items-center justify-between px-3 py-2.5 ${cls}">
+              <div class="font-semibold text-sm flex items-center gap-1.5">🚗 ${g.label}</div>
+              <div class="leading-none"><span class="text-2xl font-bold tabular-nums">${grupoUnidades(g)}</span> <span class="text-xs font-medium">productos</span></div>
+            </div>
+            <div class="divide-y divide-clay-100">
+              ${arr.map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
+            </div></div>`;}).join('')+`<div class="border border-clay-200 rounded-xl px-3 py-2.5 text-sm bg-clay-50 font-bold flex items-center justify-between"><span>Total general</span><span class="tabular-nums text-base">${totalU}</span></div>`
+        :`<div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
+          ${cargaResumenArr(list).map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
           <div class="flex items-center justify-between px-3 py-2 text-sm bg-clay-50 font-semibold"><span>Total de productos</span><span class="tabular-nums">${totalU}</span></div>
-        </div>
+        </div>`}
       </div>
       <div>
-        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas (ordenadas por zona)</div>
-        <div class="space-y-2">
-          ${list.map(s=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 cursor-pointer hover:border-clay-300" onclick="openSaleDetail('${s.id}')">
-            <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
-            <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
-            <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
-          </div>`;}).join('')}
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas${usaAutos?' por auto':' (ordenadas por zona)'}</div>
+        <div class="space-y-4">
+          ${grupos.map(g=>`<div>${usaAutos?`<div class="text-sm font-semibold mb-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg ${g.label==='Sin asignar'?'bg-clay-100 text-clay-700':autoCls(g.label)}">🚗 ${g.label}<span class="text-xs font-normal">· ${g.sales.length} parada${g.sales.length!==1?'s':''}</span></div>`:''}<div class="space-y-2">${g.sales.map(entregaCard).join('')}</div></div>`).join('')}
         </div>
       </div>
     </div>`}
-    <div class="p-4 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
-      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
-      ${list.length>0?`<button onclick="generateHojaRuta('${fecha}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar hoja de ruta</button>`:''}
+    <div class="p-4 border-t border-clay-100 sticky bottom-0 bg-white space-y-2">
+      ${list.length>0?`<div class="flex flex-wrap gap-2 justify-end">
+        <button onclick="generateHojaRuta('${fecha}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Hoja de ruta total</button>
+        ${autosUsados.map(a=>`<button onclick="generateHojaRuta('${fecha}','${a}')" class="border border-clay-300 text-clay-700 hover:bg-clay-50 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full inline-block ${autoBar(a)}"></span>Ruta ${a}</button>`).join('')}
+      </div>`:''}
+      <div class="flex justify-end"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button></div>
     </div>
   `);
 }
