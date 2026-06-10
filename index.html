@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.09-19';
+const APP_VERSION = '2026.06.10-2';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1496,6 +1496,7 @@ function saveSale(){
   syncSaleFromForm();
   if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
   if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
+  if(EDIT.estadoDespacho==='entregado'&&!EDIT.entregadoAt) EDIT.entregadoAt=Date.now();
   const esNueva=!EDIT.id;
   const tel=(document.getElementById('s_cli_tel')?.value||'').trim();
   const email=(document.getElementById('s_cli_email')?.value||'').trim();
@@ -1677,7 +1678,7 @@ function subirFotoEntrega(saleId){
     compressImage(f,1000,0.55).then(dataUrl=>{
       const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
       s.fotoEntrega=dataUrl; s.fotoEntregaFecha=todayISO();
-      if(s.estadoDespacho!=='entregado') s.estadoDespacho='entregado';
+      if(s.estadoDespacho!=='entregado'){ s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); }
       save();
       if(CURRENT==='despachos') renderDespachos();
       openEntrega(saleId);
@@ -1898,7 +1899,7 @@ function renderDespachos(){
       </div>`;}).join('')}
   </div>`;
 }
-function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);s.estadoDespacho=s.estadoDespacho==='pendiente'?'en_camino':'entregado';save();go('despachos');}
+function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);s.estadoDespacho=s.estadoDespacho==='pendiente'?'en_camino':'entregado';if(s.estadoDespacho==='entregado'&&!s.entregadoAt)s.entregadoAt=Date.now();save();go('despachos');}
 function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fDoc'); if(d){ d.value='pendiente'; filterVentas(); } }
 
 /* ===================== CALENDARIO ===================== */
@@ -2013,58 +2014,71 @@ function openDiaEntregas(fecha){
   const estPill={pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')};
   const totalU=list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
-  // ¿Se está repartiendo en más de un auto este día?
-  const autosUsados=AUTOS.filter(a=>list.some(s=>s.auto===a));
+  // Separar lo que falta por entregar de lo ya entregado
+  const porEntregar=list.filter(s=>s.estadoDespacho!=='entregado');
+  const recencyEnt=s=> s.entregadoAt || (s.fotoEntregaFecha? new Date(s.fotoEntregaFecha).getTime() : (s.fechaEntrega? new Date(s.fechaEntrega).getTime() : 0));
+  const entregadas=list.filter(s=>s.estadoDespacho==='entregado').sort((a,b)=>recencyEnt(b)-recencyEnt(a));
+  const unidadesPE=porEntregar.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const unidadesEnt=entregadas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  // Autos usados (entre lo que falta por entregar)
+  const autosUsados=AUTOS.filter(a=>porEntregar.some(s=>s.auto===a));
   const usaAutos=autosUsados.length>0;
-  // Grupos para mostrar entregas: cada auto usado + "Sin asignar"
+  // Grupos de "por entregar": por auto + sin asignar
   const grupos=[];
-  autosUsados.forEach(a=>{ const sub=list.filter(s=>s.auto===a); if(sub.length) grupos.push({label:a, sales:sub}); });
-  const comun=list.filter(s=>!s.auto || !AUTOS.includes(s.auto));
-  if(comun.length) grupos.push({label: usaAutos?'Sin asignar':'Entregas (ordenadas por zona)', sales:comun});
+  autosUsados.forEach(a=>{ const sub=porEntregar.filter(s=>s.auto===a); if(sub.length) grupos.push({label:a, sales:sub}); });
+  const comun=porEntregar.filter(s=>!s.auto || !AUTOS.includes(s.auto));
+  if(comun.length) grupos.push({label: usaAutos?'Sin asignar':'', sales:comun});
   const autoSelect=(s)=>`<select onclick="event.stopPropagation()" onchange="asignarAutoEntrega('${s.id}','${fecha}',this.value)" class="text-xs border border-clay-200 rounded-lg px-2 py-1 bg-white"><option value="" ${!s.auto?'selected':''}>Común</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select>`;
-  const entregaCard=(s)=>{const c=clientById(s.clienteId);return `<div class="border border-clay-100 rounded-xl p-3 cursor-pointer hover:border-clay-300" onclick="openSaleDetail('${s.id}','${fecha}')">
+  const entregaCard=(s)=>{const c=clientById(s.clienteId);const done=s.estadoDespacho==='entregado';return `<div class="border ${done?'border-sage-200 bg-sage-50/40':'border-clay-100'} rounded-xl p-3 cursor-pointer hover:border-clay-300" onclick="openSaleDetail('${s.id}','${fecha}')">
       <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
       <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
       <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
-      <div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>
+      ${done?'':`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>`}
     </div>`;};
   const grupoUnidades=g=>g.sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const cargaRow=r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`;
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
-      <div><h3 class="text-lg font-bold">Resumen del día · ${fecha}</h3><div class="text-xs text-clay-400">${list.length} entrega${list.length!==1?'s':''} · ${totalU} producto${totalU!==1?'s':''} a repartir${usaAutos?' · '+autosUsados.length+' auto'+(autosUsados.length!==1?'s':''):''}</div></div>
+      <div><h3 class="text-lg font-bold">Resumen del día · ${fecha}</h3><div class="text-xs text-clay-400">${list.length} entrega${list.length!==1?'s':''} · ${totalU} producto${totalU!==1?'s':''}${usaAutos?' · '+autosUsados.length+' auto'+(autosUsados.length!==1?'s':''):''}</div></div>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     ${list.length===0?`<div class="p-10 text-center text-clay-400 text-sm">No hay entregas programadas para este día.</div>`:`
     <div class="p-5 space-y-5">
       <div class="grid grid-cols-3 gap-3">
-        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Paradas</div><div class="text-xl font-bold">${list.length}</div></div>
-        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Productos</div><div class="text-xl font-bold">${totalU}</div></div>
-        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Pendientes</div><div class="text-xl font-bold text-amber-600">${pend}</div></div>
+        <div class="bg-amber-50 rounded-xl p-3 text-center"><div class="text-xs text-amber-700">Por entregar</div><div class="text-xl font-bold text-amber-700">${porEntregar.length}</div><div class="text-[11px] text-amber-600">${unidadesPE} producto${unidadesPE!==1?'s':''}</div></div>
+        <div class="bg-sage-50 rounded-xl p-3 text-center"><div class="text-xs text-sage-700">Entregadas</div><div class="text-xl font-bold text-sage-700">${entregadas.length}</div><div class="text-[11px] text-sage-600">${unidadesEnt} producto${unidadesEnt!==1?'s':''}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Total</div><div class="text-xl font-bold">${list.length}</div><div class="text-[11px] text-clay-400">${totalU} productos</div></div>
       </div>
       <div>
-        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen de carga — productos a llevar</div>
-        ${usaAutos?grupos.map(g=>{const arr=cargaResumenArr(g.sales);const isComun=g.label==='Sin asignar';const cls=isComun?'bg-clay-100 text-clay-700':autoCls(g.label);return `<div class="mb-3 border border-clay-100 rounded-xl overflow-hidden">
-            <div class="flex items-center justify-between px-3 py-2.5 ${cls}">
-              <div class="font-semibold text-sm flex items-center gap-1.5">🚗 ${g.label}</div>
-              <div class="leading-none"><span class="text-2xl font-bold tabular-nums">${grupoUnidades(g)}</span> <span class="text-xs font-medium">productos</span></div>
-            </div>
-            <div class="divide-y divide-clay-100">
-              ${arr.map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
-            </div></div>`;}).join('')+`<div class="border border-clay-200 rounded-xl px-3 py-2.5 text-sm bg-clay-50 font-bold flex items-center justify-between"><span>Total general</span><span class="tabular-nums text-base">${totalU}</span></div>`
-        :`<div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
-          ${cargaResumenArr(list).map(r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`).join('')}
-          <div class="flex items-center justify-between px-3 py-2 text-sm bg-clay-50 font-semibold"><span>Total de productos</span><span class="tabular-nums">${totalU}</span></div>
-        </div>`}
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Resumen de carga — lo que falta por entregar</div>
+        ${porEntregar.length===0?`<div class="text-sm text-clay-400 text-center py-3 border border-clay-100 rounded-xl">Todo entregado 🎉</div>`:
+          usaAutos?grupos.map(g=>{const isComun=g.label==='Sin asignar'||!g.label;const cls=isComun?'bg-clay-100 text-clay-700':autoCls(g.label);return `<div class="mb-3 border border-clay-100 rounded-xl overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2.5 ${cls}">
+                <div class="font-semibold text-sm flex items-center gap-1.5">🚗 ${g.label||'Sin asignar'}</div>
+                <div class="leading-none"><span class="text-2xl font-bold tabular-nums">${grupoUnidades(g)}</span> <span class="text-xs font-medium">productos</span></div>
+              </div>
+              <div class="divide-y divide-clay-100">${cargaResumenArr(g.sales).map(cargaRow).join('')}</div>
+            </div>`;}).join('')+`<div class="border border-clay-200 rounded-xl px-3 py-2.5 text-sm bg-clay-50 font-bold flex items-center justify-between"><span>Total por entregar</span><span class="tabular-nums text-base">${unidadesPE}</span></div>`
+          :`<div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
+            ${cargaResumenArr(porEntregar).map(cargaRow).join('')}
+            <div class="flex items-center justify-between px-3 py-2 text-sm bg-clay-50 font-semibold"><span>Total por entregar</span><span class="tabular-nums">${unidadesPE}</span></div>
+          </div>`}
+        ${entregadas.length?`<details class="mt-3 border border-sage-200 rounded-xl overflow-hidden">
+          <summary class="cursor-pointer px-3 py-2.5 bg-sage-50 text-sage-700 text-sm font-medium flex items-center justify-between"><span>✓ Ya entregado</span><span class="tabular-nums">${unidadesEnt} producto${unidadesEnt!==1?'s':''}</span></summary>
+          <div class="divide-y divide-clay-100">${cargaResumenArr(entregadas).map(cargaRow).join('')}</div>
+        </details>`:''}
       </div>
       <div>
-        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas${usaAutos?' por auto':' (ordenadas por zona)'}</div>
-        <div class="space-y-4">
-          ${grupos.map(g=>`<div>${usaAutos?`<div class="text-sm font-semibold mb-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg ${g.label==='Sin asignar'?'bg-clay-100 text-clay-700':autoCls(g.label)}">🚗 ${g.label}<span class="text-xs font-normal">· ${g.sales.length} parada${g.sales.length!==1?'s':''}</span></div>`:''}<div class="space-y-2">${g.sales.map(entregaCard).join('')}</div></div>`).join('')}
-        </div>
+        <div class="text-xs font-semibold text-clay-500 uppercase tracking-wide mb-2">Entregas</div>
+        ${porEntregar.length?`<div class="text-sm font-semibold text-amber-700 mb-2 flex items-center gap-1.5">⏳ Por entregar (${porEntregar.length})</div>
+          <div class="space-y-4">${grupos.map(g=>`<div>${(usaAutos&&g.label)?`<div class="text-sm font-semibold mb-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg ${g.label==='Sin asignar'?'bg-clay-100 text-clay-700':autoCls(g.label)}">🚗 ${g.label}<span class="text-xs font-normal">· ${g.sales.length} parada${g.sales.length!==1?'s':''}</span></div>`:''}<div class="space-y-2">${g.sales.map(entregaCard).join('')}</div></div>`).join('')}</div>`
+          :`<div class="text-sm text-clay-400 text-center py-3 border border-clay-100 rounded-xl mb-2">No queda nada por entregar 🎉</div>`}
+        ${entregadas.length?`<div class="text-sm font-semibold text-sage-700 mt-5 mb-2 flex items-center gap-1.5">✓ Entregado (${entregadas.length})</div>
+          <div class="space-y-2">${entregadas.map(entregaCard).join('')}</div>`:''}
       </div>
     </div>`}
     <div class="p-4 border-t border-clay-100 sticky bottom-0 bg-white space-y-2">
-      ${list.length>0?`<div class="flex flex-wrap gap-2 justify-end">
+      ${porEntregar.length>0?`<div class="flex flex-wrap gap-2 justify-end">
         <button onclick="generateHojaRuta('${fecha}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-1.5"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Hoja de ruta total</button>
         ${autosUsados.map(a=>`<button onclick="generateHojaRuta('${fecha}','${a}')" class="border border-clay-300 text-clay-700 hover:bg-clay-50 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full inline-block ${autoBar(a)}"></span>Ruta ${a}</button>`).join('')}
       </div>`:''}
