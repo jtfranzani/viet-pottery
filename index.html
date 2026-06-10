@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-11';
+const APP_VERSION = '2026.06.10-12';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -636,9 +636,10 @@ function docLabel(s){
 }
 function entregaCell(s){
   if(!s.fechaEntrega) return '<span class="text-clay-300">— sin fecha</span>';
-  const atrasado = s.estadoDespacho!=='entregado' && s.fechaEntrega < todayISO();
-  const hoy = s.fechaEntrega === todayISO();
-  return `<span class="${atrasado?'text-red-600 font-semibold':hoy?'text-amber-600 font-semibold':''}">${s.fechaEntrega}${atrasado?' ⚠️':hoy?' · hoy':''}</span>`;
+  const entregado = s.estadoDespacho==='entregado';
+  const atrasado = !entregado && s.fechaEntrega < todayISO();
+  const hoy = !entregado && s.fechaEntrega === todayISO();
+  return `<span class="${atrasado?'text-red-600 font-semibold':hoy?'text-amber-600 font-semibold':entregado?'text-clay-400':''}">${s.fechaEntrega}${atrasado?' ⚠️':hoy?' · hoy':''}</span>`;
 }
 
 /* ===================== DASHBOARD ===================== */
