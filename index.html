@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-8';
+const APP_VERSION = '2026.06.10-9';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -355,6 +355,8 @@ let CURRENT = 'dashboard';
 function save(){ if(window.FB && DB){ try{ const p=FB.setData(DB); if(p&&p.catch) p.catch(e=>{ console.error('save error',e); if(typeof toastInfo==='function') toastInfo('⚠️ No se pudo guardar en la nube: '+((e&&e.message)||'error')); }); }catch(e){ console.error(e); } } }
 // ¿Tiene foto de entrega? (nuevo formato en blob o el antiguo inline)
 const tieneFotoEntrega = s => !!(s && (s.fotoEntregaId || s.fotoEntrega));
+// Recencia de la entrega (para ordenar de más reciente a más antiguo)
+const recencyEntregado = s => s.entregadoAt || (s.fotoEntregaFecha? new Date(s.fotoEntregaFecha).getTime() : (s.fechaEntrega? new Date(s.fechaEntrega).getTime() : 0));
 
 async function bootData(){
   let data = window.FB ? await FB.getData() : null;
@@ -1932,6 +1934,7 @@ function renderDespachos(){
   <div class="grid lg:grid-cols-3 gap-4">
     ${cols.map(([key,title,color])=>{
       const list=sales.filter(s=>s.estadoDespacho===key);
+      if(key==='entregado') list.sort((a,b)=>recencyEntregado(b)-recencyEntregado(a));
       return `<div class="card p-4 ${DESP_COL===key?'':'hidden'} lg:block">
         <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
         <div class="space-y-2">
