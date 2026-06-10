@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-5';
+const APP_VERSION = '2026.06.10-8';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -352,7 +352,9 @@ let SESSION = null;
 let CURRENT = 'dashboard';
 
 // Persistencia en la nube (Firestore). save() escribe todo el estado.
-function save(){ if(window.FB && DB) FB.setData(DB); }
+function save(){ if(window.FB && DB){ try{ const p=FB.setData(DB); if(p&&p.catch) p.catch(e=>{ console.error('save error',e); if(typeof toastInfo==='function') toastInfo('⚠️ No se pudo guardar en la nube: '+((e&&e.message)||'error')); }); }catch(e){ console.error(e); } } }
+// ¿Tiene foto de entrega? (nuevo formato en blob o el antiguo inline)
+const tieneFotoEntrega = s => !!(s && (s.fotoEntregaId || s.fotoEntrega));
 
 async function bootData(){
   let data = window.FB ? await FB.getData() : null;
@@ -373,6 +375,21 @@ async function bootData(){
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
+  // Migración: mover fotos de entrega antiguas (guardadas dentro del documento principal) a documentos aparte,
+  // para liberar espacio y evitar que se supere el límite de tamaño de la base.
+  if(window.FB && FB.saveBlob){
+    let migr=false;
+    for(const s of (DB.sales||[])){
+      if(s.fotoEntrega && !s.fotoEntregaId){
+        try{
+          const fileId=uid('foto');
+          await FB.saveBlob(fileId, {data:s.fotoEntrega, name:'entrega.jpg', mime:'image/jpeg', ts:Date.now()});
+          s.fotoEntregaId=fileId; delete s.fotoEntrega; migr=true;
+        }catch(e){ /* si falla, se deja como estaba */ }
+      }
+    }
+    if(migr){ try{ await FB.setData(DB); }catch(e){ console.error('migración fotos', e); } }
+  }
 }
 
 /* ---------- Helpers de negocio ---------- */
@@ -1676,12 +1693,20 @@ function subirFotoEntrega(saleId){
   inp.type='file'; inp.accept='image/*';
   // Sin 'capture': el celular ofrece elegir entre Cámara o Galería; el computador abre el explorador de archivos.
   inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
-    compressImage(f,1000,0.55).then(dataUrl=>{
+    compressImage(f,1000,0.55).then(async dataUrl=>{
       const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
-      s.fotoEntrega=dataUrl; if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
-      save();
-      if(CURRENT==='despachos') renderDespachos();
-      openEntrega(saleId); // muestra el comprobante con el botón "Confirmar entrega"
+      if(!window.FB||!FB.saveBlob){ alert('Se requiere conexión con la base de datos.'); return; }
+      try{
+        const fileId=uid('foto');
+        await FB.saveBlob(fileId, {data:dataUrl, name:'entrega.jpg', mime:'image/jpeg', ts:Date.now()});
+        // borra la foto anterior (blob o inline) para no dejar basura
+        if(s.fotoEntregaId && FB.deleteBlob) FB.deleteBlob(s.fotoEntregaId);
+        s.fotoEntregaId=fileId; delete s.fotoEntrega; // la foto ya NO va en el documento principal
+        if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
+        save();
+        if(CURRENT==='despachos') renderDespachos();
+        openEntrega(saleId, dataUrl); // muestra el comprobante con la foto recién subida
+      }catch(e){ alert('No se pudo guardar la foto.\n'+((e&&e.message)||'')); }
     }).catch(()=>alert('No se pudo procesar la imagen. Intenta con otra foto.'));
   };
   inp.click();
@@ -1698,11 +1723,12 @@ function confirmarEntrega(saleId){
 function quitarFotoEntrega(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
   if(!confirm('¿Eliminar la foto de entrega de este pedido?')) return;
-  delete s.fotoEntrega; delete s.fotoEntregaFecha; save();
+  if(s.fotoEntregaId && window.FB && FB.deleteBlob) FB.deleteBlob(s.fotoEntregaId);
+  delete s.fotoEntregaId; delete s.fotoEntrega; delete s.fotoEntregaFecha; save();
   if(CURRENT==='despachos') renderDespachos();
   openEntrega(saleId); // mantiene el comprobante abierto para volver a subir/cambiar la foto
 }
-function comprobanteEntregaHTML(s){
+function comprobanteEntregaHTML(s, fotoUrl){
   const c=clientById(s.clienteId);
   const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
   const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
@@ -1723,7 +1749,7 @@ function comprobanteEntregaHTML(s){
       <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Productos entregados</div>
       ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span></div>`).join('')}
-      ${s.fotoEntrega?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${s.fotoEntrega}" alt="Foto de entrega" style="width:100%;height:220px;object-fit:cover;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
+      ${fotoUrl?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${fotoUrl}" alt="Foto de entrega" style="width:100%;height:220px;object-fit:cover;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
     </div>
     <div style="background:#f3f6f1;padding:16px 24px;text-align:center;border-top:1px solid #e6ece7;">
       <div style="font-size:13px;color:#3a5030;font-weight:600;">¡Gracias por tu compra! 🌿</div>
@@ -1731,8 +1757,18 @@ function comprobanteEntregaHTML(s){
     </div>
   </div>`;
 }
-function openEntrega(saleId){
+async function openEntrega(saleId, fotoUrlPreloaded){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  // Carga la foto: precargada, inline antigua, o desde su documento aparte (blob)
+  let fotoUrl=fotoUrlPreloaded||null;
+  if(!fotoUrl){
+    if(s.fotoEntrega) fotoUrl=s.fotoEntrega; // formato antiguo
+    else if(s.fotoEntregaId && window.FB && FB.loadBlob){
+      modal('<div class="p-10 text-center text-clay-400 text-sm">Cargando comprobante… ⏳</div>');
+      try{ const rec=await FB.loadBlob(s.fotoEntregaId); fotoUrl=rec&&rec.data; }catch(e){}
+    }
+  }
+  const hasFoto=!!fotoUrl;
   const dlIcon='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
@@ -1740,9 +1776,9 @@ function openEntrega(saleId){
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-4 sm:p-5 bg-clay-50 flex flex-col items-center gap-4">
-      ${s.fotoEntrega?`
+      ${hasFoto?`
       ${s.estadoDespacho==='entregado'?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}</div>`:''}
-      <div class="w-full flex justify-center">${comprobanteEntregaHTML(s)}</div>
+      <div class="w-full flex justify-center">${comprobanteEntregaHTML(s, fotoUrl)}</div>
       <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
         ${s.estadoDespacho!=='entregado'?`<button onclick="confirmarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ Confirmar entrega</button>`:''}
         <button onclick="descargarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
@@ -1752,8 +1788,12 @@ function openEntrega(saleId){
         <button onclick="quitarFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-red-200 bg-white hover:bg-red-50 text-red-600 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🗑️ Eliminar foto</button>
       </div>
       <div class="text-xs text-clay-400 text-center max-w-[420px]">${s.estadoDespacho!=='entregado'?'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.':'Comparte el comprobante con el cliente por WhatsApp.'}</div>`
-      :`<div class="text-center text-clay-500 text-sm py-4 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Aún no hay foto de entrega de este pedido. Sube una desde tu galería o tómala con la cámara para generar el comprobante.</div>
-        <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 Subir / tomar foto</button>`}
+      :`${s.estadoDespacho==='entregado'?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}</div>`:''}
+        <div class="text-center text-clay-500 text-sm py-2 max-w-[420px]"><div class="text-4xl mb-2">📦</div>${s.estadoDespacho==='entregado'?'Pedido entregado (sin foto de respaldo). Si quieres, agrega una foto.':'Sube una foto desde tu galería o tómala con la cámara, o marca la entrega sin foto.'}</div>
+        <div class="flex flex-wrap gap-2 w-full max-w-[420px] justify-center">
+          <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 ${s.estadoDespacho==='entregado'?'Agregar foto':'Subir / tomar foto'}</button>
+          ${s.estadoDespacho!=='entregado'?`<button onclick="confirmarEntrega('${s.id}')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">✓ Marcar entregado sin foto</button>`:''}
+        </div>`}
     </div>
   `);
 }
@@ -1804,7 +1844,7 @@ function openSaleDetail(id, backFecha){
     ${step(s.pagado?'done':'amber', s.pagado?'Pago recibido':'Pago pendiente', s.pagado?('Pagado'+(s.cuenta?' · '+s.cuenta:'')):'Por cobrar — '+fmt(total))}
     ${step(s.docTipo==='pendiente'?'amber':'done','Documento', saleDocText(s))}
     ${step(dp[0],dp[1],dp[2]+(s.courier?' · '+s.courier:'')+(s.fechaEntrega?' · entrega '+s.fechaEntrega:''))}
-    ${step(s.fotoEntrega?'done':'gray','Comprobante de entrega', s.fotoEntrega?('Registrado'+(s.fotoEntregaFecha?' el '+s.fotoEntregaFecha:'')):'Sin foto de respaldo aún', true)}
+    ${step(tieneFotoEntrega(s)?'done':'gray','Comprobante de entrega', tieneFotoEntrega(s)?('Registrado'+(s.fotoEntregaFecha?' el '+s.fotoEntregaFecha:'')):'Sin foto de respaldo aún', true)}
   `;
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
@@ -1845,7 +1885,7 @@ function openSaleDetail(id, backFecha){
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-3">Historial del pedido</div>
         ${historial}
       </div>
-      ${s.fotoEntrega?`<div><div class="text-xs text-clay-400 uppercase tracking-wide mb-2">Respaldo de entrega</div><button onclick="openEntrega('${s.id}')" class="block w-full"><img src="${s.fotoEntrega}" alt="Entrega" style="width:100%;max-height:200px;object-fit:cover;border-radius:12px;border:1px solid #e6ece7;"></button></div>`:''}
+      ${tieneFotoEntrega(s)?`<div><div class="text-xs text-clay-400 uppercase tracking-wide mb-2">Respaldo de entrega</div><button onclick="openEntrega('${s.id}')" class="w-full border border-clay-200 hover:bg-clay-50 rounded-xl py-3 text-sm font-medium text-clay-700 flex items-center justify-center gap-2">🖼️ Ver foto de respaldo</button></div>`:''}
       <div class="border-t border-clay-100 pt-4">
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-2">Auto de despacho</div>
         <div class="flex items-center gap-2">
@@ -1857,7 +1897,7 @@ function openSaleDetail(id, backFecha){
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
         <div class="flex flex-wrap gap-2">
           ${actBtn(`openConfirmacion('${s.id}')`,'🧾 Comprobante de venta',true)}
-          ${actBtn(`openEntrega('${s.id}')`, s.fotoEntrega?'📦 Comprobante de entrega':'📷 Registrar entrega')}
+          ${actBtn(`openEntrega('${s.id}')`,'📦 Comprobante de entrega')}
           ${!esBodega&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
           ${!esBodega?actBtn(`openSale('${s.id}')`,'✏️ Editar pedido'):''}
         </div>
@@ -1901,10 +1941,10 @@ function renderDespachos(){
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           <div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>
-          ${s.fotoEntrega?`<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="mt-2 block w-full" title="Ver comprobante de entrega"><img src="${s.fotoEntrega}" alt="Entrega" style="width:100%;height:84px;object-fit:cover;border-radius:8px;border:1px solid #e6ece7;"></button>`:''}
-          <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key!=='entregado'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">${key==='pendiente'?'Marcar en camino →':'Marcar entregado ✓'}</button>`:pill('OK','green')}</div>
+          ${tieneFotoEntrega(s)?`<div class="mt-2 text-[11px] text-sage-700 font-medium flex items-center gap-1">📷 Con foto de respaldo</div>`:''}
+          <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key==='pendiente'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">Marcar en camino →</button>`:key==='en_camino'?`<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Marcar entregado ✓</button>`:pill('OK','green')}</div>
           <div class="mt-2">
-            ${s.fotoEntrega
+            ${tieneFotoEntrega(s)
               ? `<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="w-full text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">🧾 Ver / compartir comprobante</button>`
               : `<button onclick="event.stopPropagation();subirFotoEntrega('${s.id}')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📷 ${key==='entregado'?'Agregar foto de entrega':'Entregar con foto'}</button>`}
           </div>
