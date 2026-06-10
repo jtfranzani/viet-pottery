@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-2';
+const APP_VERSION = '2026.06.10-5';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -244,9 +244,10 @@ async function saveCanvasImage(canvas, filename){
   if(isMobileDevice()){
     try{
       const blob = await (await fetch(dataUrl)).blob();
-      const file = new File([blob], filename, {type:'image/png'});
+      // Nombre genérico y sin "title": así en el celular se comparte como FOTO (sin nombre de archivo visible).
+      const file = new File([blob], 'imagen.png', {type:'image/png'});
       if(navigator.canShare && navigator.canShare({files:[file]})){
-        await navigator.share({files:[file], title:filename});
+        await navigator.share({files:[file]});
         return;
       }
     }catch(e){ if(e && e.name==='AbortError') return; }
@@ -1599,7 +1600,7 @@ function comprobanteHTML(s){
   const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
   const row=(l,r,extra)=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;${extra||''}"><span style="color:#5d7860;">${l}</span><span>${r}</span></div>`;
   return `
-  <div id="comprobante" style="width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
+  <div id="comprobante" style="width:100%;max-width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
     ${LOGO_DATAURL
       ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Confirmación de compra</div></div>`
       : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div></div>`}
@@ -1635,7 +1636,7 @@ function openConfirmacion(saleId){
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-5 bg-clay-50 flex flex-col items-center gap-4">
-      <div style="overflow-x:auto;max-width:100%;">${comprobanteHTML(s)}</div>
+      <div class="w-full flex justify-center">${comprobanteHTML(s)}</div>
       <div class="flex gap-2 w-full max-w-[420px]">
         <button onclick="descargarComprobante('${s.id}')" class="flex-1 bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Descargar imagen</button>
         <button onclick="closeModal()" class="px-4 py-2.5 rounded-xl border border-clay-200">Cerrar</button>
@@ -1677,21 +1678,29 @@ function subirFotoEntrega(saleId){
   inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
     compressImage(f,1000,0.55).then(dataUrl=>{
       const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
-      s.fotoEntrega=dataUrl; s.fotoEntregaFecha=todayISO();
-      if(s.estadoDespacho!=='entregado'){ s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); }
+      s.fotoEntrega=dataUrl; if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
       save();
       if(CURRENT==='despachos') renderDespachos();
-      openEntrega(saleId);
+      openEntrega(saleId); // muestra el comprobante con el botón "Confirmar entrega"
     }).catch(()=>alert('No se pudo procesar la imagen. Intenta con otra foto.'));
   };
   inp.click();
+}
+function confirmarEntrega(saleId){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now();
+  if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
+  save();
+  if(CURRENT==='despachos') renderDespachos();
+  toastInfo('✓ Entrega confirmada');
+  openEntrega(saleId);
 }
 function quitarFotoEntrega(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
   if(!confirm('¿Eliminar la foto de entrega de este pedido?')) return;
   delete s.fotoEntrega; delete s.fotoEntregaFecha; save();
   if(CURRENT==='despachos') renderDespachos();
-  closeModal();
+  openEntrega(saleId); // mantiene el comprobante abierto para volver a subir/cambiar la foto
 }
 function comprobanteEntregaHTML(s){
   const c=clientById(s.clienteId);
@@ -1699,7 +1708,7 @@ function comprobanteEntregaHTML(s){
   const lugar=[s.comuna,s.ciudad].filter(Boolean).join(', ');
   const row=(l,r)=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;"><span style="color:#5d7860;">${l}</span><span>${r}</span></div>`;
   return `
-  <div id="comprobanteEntrega" style="width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
+  <div id="comprobanteEntrega" style="width:100%;max-width:420px;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23332a;border:1px solid #e6ece7;">
     ${LOGO_DATAURL
       ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Comprobante de entrega</div></div>`
       : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Comprobante de entrega</div></div>`}
@@ -1714,7 +1723,7 @@ function comprobanteEntregaHTML(s){
       <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Productos entregados</div>
       ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span></div>`).join('')}
-      ${s.fotoEntrega?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${s.fotoEntrega}" alt="Foto de entrega" style="width:100%;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
+      ${s.fotoEntrega?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${s.fotoEntrega}" alt="Foto de entrega" style="width:100%;height:220px;object-fit:cover;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
     </div>
     <div style="background:#f3f6f1;padding:16px 24px;text-align:center;border-top:1px solid #e6ece7;">
       <div style="font-size:13px;color:#3a5030;font-weight:600;">¡Gracias por tu compra! 🌿</div>
@@ -1730,14 +1739,19 @@ function openEntrega(saleId){
       <h3 class="text-lg font-bold">Comprobante de entrega</h3>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
-    <div class="p-5 bg-clay-50 flex flex-col items-center gap-4">
-      ${s.fotoEntrega?`<div style="overflow-x:auto;max-width:100%;">${comprobanteEntregaHTML(s)}</div>
-      <div class="flex gap-2 w-full max-w-[420px]">
-        <button onclick="descargarEntrega('${s.id}')" class="flex-1 bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
-        <button onclick="subirFotoEntrega('${s.id}')" class="px-4 py-2.5 rounded-xl border border-clay-200 text-clay-700">Cambiar foto</button>
+    <div class="p-4 sm:p-5 bg-clay-50 flex flex-col items-center gap-4">
+      ${s.fotoEntrega?`
+      ${s.estadoDespacho==='entregado'?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}</div>`:''}
+      <div class="w-full flex justify-center">${comprobanteEntregaHTML(s)}</div>
+      <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
+        ${s.estadoDespacho!=='entregado'?`<button onclick="confirmarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ Confirmar entrega</button>`:''}
+        <button onclick="descargarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
       </div>
-      <button onclick="quitarFotoEntrega('${s.id}')" class="text-xs text-red-500 hover:underline">Eliminar foto</button>
-      <div class="text-xs text-clay-400 text-center max-w-[420px]">Descarga la imagen y envíasela al cliente por WhatsApp para confirmar la entrega.</div>`
+      <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
+        <button onclick="subirFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-clay-200 bg-white hover:bg-clay-50 text-clay-700 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🔄 Cambiar foto</button>
+        <button onclick="quitarFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-red-200 bg-white hover:bg-red-50 text-red-600 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🗑️ Eliminar foto</button>
+      </div>
+      <div class="text-xs text-clay-400 text-center max-w-[420px]">${s.estadoDespacho!=='entregado'?'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.':'Comparte el comprobante con el cliente por WhatsApp.'}</div>`
       :`<div class="text-center text-clay-500 text-sm py-4 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Aún no hay foto de entrega de este pedido. Sube una desde tu galería o tómala con la cámara para generar el comprobante.</div>
         <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 Subir / tomar foto</button>`}
     </div>
