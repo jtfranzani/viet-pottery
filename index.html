@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.11-11';
+const APP_VERSION = '2026.06.11-12';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2328,14 +2328,14 @@ function renderCalendario(){
       <div class="flex items-center justify-between mb-1.5 gap-1">
         <span class="text-xs font-bold ${isToday(d)?'text-clay-700':'text-clay-500'}">${d}</span>
         <div class="flex items-center gap-1">
-          ${tlist.length>0?`<span class="text-[10px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full" title="Tareas">📋 ${tlist.length}</span>`:''}
+          ${tlist.length>0?`<button onclick="openDiaTareas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-violet-100 hover:bg-violet-200 text-violet-700 px-2 py-0.5 rounded-full" title="Ver tareas del día">📋 ${tlist.length} ${tlist.length===1?'tarea':'tareas'}</button>`:''}
           ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
         </div>
       </div>
       ${list.slice(0,4).map(calChip).join('')}
       ${extra>0?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${extra} más</button>`:''}
       ${tlist.slice(0,2).map(taskChip).join('')}
-      ${tExtra>0?`<button onclick="go('tareas')" class="block w-full text-left text-[11px] font-semibold text-violet-600 hover:text-violet-800 px-1.5 py-1 rounded hover:bg-violet-50">+${tExtra} tarea${tExtra!==1?'s':''}</button>`:''}
+      ${tExtra>0?`<button onclick="openDiaTareas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-violet-600 hover:text-violet-800 px-1.5 py-1 rounded hover:bg-violet-50">+${tExtra} tarea${tExtra!==1?'s':''}</button>`:''}
     </div>`;
   }
   const trail=(7-((lead+dim)%7))%7;
@@ -3741,6 +3741,53 @@ function toggleTaskDoneDetail(id){
   toastInfo(t.estado==='completada'?'✓ Tarea completada':'Tarea reabierta');
   if(CURRENT==='tareas') renderTareas(); else if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='dashboard') renderDashboard();
   openTaskDetail(id);
+}
+function openDiaTareas(fecha){
+  const all=(DB.tasks||[]).filter(t=>t.fecha===fecha);
+  const pend=all.filter(t=>t.estado!=='completada');
+  const done=all.filter(t=>t.estado==='completada');
+  const ord={alta:0,media:1,baja:2};
+  pend.sort((a,b)=>(ord[a.prioridad]??1)-(ord[b.prioridad]??1));
+  const fechaTxt=(()=>{const [yy,mm,dd]=fecha.split('-').map(Number);return new Date(yy,mm-1,dd).toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'});})();
+  const taskRow=t=>{const dn=t.estado==='completada';return `<div class="flex items-center gap-3 bg-clay-50 rounded-xl p-3 hover:bg-clay-100 transition">
+    <button onclick="event.stopPropagation();toggleTaskDoneDia('${t.id}','${fecha}')" class="shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center ${dn?'bg-sage-500 border-sage-500 text-white':'border-clay-300 text-transparent hover:border-sage-400'}" title="${dn?'Reabrir':'Completar'}">✓</button>
+    <button onclick="closeModal();openTaskDetail('${t.id}')" class="flex-1 min-w-0 text-left">
+      <div class="font-semibold leading-tight truncate ${dn?'line-through text-clay-400':''}">${t.titulo}</div>
+      <div class="text-xs text-clay-500 mt-0.5 flex items-center gap-1.5 flex-wrap">${taskPrioPill(t.prioridad)}${t.responsable?'· '+t.responsable:''}${t.proveedor?'· 🏷️ '+t.proveedor:''}${(!dn&&taskVencTxt(t))?'· '+taskVencTxt(t):''}</div>
+    </button>
+    <button onclick="closeModal();openTaskDetail('${t.id}')" class="shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-clay-200 text-clay-600 hover:bg-white">Ver/Editar</button>
+  </div>`;};
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-lg font-bold leading-tight">📋 Tareas del día</h3><div class="text-xs text-clay-500 mt-0.5 capitalize">${fechaTxt}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-amber-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Pendientes</div><div class="text-xl font-bold text-amber-600">${pend.length}</div></div>
+        <div class="bg-sage-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">Completadas</div><div class="text-xl font-bold text-sage-600">${done.length}</div></div>
+      </div>
+      ${pend.length>0?`<div class="space-y-2"><div class="text-xs font-semibold text-clay-400 uppercase tracking-wide">Por hacer</div>${pend.map(taskRow).join('')}</div>`:`<div class="text-center text-sm text-clay-400 py-2">No hay tareas pendientes este día.</div>`}
+      ${done.length>0?`<div class="space-y-2"><div class="text-xs font-semibold text-clay-400 uppercase tracking-wide">Completadas</div>${done.map(taskRow).join('')}</div>`:''}
+    </div>
+    <div class="p-4 sm:p-5 border-t border-clay-100 flex justify-between items-center sticky bottom-0 bg-white">
+      <button onclick="closeModal();nuevaTareaDia('${fecha}')" class="text-sm font-medium px-3 py-2 rounded-xl border border-clay-200 text-clay-700 hover:bg-clay-50">+ Nueva tarea</button>
+      <button onclick="closeModal()" class="text-sm font-medium px-4 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">Cerrar</button>
+    </div>
+  `);
+}
+function toggleTaskDoneDia(id,fecha){
+  const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return;
+  t.estado = t.estado==='completada' ? 'pendiente' : 'completada';
+  t.completadaAt = t.estado==='completada' ? Date.now() : null;
+  save();
+  toastInfo(t.estado==='completada'?'✓ Tarea completada':'Tarea reabierta');
+  if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='tareas') renderTareas(); else if(CURRENT==='dashboard') renderDashboard();
+  openDiaTareas(fecha);
+}
+function nuevaTareaDia(fecha){
+  openTask();
+  const fi=document.getElementById('t_fecha'); if(fi) fi.value=fecha;
 }
 function openTaskDetail(id){
   const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return;
