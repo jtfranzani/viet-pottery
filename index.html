@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.11-4';
+const APP_VERSION = '2026.06.11-6';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2710,19 +2710,40 @@ function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!
 /* ===================== PRODUCTOS ===================== */
 const SIZE_RANK={XS:0,S:1,M:2,L:3,XL:4,XXL:5};
 function sizeRank(t){ const k=String(t||'').trim().toUpperCase(); if(k in SIZE_RANK) return SIZE_RANK[k]; if(k.includes('ÚNIC')||k.includes('UNIC')) return 8; return 6; }
+let PROD_SORT={key:'modelo', dir:'asc'};
+function setProdSort(key){ if(PROD_SORT.key===key){ PROD_SORT.dir=PROD_SORT.dir==='asc'?'desc':'asc'; } else { PROD_SORT.key=key; PROD_SORT.dir = key==='modelo'?'asc':'desc'; } renderProductos(); }
+const prodMargenPct = p => p.precioRef? (p.precioRef-p.costo)/p.precioRef*100 : 0;
+const prodMargenDinero = p => (p.precioRef||0)-(p.costo||0);
 function renderProductos(){
   const v=document.getElementById('view');
-  // Orden: alfabético por modelo, y dentro de cada modelo de tamaño más chico a más grande, luego por color.
-  const prods=[...DB.products].sort((a,b)=>
-    (a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'})
-    || sizeRank(a.tamano)-sizeRank(b.tamano)
-    || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'}));
+  const dir=PROD_SORT.dir==='asc'?1:-1;
+  let prods;
+  if(PROD_SORT.key==='modelo'){
+    prods=[...DB.products].sort((a,b)=> dir*((a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'}) || sizeRank(a.tamano)-sizeRank(b.tamano) || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'})));
+  } else {
+    const val=p=>{const k=PROD_SORT.key; if(k==='sku')return p.sku; if(k==='tamano')return sizeRank(p.tamano); if(k==='color')return p.color; if(k==='costo')return p.costo; if(k==='precio')return p.precioRef; if(k==='margen')return prodMargenPct(p); if(k==='stock')return stockOf(p.id); return 0;};
+    prods=[...DB.products].sort((a,b)=>{const va=val(a),vb=val(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb),undefined,{sensitivity:'base'}) : dir*(va-vb);});
+  }
+  const agrupar = PROD_SORT.key==='modelo' && PROD_SORT.dir==='asc';
   let lastModelo=null;
-  v.innerHTML=`<div class="card overflow-hidden">
+  // Tarjetas de rentabilidad: mayor/menor margen en % y en $ (solo productos con costo ingresado)
+  const conMg=DB.products.filter(p=>p.precioRef && p.costo>0);
+  const byPct=[...conMg].sort((a,b)=>prodMargenPct(b)-prodMargenPct(a));
+  const byDin=[...conMg].sort((a,b)=>prodMargenDinero(b)-prodMargenDinero(a));
+  const mgCard=(t,p,valTxt,col,emoji)=>`<button onclick="${p?`openProductDetail('${p.id}')`:''}" class="card p-4 text-left w-full ${p?'hover:border-clay-300':''}"><div class="text-xs text-clay-500">${emoji} ${t}</div>${p?`<div class="text-sm font-bold mt-1 leading-tight truncate">${productName(p)}</div><div class="text-base font-bold ${col} mt-0.5">${valTxt(p)}</div>`:'<div class="text-sm text-clay-400 mt-2">—</div>'}</button>`;
+  const sortTh=(key,label,align,extra)=>{const act=PROD_SORT.key===key;const arr=act?(PROD_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align} px-4 py-3 ${extra||''}"><button onclick="setProdSort('${key}')" class="uppercase font-semibold ${act?'text-clay-800':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    ${mgCard('Mayor margen %',byPct[0],p=>Math.round(prodMargenPct(p))+'%','text-sage-600','🥇')}
+    ${mgCard('Mayor margen $',byDin[0],p=>fmt(prodMargenDinero(p)),'text-sage-600','💰')}
+    ${mgCard('Menor margen %',byPct[byPct.length-1],p=>Math.round(prodMargenPct(p))+'%','text-amber-600','⚠️')}
+    ${mgCard('Menor margen $',byDin[byDin.length-1],p=>fmt(prodMargenDinero(p)),'text-amber-600','📉')}
+  </div>
+  <div class="card overflow-hidden">
     <div class="p-4 border-b border-clay-100 flex flex-wrap items-center gap-2"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px] sm:max-w-xs">${SESSION.rol!=='vendedor'?`<button onclick="crearOCDesdeProductos()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap">🧾 Crear orden de compra</button>`:''}</div>
-    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-      <th class="text-left px-4 py-3 w-24">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-center px-3 py-3 w-20">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-center px-3 py-3 w-24">Margen</th><th class="text-center px-3 py-3 w-20">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
-    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
+    <div class="hidden sm:block overflow-auto max-h-[70vh]"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+      ${sortTh('sku','SKU','text-left','w-24')}${sortTh('modelo','Modelo','text-left')}${sortTh('tamano','Tamaño','text-center','w-20')}${sortTh('color','Color','text-left')}${sortTh('costo','Costo','text-right')}${sortTh('precio','Precio ref.','text-right')}${sortTh('margen','Margen','text-center','w-24')}${sortTh('stock','Stock','text-center','w-20')}${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
+    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=agrupar&&p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
       <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
       <td class="px-4 py-2.5 font-medium text-clay-800">${p.modelo}</td>
       <td class="px-3 py-2.5 text-center"><span class="inline-block bg-clay-100 text-clay-700 text-xs font-medium px-2 py-0.5 rounded-md">${p.tamano}</span></td>
@@ -3784,7 +3805,7 @@ function pagApply(id){
   let total=0; rows.forEach(tr=>{ if(m(tr)) total++; });
   const per=st.per, pages=per===Infinity?1:Math.max(1,Math.ceil(total/per));
   if(st.page>pages)st.page=pages; if(st.page<1)st.page=1;
-  const start=(st.page-1)*per, end=per===Infinity?Infinity:st.page*per;
+  const start=per===Infinity?0:(st.page-1)*per, end=per===Infinity?Infinity:st.page*per;
   let mi=0; rows.forEach(tr=>{ if(m(tr)){ tr.style.display=(mi>=start&&mi<end)?'':'none'; mi++; } else tr.style.display='none'; });
   const from=total===0?0:start+1, to=per===Infinity?total:Math.min(end,total);
   const set=(eid,t)=>{const e=document.getElementById(eid); if(e)e.textContent=t;};
