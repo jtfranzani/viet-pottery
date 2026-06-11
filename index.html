@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.11-6';
+const APP_VERSION = '2026.06.11-11';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -384,6 +384,7 @@ async function bootData(){
   if(!DB.invoices) DB.invoices=[];
   if(!DB.suppliers) DB.suppliers=[];
   if(!DB.metaUnidades) DB.metaUnidades={};
+  if(!DB.tasks) DB.tasks=[];
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
@@ -402,7 +403,25 @@ async function bootData(){
     }
     if(migr){ try{ await FB.setData(DB); }catch(e){ console.error('migración fotos', e); } }
   }
+  // Migración: asignar el código de proveedor (SKU proveedor) a cada producto según su SKU interno.
+  if(PROV_SKU && DB.products){
+    let migp=false;
+    DB.products.forEach(p=>{ if(!p.skuProveedor && PROV_SKU[p.sku]){ p.skuProveedor=PROV_SKU[p.sku]; migp=true; } });
+    if(migp){ save(); }
+  }
 }
+// Código de proveedor por SKU interno (solo se usa en las Órdenes de Compra para el proveedor).
+const PROV_SKU={
+  'VP-001':'JVRR57AC','VP-002':'JVRR45AC','VP-003':'JVRR33AC','VP-004':'JVRR57E','VP-005':'JVRR45E','VP-006':'JVRR33E','VP-007':'JVRR57S','VP-008':'JVRR45S',
+  'VP-009':'JVRE57MA','VP-010':'JVRE46MA','VP-011':'JVRE57CQ','VP-012':'JVRE57TI',
+  'VP-013':'JVIR78E','VP-014':'JVIR57E','VP-015':'JVIR40E','VP-016':'JVIR78AC','VP-017':'JVIR57AC','VP-018':'JVIR40AC',
+  'VP-019':'JVHL55MA','VP-020':'JVHL44MA','VP-021':'JVRH55E','VP-022':'JVRH44E','VP-023':'JVRH33E','VP-024':'JVRH55S','VP-025':'JVRH44S','VP-026':'JVRH55C','VP-027':'JVRH44C',
+  'VP-028':'JVBI55','VP-029':'JVBI42','VP-030':'JVBI42S','VP-031':'JVCA49E',
+  'VP-032':'JVFL55E','VP-033':'JVFL36E','VP-034':'JVFL33E',
+  'VP-035':'JVEO55E','VP-036':'JVEO55S','VP-037':'JVEO75E','VP-038':'JVEO75S','VP-039':'JVDZ46AC',
+  'VP-040':'313','VP-041':'312','VP-042':'124','VP-043':'123',
+  'VP-044':'XL','VP-045':'L','VP-046':'M','VP-047':'XLB','VP-048':'LB','VP-049':'MB'
+};
 
 /* ---------- Helpers de negocio ---------- */
 const productById = id => DB.products.find(p=>p.id===id);
@@ -437,6 +456,7 @@ const NAV = [
   {id:'reportes',  label:'Reportes',  roles:['admin','vendedor'], icon:'M3 3v18h18M8 16V9M13 16V5M18 16v-4'},
   {id:'despachos', label:'Despachos', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'calendario', label:'Calendario', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
+  {id:'tareas',    label:'Tareas',    roles:['admin','vendedor','bodega'], icon:'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'},
   {id:'clientes',  label:'Clientes', roles:['admin','vendedor'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87'},
   {id:'cobranzas', label:'Cobranzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
   {id:'stock',     label:'Stock',     roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
@@ -466,7 +486,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; rerender(); });
     showApp();
   });
 }
@@ -607,11 +627,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
+  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
+  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
@@ -621,6 +641,7 @@ function headerAction(view){
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
   if(view==='usuarios' && SESSION.rol==='admin') return btn('openUsuario()','Nuevo usuario');
   if(view==='facturas' && SESSION.rol==='admin') return btn('openFactura()','Nueva factura');
+  if(view==='tareas') return btn('openTask()','Nueva tarea');
   return '';
 }
 
@@ -667,6 +688,7 @@ function renderDashboard(){
   const facPorPagar = (DB.invoices||[]).filter(f=>f.estado!=='pagado');
   const facPorPagarMonto = facPorPagar.reduce((a,f)=>a+(f.monto||0),0);
   const presPend = (DB.quotes||[]).filter(q=>q.estado==='abierto');
+  const tareasPend = (DB.tasks||[]).filter(t=>t.estado!=='completada');
   const esAdmin = SESSION.rol==='admin';
   const esVendedor = SESSION.rol!=='bodega';
   const unidadesMes = DB.sales.filter(inMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
@@ -695,10 +717,11 @@ function renderDashboard(){
   cards.push(`<button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>`);
   if(esVendedor) cards.push(`<button onclick="go('presupuestos')" class="block text-left w-full">${statCard('Presupuestos pendientes',presPend.length,presPend.length?'Por cerrar · seguimiento →':'Sin pendientes 👍','text-blue-600')}</button>`);
   if(esAdmin) cards.push(`<button onclick="go('facturas')" class="block text-left w-full">${statCard('Facturas por pagar',fmt(facPorPagarMonto),facPorPagar.length+' factura'+(facPorPagar.length!==1?'s':'')+' · ver →','text-amber-600')}</button>`);
+  cards.push(`<button onclick="go('tareas')" class="block text-left w-full">${statCard('Tareas pendientes',tareasPend.length,tareasPend.length?'por hacer · ver →':'todo al día 👍','text-blue-600')}</button>`);
 
   const v=document.getElementById('view');
   v.innerHTML = `
-  <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
     ${cards.join('')}
   </div>
   <div class="text-xs text-clay-400 -mt-3 mb-6 px-1">Nota: "Ventas del mes" incluye el envío. "Por cobrar" es la parte de tus ventas aún no pagada (de cualquier fecha), no se suma a las ventas.</div>
@@ -708,6 +731,15 @@ function renderDashboard(){
     <div class="flex-1"><div class="font-semibold text-amber-800">Tienes ${docsPend.length} documento${docsPend.length>1?'s':''} pendiente${docsPend.length>1?'s':''} por emitir</div><div class="text-xs text-amber-700">Boletas o facturas que aún debes generar. Haz clic para verlas.</div></div>
     <span class="text-amber-700 text-sm font-medium">Ver →</span>
   </button>`:''}
+  ${tareasPend.length?`<div class="card p-5 mb-6">
+    <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">📋 Tareas pendientes ${pill(tareasPend.length,'amber')}</div><button onclick="go('tareas')" class="text-xs text-clay-600 hover:underline">Ver todas →</button></div>
+    <div class="space-y-2">
+      ${[...tareasPend].sort((a,b)=>(a.fecha||'9999-99-99').localeCompare(b.fecha||'9999-99-99')).slice(0,5).map(t=>`<div onclick="openTaskDetail('${t.id}')" class="flex items-center justify-between gap-2 border border-clay-100 rounded-xl px-3 py-2 cursor-pointer hover:border-clay-300">
+        <div class="min-w-0"><div class="font-medium text-sm truncate">${t.titulo}</div><div class="text-xs text-clay-400">${t.fecha?'📅 '+t.fecha:'sin fecha'}${taskVencTxt(t)?' · '+taskVencTxt(t):''}${t.responsable?' · '+t.responsable:''}</div></div>
+        <div class="flex items-center gap-2 shrink-0">${taskPrioPill(t.prioridad)}<button onclick="event.stopPropagation();toggleTaskDone('${t.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg" title="Completar">✓</button></div>
+      </div>`).join('')}
+    </div>
+  </div>`:''}
   <div class="grid lg:grid-cols-3 gap-4 mb-6">
     <div class="card p-5 lg:col-span-2"><div class="font-semibold mb-3">Ventas por mes</div><canvas id="chMes" height="120"></canvas></div>
     <div class="card p-5"><div class="font-semibold mb-3">Ventas por ciudad</div><canvas id="chCiudad" height="120"></canvas></div>
@@ -1317,9 +1349,14 @@ function distinctCI(values){
   return [...map.entries()].map(([value,label])=>({value,label})).sort((a,b)=>a.label.localeCompare(b.label));
 }
 let VENTAS_PAGE=1, VENTAS_PER=20;
+let VENTAS_SORT={key:'fecha', dir:'desc'};
+function setVentasSort(key){ if(VENTAS_SORT.key===key){ VENTAS_SORT.dir=VENTAS_SORT.dir==='asc'?'desc':'asc'; } else { VENTAS_SORT.key=key; VENTAS_SORT.dir = (key==='cliente'||key==='entrega')?'asc':'desc'; } renderVentas(); }
 function renderVentas(){
   const v=document.getElementById('view');
-  const rows=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const dir=VENTAS_SORT.dir==='asc'?1:-1;
+  const despOrder={pendiente:0,en_camino:1,entregado:2};
+  const sval=s=>{const k=VENTAS_SORT.key; if(k==='entrega')return s.fechaEntrega||''; if(k==='cliente'){const c=clientById(s.clienteId);return (c?c.nombre:(s.clienteNombre||'')).toLowerCase();} if(k==='total')return saleTotal(s); if(k==='pago')return s.pagado?1:0; if(k==='despacho')return despOrder[s.estadoDespacho]||0; if(k==='doc')return s.docTipo||''; return s.fecha||'';};
+  const rows=[...DB.sales].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
   const ciudades=distinctCI(DB.sales.map(s=>s.ciudad));
   const comunas=distinctCI(DB.sales.map(s=>s.comuna));
   v.innerHTML=`
@@ -1366,10 +1403,10 @@ function renderVentas(){
       </select>
       <div id="vCount" class="text-sm text-clay-500">${rows.length} ventas</div>
     </div>
-    <div class="hidden sm:block overflow-x-auto">
+    <div class="hidden sm:block overflow-auto max-h-[72vh]">
       <table class="w-full text-sm min-w-[920px]" id="vtbl">
-        <thead class="bg-clay-50 text-clay-500 text-xs uppercase">
-          <tr><th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Despacho</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th></tr>
+        <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10">
+          ${(()=>{const sortThV=(key,label,align)=>{const act=VENTAS_SORT.key===key;const arr=act?(VENTAS_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-4 py-3"><button onclick="setVentasSort('${key}')" class="uppercase ${act?'text-clay-800 font-semibold':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};return `<tr>${sortThV('fecha','Fecha')}${sortThV('entrega','Entrega')}${sortThV('cliente','Cliente')}<th class="text-left px-4 py-3">Productos</th>${sortThV('total','Total','text-right')}${sortThV('pago','Pago')}${sortThV('despacho','Despacho')}${sortThV('doc','Doc')}<th class="px-4 py-3"></th></tr>`;})()}
         </thead>
         <tbody>
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
@@ -2018,8 +2055,10 @@ function openSaleDetail(id, backFecha){
 const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':'Viet');
 let DESP_TIPO='Viet';
 let DESP_COL='pendiente'; // solo afecta la vista móvil: qué columna se muestra
+let DESP_SHOW={}; // columnas expandidas (ver todos)
 function setDespTipo(t){ DESP_TIPO=t; renderDespachos(); }
 function setDespCol(k){ DESP_COL=k; renderDespachos(); }
+function toggleDespShow(key){ DESP_SHOW[key]=!DESP_SHOW[key]; renderDespachos(); }
 function renderDespachos(){
   const v=document.getElementById('view');
   const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
@@ -2041,10 +2080,11 @@ function renderDespachos(){
     ${cols.map(([key,title,color])=>{
       const list=sales.filter(s=>s.estadoDespacho===key);
       if(key==='entregado') list.sort((a,b)=>recencyEntregado(b)-recencyEntregado(a));
+      const LIMIT=5; const expanded=DESP_SHOW[key]; const shown=expanded?list:list.slice(0,LIMIT);
       return `<div class="card p-4 ${DESP_COL===key?'':'hidden'} lg:block">
         <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
         <div class="space-y-2">
-        ${list.length?list.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
+        ${list.length?shown.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
           <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400 whitespace-nowrap">${s.fecha}</div></div>
           <div class="mt-1 flex flex-wrap gap-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}${autoBadge(s.auto)}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
@@ -2057,7 +2097,7 @@ function renderDespachos(){
               ? `<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="w-full text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">🧾 Ver / compartir comprobante</button>`
               : `<button onclick="event.stopPropagation();subirFotoEntrega('${s.id}')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📷 ${key==='entregado'?'Agregar foto de entrega':'Entregar con foto'}</button>`}
           </div>
-        </div>`;}).join(''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
+        </div>`;}).join('')+(list.length>LIMIT?`<button onclick="toggleDespShow('${key}')" class="w-full text-sm font-medium text-clay-600 hover:text-clay-900 py-2 rounded-xl border border-dashed border-clay-200 hover:bg-clay-50">${expanded?'Ver menos ▲':'+ '+(list.length-LIMIT)+' más ▼'}</button>`:''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
         </div>
       </div>`;}).join('')}
   </div>`;
@@ -2268,6 +2308,10 @@ function renderCalendario(){
     const [yy,mm,dd]=s.fechaEntrega.split('-').map(Number);
     if(yy===y && (mm-1)===m){ (byDay[dd]=byDay[dd]||[]).push(s); }
   });
+  // Tareas pendientes del mes (se muestran en el calendario sin mezclarse con las entregas)
+  const byDayTask={};
+  (DB.tasks||[]).forEach(tk=>{ if(tk.estado==='completada'||!tk.fecha) return; const [yy,mm,dd]=tk.fecha.split('-').map(Number); if(yy===y&&(mm-1)===m){ (byDayTask[dd]=byDayTask[dd]||[]).push(tk); } });
+  const taskChip=tk=>{const cl=tk.prioridad==='alta'?'bg-red-100 text-red-700':'bg-violet-100 text-violet-700';return `<button onclick="openTaskDetail('${tk.id}')" class="block w-full text-left"><span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="Tarea: ${(tk.titulo||'').replace(/"/g,'')}">📋 ${tk.titulo}</span></button>`;};
   const t=new Date(); const isToday=d=> d===t.getDate() && m===t.getMonth() && y===t.getFullYear();
   const entregasMes=Object.values(byDay).reduce((a,l)=>a+l.length,0);
 
@@ -2276,15 +2320,22 @@ function renderCalendario(){
   const calChip=s=>{const c=clientById(s.clienteId);const nom=c?c.nombre:(s.clienteNombre||'—');const cl=estColor[s.estadoDespacho]||'bg-clay-100 text-clay-700';const tag=`<span class="block text-[11px] leading-tight px-1.5 py-1 rounded mb-1 truncate ${cl}" title="${nom} · ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}">${nom}</span>`;return `<button onclick="openSaleDetail('${s.id}')" class="block w-full text-left">${tag}</button>`;};
   for(let d=1; d<=dim; d++){
     const list=byDay[d]||[];
+    const tlist=byDayTask[d]||[];
     const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     const extra=list.length-4;
+    const tExtra=tlist.length-2;
     cells+=`<div class="bg-white border ${isToday(d)?'border-clay-500 ring-1 ring-clay-300':'border-clay-100'} rounded-lg p-1.5 min-h-[96px]">
-      <div class="flex items-center justify-between mb-1.5">
+      <div class="flex items-center justify-between mb-1.5 gap-1">
         <span class="text-xs font-bold ${isToday(d)?'text-clay-700':'text-clay-500'}">${d}</span>
-        ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
+        <div class="flex items-center gap-1">
+          ${tlist.length>0?`<span class="text-[10px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full" title="Tareas">📋 ${tlist.length}</span>`:''}
+          ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
+        </div>
       </div>
       ${list.slice(0,4).map(calChip).join('')}
       ${extra>0?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${extra} más</button>`:''}
+      ${tlist.slice(0,2).map(taskChip).join('')}
+      ${tExtra>0?`<button onclick="go('tareas')" class="block w-full text-left text-[11px] font-semibold text-violet-600 hover:text-violet-800 px-1.5 py-1 rounded hover:bg-violet-50">+${tExtra} tarea${tExtra!==1?'s':''}</button>`:''}
     </div>`;
   }
   const trail=(7-((lead+dim)%7))%7;
@@ -2310,6 +2361,7 @@ function renderCalendario(){
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-200 inline-block"></span>Pendiente</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-200 inline-block"></span>En camino</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-sage-200 inline-block"></span>Entregado</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-violet-200 inline-block"></span>📋 Tarea</span>
     </div>
   </div>
   <div class="card p-3 overflow-x-auto">
@@ -2781,7 +2833,7 @@ function openProductDetail(id){
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <div><h3 class="text-lg font-bold leading-tight">${productName(p)}</h3><div class="text-xs text-clay-500 mt-0.5">SKU ${p.sku} · ${p.modelo} ${p.tamano} · ${p.color}</div></div>
+      <div><h3 class="text-lg font-bold leading-tight">${productName(p)}</h3><div class="text-xs text-clay-500 mt-0.5">SKU ${p.sku} · ${p.modelo} ${p.tamano} · ${p.color}${p.skuProveedor?` · <span class="text-clay-400">Cód. prov. ${p.skuProveedor}</span>`:''}</div></div>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-4 sm:p-5 space-y-4">
@@ -2809,7 +2861,8 @@ function openProduct(id){
   EDITP=JSON.parse(JSON.stringify(p));
   modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">${p.id?'Editar producto':'Nuevo producto'}</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
   <div class="p-5 grid sm:grid-cols-2 gap-3">
-    <div><label class="text-sm font-medium">SKU</label><input id="p_sku" value="${p.sku}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">SKU interno (Viet Pottery)</label><input id="p_sku" value="${p.sku}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div><label class="text-sm font-medium">SKU proveedor (para la OC)</label><input id="p_skuprov" value="${(p.skuProveedor||'').replace(/"/g,'&quot;')}" placeholder="Código del proveedor" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><div class="text-[11px] text-clay-400 mt-1">Solo se usa en las Órdenes de Compra que envías al proveedor.</div></div>
     <div><label class="text-sm font-medium">Modelo</label><input id="p_modelo" value="${p.modelo}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Tamaño</label><input id="p_tam" value="${p.tamano}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Color / terminación</label><input id="p_color" value="${p.color}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
@@ -2822,7 +2875,7 @@ function openProduct(id){
 }
 let EDITP=null;
 function saveProduct(){
-  Object.assign(EDITP,{sku:val('p_sku'),modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
+  Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
   if(!EDITP.modelo){alert('Ingresa el modelo');return;}
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
@@ -2863,7 +2916,7 @@ function renderOCSelector(){
         <input oninput="filterOCList(this.value)" placeholder="🔍  Filtrar productos..." class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mb-2">
         <div class="border border-clay-200 rounded-xl overflow-hidden max-h-72 overflow-y-auto">
           ${prods.map(p=>`<div class="oc-row flex items-center gap-3 px-3 py-2 border-b border-clay-100 last:border-0" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}">
-            <div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">${productName(p)}</div><div class="text-xs text-clay-400">${p.sku} · costo ${fmt(p.costo)}</div></div>
+            <div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">${productName(p)}</div><div class="text-xs text-clay-400">${p.skuProveedor?`Cód. prov. ${p.skuProveedor}`:p.sku} · costo ${fmt(p.costo)}</div></div>
             <input type="number" min="0" value="${OCSEL.qty[p.id]||''}" placeholder="0" oninput="setOCQty('${p.id}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1.5 text-sm text-center">
           </div>`).join('')}
         </div>
@@ -3070,8 +3123,8 @@ function downloadOrderPDF(id){
   const yp=pdfProParty(doc, y0, 'Proveedor', prov, meta);
   doc.autoTable({
     startY:yp+4,
-    head:[['SKU','Producto','Cant.','Costo unit.','Subtotal']],
-    body:o.items.map(i=>{const p=productById(i.productId);return [p?p.sku:'-', p?productName(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
+    head:[['Cód. proveedor','Producto','Cant.','Costo unit.','Subtotal']],
+    body:o.items.map(i=>{const p=productById(i.productId);return [p?(p.skuProveedor||p.sku):'-', p?productName(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
     styles:{fontSize:9.5,cellPadding:3.5,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
     headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
     alternateRowStyles:{fillColor:[247,250,247]},
@@ -3606,6 +3659,163 @@ function confirmarPagoMultiple(){
   toastInfo('✓ '+ids.length+' factura(s) pagadas · '+fmt(tot)+' · '+fecha);
 }
 
+/* ===================== TAREAS / PENDIENTES ===================== */
+let TASK_FILTER='abiertas'; // 'abiertas' | 'completada' | 'todas'
+let TASK_EDIT=null;
+function taskEstadoPill(e){ return e==='completada'?pill('Completada','green'):e==='en_progreso'?pill('En progreso','blue'):pill('Pendiente','amber'); }
+function taskPrioPill(p){ return p==='alta'?pill('Alta','red'):p==='baja'?pill('Baja','gray'):pill('Media','amber'); }
+function tareasPendientes(){ return (DB.tasks||[]).filter(t=>t.estado!=='completada'); }
+function taskVencTxt(t){
+  if(t.estado==='completada'||!t.fecha) return '';
+  const d=Math.round((new Date(t.fecha)-new Date(todayISO()))/86400000);
+  if(d<0) return `<span class="text-red-600 font-medium">atrasada ${-d}d</span>`;
+  if(d===0) return '<span class="text-amber-600 font-medium">hoy</span>';
+  if(d<=7) return `<span class="text-amber-600">en ${d}d</span>`;
+  return `<span class="text-clay-400">en ${d}d</span>`;
+}
+function setTaskFilter(f){ TASK_FILTER=f; renderTareas(); }
+function openTask(id){
+  const t=id?(DB.tasks||[]).find(x=>x.id===id):null;
+  TASK_EDIT=t?JSON.parse(JSON.stringify(t)):{id:null,titulo:'',detalle:'',fecha:todayISO(),estado:'pendiente',prioridad:'media',responsable:'',proveedor:''};
+  const f=TASK_EDIT;
+  const provNombre=SESSION.nombre||'';
+  const provs=[...new Set([...(DB.suppliers||[]).map(s=>s.nombre),...(DB.tasks||[]).map(x=>x.proveedor),...(DB.purchases||[]).map(p=>p.proveedor)].filter(Boolean))];
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${f.id?'Editar tarea':'Nueva tarea'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div><label class="text-sm font-medium">Tarea</label><input id="t_titulo" value="${(f.titulo||'').replace(/"/g,'&quot;')}" placeholder="Ej: Mandar a hacer etiquetas, comprar silicona..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Detalle / notas</label><input id="t_detalle" value="${(f.detalle||'').replace(/"/g,'&quot;')}" placeholder="Opcional" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-sm font-medium">Fecha programada</label><input id="t_fecha" type="date" value="${f.fecha||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Prioridad</label><select id="t_prio" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="alta" ${f.prioridad==='alta'?'selected':''}>Alta</option><option value="media" ${f.prioridad!=='alta'&&f.prioridad!=='baja'?'selected':''}>Media</option><option value="baja" ${f.prioridad==='baja'?'selected':''}>Baja</option></select></div>
+        <div><label class="text-sm font-medium">Estado</label><select id="t_estado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${f.estado==='pendiente'?'selected':''}>Pendiente</option><option value="en_progreso" ${f.estado==='en_progreso'?'selected':''}>En progreso</option><option value="completada" ${f.estado==='completada'?'selected':''}>Completada</option></select></div>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Responsable</label><input id="t_resp" value="${(f.responsable||provNombre).replace(/"/g,'&quot;')}" placeholder="Quién la hace" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Proveedor (opcional)</label><input id="t_prov" list="taskProvList" value="${(f.proveedor||'').replace(/"/g,'&quot;')}" placeholder="Ej: imprenta, ferretería..." autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="taskProvList">${provs.map(p=>`<option value="${(p||'').replace(/"/g,'&quot;')}">`).join('')}</datalist></div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <div>${f.id?`<button onclick="deleteTask('${f.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
+      <div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveTask()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div>
+    </div>
+  `);
+}
+function saveTask(){
+  const g=id=>document.getElementById(id);
+  const t=TASK_EDIT;
+  t.titulo=g('t_titulo').value.trim();
+  t.detalle=g('t_detalle').value.trim();
+  t.fecha=g('t_fecha').value;
+  t.prioridad=g('t_prio').value;
+  t.estado=g('t_estado').value;
+  t.responsable=g('t_resp').value.trim();
+  t.proveedor=g('t_prov')?g('t_prov').value.trim():'';
+  if(!t.titulo){ alert('Escribe la tarea.'); return; }
+  if(!DB.tasks) DB.tasks=[];
+  if(t.id){ const ix=DB.tasks.findIndex(x=>x.id===t.id); DB.tasks[ix]=t; }
+  else { t.id=uid('task'); t.createdAt=Date.now(); DB.tasks.push(t); }
+  save(); closeModal(); if(CURRENT==='tareas') renderTareas(); else if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='dashboard') renderDashboard();
+}
+function toggleTaskDone(id){
+  const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return;
+  t.estado = t.estado==='completada' ? 'pendiente' : 'completada';
+  t.completadaAt = t.estado==='completada' ? Date.now() : null;
+  save();
+  toastInfo(t.estado==='completada'?'✓ Tarea completada':'Tarea reabierta');
+  if(CURRENT==='tareas') renderTareas(); else if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='dashboard') renderDashboard();
+}
+function deleteTask(id){
+  if(!confirm('¿Eliminar esta tarea?')) return;
+  DB.tasks=(DB.tasks||[]).filter(x=>x.id!==id);
+  save(); closeModal(); if(CURRENT==='tareas') renderTareas();
+}
+function toggleTaskDoneDetail(id){
+  const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return;
+  t.estado = t.estado==='completada' ? 'pendiente' : 'completada';
+  t.completadaAt = t.estado==='completada' ? Date.now() : null;
+  save();
+  toastInfo(t.estado==='completada'?'✓ Tarea completada':'Tarea reabierta');
+  if(CURRENT==='tareas') renderTareas(); else if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='dashboard') renderDashboard();
+  openTaskDetail(id);
+}
+function openTaskDetail(id){
+  const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return;
+  const done=t.estado==='completada';
+  const row=(l,r)=>`<div class="flex justify-between gap-3 text-sm py-1.5"><span class="text-clay-400">${l}</span><span class="font-medium text-clay-700 text-right">${r}</span></div>`;
+  const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-lg font-bold leading-tight ${done?'line-through text-clay-400':''}">${t.titulo}</h3><div class="text-xs text-clay-500 mt-0.5">Tarea</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="flex flex-wrap gap-1.5">${taskEstadoPill(t.estado)}${taskPrioPill(t.prioridad)}${(t.fecha&&!done&&taskVencTxt(t))?`<span class="badge bg-clay-100 text-clay-600">${t.fecha} · ${taskVencTxt(t)}</span>`:''}</div>
+      <div class="bg-clay-50 rounded-xl p-3.5">
+        ${row('Fecha programada', t.fecha||'—')}
+        ${row('Responsable', t.responsable||'—')}
+        ${row('Proveedor', t.proveedor||'—')}
+        ${t.estado==='completada'&&t.completadaAt?row('Completada', new Date(t.completadaAt).toLocaleString('es-CL')):''}
+      </div>
+      ${t.detalle?`<div><div class="text-xs text-clay-400 uppercase tracking-wide mb-1">Detalle / notas</div><div class="text-sm text-clay-700">${t.detalle}</div></div>`:''}
+      <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
+        ${actBtn(`toggleTaskDoneDetail('${t.id}')`, done?'↩️ Reabrir':'✓ Completar', !done)}
+        ${actBtn(`openTask('${t.id}')`,'✏️ Editar')}
+        ${actBtn(`deleteTask('${t.id}')`,'🗑️ Eliminar')}
+      </div>
+    </div>
+  `);
+}
+function taskCard(t){
+  const done=t.estado==='completada';
+  return `<div class="card p-4 cursor-pointer hover:border-clay-300 ${done?'opacity-70':''}" onclick="openTaskDetail('${t.id}')">
+    <div class="flex items-start justify-between gap-2">
+      <div class="font-semibold leading-snug ${done?'line-through text-clay-400':''}">${t.titulo}</div>
+      ${taskPrioPill(t.prioridad)}
+    </div>
+    ${t.detalle?`<div class="text-sm text-clay-500 mt-1 leading-snug">${t.detalle}</div>`:''}
+    ${t.proveedor?`<div class="text-xs text-clay-500 mt-1.5">🏷️ ${t.proveedor}</div>`:''}
+    <div class="flex items-center justify-between mt-3 gap-2 flex-wrap">
+      <div class="text-xs text-clay-500">${t.fecha?'📅 '+t.fecha:'sin fecha'}${taskVencTxt(t)?' · '+taskVencTxt(t):''}${t.responsable?' · '+t.responsable:''}</div>
+      ${taskEstadoPill(t.estado)}
+    </div>
+    <button onclick="event.stopPropagation();toggleTaskDone('${t.id}')" class="w-full mt-3 text-xs font-medium px-3 py-1.5 rounded-lg ${done?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${done?'↩️ Reabrir':'✓ Completar'}</button>
+  </div>`;
+}
+function renderTareas(){
+  const v=document.getElementById('view');
+  if(!DB.tasks) DB.tasks=[];
+  const all=[...DB.tasks];
+  const abiertas=all.filter(t=>t.estado!=='completada');
+  const enProg=all.filter(t=>t.estado==='en_progreso').length;
+  const atrasadas=abiertas.filter(t=>t.fecha && t.fecha<todayISO()).length;
+  const completadas=all.filter(t=>t.estado==='completada').length;
+  // orden: abiertas por fecha (atrasadas/pronto primero), completadas por reciente
+  const sortAb=(a,b)=>{const fa=a.fecha||'9999-99-99',fb=b.fecha||'9999-99-99';return fa.localeCompare(fb);};
+  let lista;
+  if(TASK_FILTER==='completada') lista=all.filter(t=>t.estado==='completada').sort((a,b)=>(b.completadaAt||0)-(a.completadaAt||0));
+  else if(TASK_FILTER==='todas') lista=[...all].sort((a,b)=>{const pa=a.estado==='completada'?1:0,pb=b.estado==='completada'?1:0;return pa-pb||sortAb(a,b);});
+  else lista=abiertas.sort(sortAb);
+  const chip=(f,label,n)=>`<button onclick="setTaskFilter('${f}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${TASK_FILTER===f?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="text-xs ${TASK_FILTER===f?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${n}</span>`:''}</button>`;
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    ${statCard('Pendientes',abiertas.length,'por hacer','text-amber-600')}
+    ${statCard('En progreso',enProg,'','text-blue-600')}
+    ${statCard('Atrasadas',atrasadas,'pasaron su fecha',atrasadas>0?'text-red-600':'')}
+    ${statCard('Completadas',completadas,'','text-sage-600')}
+  </div>
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    ${chip('abiertas','Por hacer',abiertas.length)}${chip('completada','Completadas',completadas)}${chip('todas','Todas',all.length)}
+  </div>
+  ${lista.length===0
+    ? `<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">✅</div>${TASK_FILTER==='completada'?'Aún no hay tareas completadas.':'No tienes tareas pendientes. ¡Todo al día!'}<div class="text-xs text-clay-400 mt-2">Agrega una con "Nueva tarea".</div></div>`
+    : `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">${lista.map(taskCard).join('')}</div>`}
+  `;
+}
+
 /* ===================== USUARIOS Y PERMISOS ===================== */
 function rolLabel(r){return r==='admin'?'Administrador':r==='vendedor'?'Vendedor':'Bodega';}
 function renderUsuarios(){
@@ -3721,6 +3931,10 @@ function descargarRespaldoExcel(){
     'N° factura':f.numero||'','Proveedor':f.proveedor||'','RUT':f.rut||'','Emisión':f.emision||'','Vencimiento':f.vencimiento||'','Monto':f.monto||0,'Estado':f.estado==='pagado'?'Pagada':(facturaEstadoCalc(f)==='vencida'?'Vencida':'Por pagar'),'Fecha pago':f.fechaPago||'','Factura adjunta':f.pdfFactura?'Sí':'No','Comprobante pago':f.pdfPago?'Sí':'No','Notas':f.notas||''
   })));
 
+  add('Tareas',(DB.tasks||[]).map(t=>({
+    'Tarea':t.titulo||'','Detalle':t.detalle||'','Fecha programada':t.fecha||'','Prioridad':t.prioridad||'','Estado':t.estado==='completada'?'Completada':t.estado==='en_progreso'?'En progreso':'Pendiente','Responsable':t.responsable||'','Proveedor':t.proveedor||''
+  })));
+
   const fname='respaldo-viet-pottery-'+todayISO()+'.xlsx';
   (async()=>{
     try{
@@ -3763,7 +3977,7 @@ function applyVentasView(){
   const pages = per===Infinity?1:Math.max(1,Math.ceil(total/per));
   if(VENTAS_PAGE>pages) VENTAS_PAGE=pages;
   if(VENTAS_PAGE<1) VENTAS_PAGE=1;
-  const page=VENTAS_PAGE, start=(page-1)*per, end=(per===Infinity)?Infinity:page*per;
+  const page=VENTAS_PAGE, start=(per===Infinity)?0:(page-1)*per, end=(per===Infinity)?Infinity:page*per;
   const applySet=nodes=>{ let mi=0; nodes.forEach(el=>{ if(ventasMatch(el)){ el.style.display=(mi>=start&&mi<end)?'':'none'; mi++; } else el.style.display='none'; }); };
   applySet(document.querySelectorAll('#vtbl tbody tr'));
   applySet(document.querySelectorAll('#vcards .vcard'));
