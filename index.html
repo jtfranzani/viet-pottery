@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-13';
+const APP_VERSION = '2026.06.10-14';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1062,7 +1062,7 @@ function renderPresupuestos(){
     <div class="px-5 py-4 border-b border-clay-100">
       <div class="font-semibold">Presupuestos / cotizaciones</div><div class="text-xs text-clay-400">No afectan el stock. Cuando el cliente confirma y paga, conviértelo en venta (ahí se descuenta stock).</div>
     </div>
-    ${quotes.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${quotes.length?`<div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">N°</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
     ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openQuoteDetail('${q.id}')">
       <td class="px-5 py-3 font-semibold whitespace-nowrap">${q.numero||'—'}</td>
@@ -1078,7 +1078,23 @@ function renderPresupuestos(){
         ${q.estado==='ganado'?`<span class="text-xs text-sage-600">✓ vendido</span>`:''}
       </td>
     </tr>`).join('')}
-    </tbody></table></div>${pagControlsHTML('prestbl')}`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
+    </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
+      ${quotes.map(q=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openQuoteDetail('${q.id}')">
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0"><div class="font-bold truncate">${q.clienteNombre||'—'}</div><div class="text-xs text-clay-400 mt-0.5">${q.numero?'N° '+q.numero+' · ':''}${q.fecha||''}</div></div>
+          <div class="text-right shrink-0"><div class="font-bold whitespace-nowrap">${fmt(saleTotal(q))}</div><div class="mt-0.5">${quoteEstadoPill(q.estado)}</div></div>
+        </div>
+        <div class="text-xs text-clay-500 mt-1.5 leading-snug">${q.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
+        <div class="flex gap-2 mt-2.5 pt-2.5 border-t border-clay-100">
+          <button onclick="event.stopPropagation();downloadQuotePDF('${q.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1.5 rounded-lg text-center">PDF</button>
+          ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="flex-1 text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2 py-1.5 rounded-lg text-center">Convertir a venta</button>`:''}
+          ${q.estado==='perdido'?`<button onclick="event.stopPropagation();reabrirPresupuesto('${q.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1.5 rounded-lg text-center">Reabrir</button>`:''}
+          ${q.estado==='ganado'?`<span class="flex-1 text-xs text-sage-600 text-center self-center">✓ vendido</span>`:''}
+        </div>
+      </div>`).join('')}
+    </div>
+    <div class="hidden sm:block">${pagControlsHTML('prestbl')}</div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
   </div>`;
   pagRender('prestbl');
 }
@@ -2510,7 +2526,7 @@ function renderStock(){
       <button onclick="descargarPlanillaInventario()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl flex items-center gap-1.5" title="Descargar planilla en PDF para imprimir y tomar inventario"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Planilla de inventario</button>
       <div id="stCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
     </div>
-    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[640px]" id="sttbl">
+    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[640px]" id="sttbl">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
         <th class="text-left font-semibold px-5 py-3">SKU</th>
         <th class="text-left font-semibold px-3 py-3">Producto</th>
@@ -2532,7 +2548,17 @@ function renderStock(){
           ${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">Ajustar</button>`:''}
         </td>
       </tr>`;}).join('')}
-      </tbody></table></div>${pagControlsHTML('sttbl')}
+      </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50" id="stcards">
+      ${prods.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<div class="stcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0"><div class="font-bold truncate">${productName(p)}</div><div class="text-xs text-clay-400 mt-0.5">${p.sku}</div></div>
+          <div class="text-right shrink-0"><div class="text-lg font-bold">${st} <span class="text-xs text-clay-400 font-normal">u</span></div>${estado}</div>
+        </div>
+        <div class="flex items-center justify-between mt-2.5 pt-2.5 border-t border-clay-100 text-xs"><span class="text-clay-500">Mín ${p.stockMin} · valor ${fmt(st*p.costo)}</span>${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1 rounded-lg">Ajustar</button>`:''}</div>
+      </div>`;}).join('')}
+    </div>
+    <div class="hidden sm:block">${pagControlsHTML('sttbl')}</div>
   </div>
   <div class="text-xs text-clay-400 mt-3 px-1">💡 Haz clic en cualquier producto para ver su trazabilidad (historial de movimientos).</div>`;
   PAG_MATCH['sttbl']=stockMatch;
@@ -2543,7 +2569,11 @@ function stockMatch(tr){
   const est=((document.getElementById('fStockEstado')||{}).value)||'';
   return tr.textContent.toLowerCase().includes(q) && (!est||tr.dataset.estado===est);
 }
-function filterStock(){ const st=pagState('sttbl'); st.page=1; pagApply('sttbl'); }
+function filterStock(){ const st=pagState('sttbl'); st.page=1; pagApply('sttbl');
+  const q=(((document.getElementById('fStock')||{}).value)||'').toLowerCase();
+  const est=((document.getElementById('fStockEstado')||{}).value)||'';
+  document.querySelectorAll('.stcard').forEach(el=>{ const ok=(!q||(el.dataset.text||'').includes(q))&&(!est||el.dataset.estado===est); el.style.display=ok?'':'none'; });
+}
 /* ----- Trazabilidad: historial de movimientos de un producto ----- */
 function stockMovements(productId){
   const moves=[];
@@ -2647,10 +2677,10 @@ function renderProductos(){
     || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'}));
   let lastModelo=null;
   v.innerHTML=`<div class="card overflow-hidden">
-    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
-    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
+    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3 w-24">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-center px-3 py-3 w-20">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-center px-3 py-3 w-24">Margen</th><th class="text-center px-3 py-3 w-20">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
-    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60">
+    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
       <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
       <td class="px-4 py-2.5 font-medium text-clay-800">${p.modelo}</td>
       <td class="px-3 py-2.5 text-center"><span class="inline-block bg-clay-100 text-clay-700 text-xs font-medium px-2 py-0.5 rounded-md">${p.tamano}</span></td>
@@ -2659,10 +2689,57 @@ function renderProductos(){
       <td class="px-4 py-2.5 text-right font-semibold">${fmt(p.precioRef)}</td>
       <td class="px-3 py-2.5 text-center">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</td>
       <td class="px-3 py-2.5 text-center ${stCls}">${st}</td>
-      ${SESSION.rol!=='vendedor'?`<td class="px-4 py-2.5 text-right"><button onclick="openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900 font-medium">Editar</button></td>`:''}
+      ${SESSION.rol!=='vendedor'?`<td class="px-4 py-2.5 text-right"><button onclick="event.stopPropagation();openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900 font-medium">Editar</button></td>`:''}
     </tr>`;}).join('')}
-    </tbody></table></div>${pagControlsHTML('ptbl')}</div>`;
+    </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
+      ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<div class="pcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openProductDetail('${p.id}')" data-text="${(p.sku+' '+p.modelo+' '+p.tamano+' '+p.color).toLowerCase().replace(/"/g,'')}">
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0"><div class="font-bold truncate">${p.modelo} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span></div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
+          <div class="text-right shrink-0"><div class="font-bold">${fmt(p.precioRef)}</div><div class="mt-0.5">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</div></div>
+        </div>
+        <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Costo ${fmt(p.costo)}</span><span class="${stCls}">Stock: ${st}</span></div>
+      </div>`;}).join('')}
+    </div>
+    <div class="hidden sm:block">${pagControlsHTML('ptbl')}</div></div>`;
   pagRender('ptbl');
+}
+function filterPCards(q){ q=(q||'').toLowerCase(); document.querySelectorAll('.pcard').forEach(el=>{ el.style.display=(!q||(el.dataset.text||'').includes(q))?'':'none'; }); }
+function openProductDetail(id){
+  const p=productById(id); if(!p) return;
+  let vendidas=0, ingreso=0;
+  DB.sales.forEach(s=>s.items.forEach(i=>{ if(i.productId===id){ vendidas+=i.cantidad; ingreso+=lineTotal(i); } }));
+  const st=stockOf(id);
+  const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;
+  const esVendedor=SESSION.rol==='vendedor';
+  const stTxt=st<=0?'Agotado':st<=(p.stockMin||0)?'Stock bajo':'OK';
+  const stCol=st<=0?'text-red-600':st<=(p.stockMin||0)?'text-amber-600':'text-sage-600';
+  const mini=(t,v,col)=>`<div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">${t}</div><div class="text-lg font-bold ${col||''}">${v}</div></div>`;
+  const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold leading-tight">${productName(p)}</h3><div class="text-xs text-clay-500 mt-0.5">SKU ${p.sku} · ${p.modelo} ${p.tamano} · ${p.color}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        ${mini('Precio ref.',fmt(p.precioRef),'text-clay-800')}
+        ${mini('Costo',fmt(p.costo),'text-clay-500')}
+        ${mini('Margen',mg+'%',mg>=50?'text-sage-600':mg>=35?'text-amber-600':'text-red-600')}
+        ${mini('Stock',st+' u',stCol)}
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        ${mini('Unidades vendidas',vendidas,'')}
+        ${mini('Ingreso generado',fmt(ingreso),'text-sage-600')}
+      </div>
+      <div class="bg-clay-50 rounded-xl p-3.5 text-sm text-clay-600">Estado de stock: <b class="${stCol}">${stTxt}</b> · mínimo ${p.stockMin} u · valor en stock ${fmt(st*p.costo)}</div>
+      <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
+        ${actBtn(`openTrazabilidad('${p.id}')`,'📦 Ver trazabilidad',true)}
+        ${!esVendedor?actBtn(`openAdjust('${p.id}')`,'Ajustar stock'):''}
+        ${!esVendedor?actBtn(`openProduct('${p.id}')`,'✏️ Editar producto'):''}
+      </div>
+    </div>
+  `);
 }
 function openProduct(id){
   const p=id?productById(id):{id:null,sku:'VP-'+String(DB.products.length+1).padStart(3,'0'),modelo:'',tamano:'M',color:'Natural',precioRef:0,costo:0,stockInicial:0,stockMin:2};
@@ -2713,9 +2790,9 @@ function renderCompras(){
       <div><div class="font-semibold">Pedidos a proveedor</div><div class="text-xs text-clay-400">Órdenes de compra. Genera el PDF y envíalo al proveedor.</div></div>
       ${puede?`<button onclick="openOrder()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nuevo pedido</button>`:''}
     </div>
-    ${orders.length?`<div class="overflow-x-auto"><table class="w-full text-sm min-w-[720px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${orders.length?`<div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[720px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">N° OC</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Proveedor</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
-    ${orders.map(o=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+    ${orders.map(o=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openOrder('${o.id}')">
       <td class="px-5 py-3 font-semibold whitespace-nowrap">${o.numero}</td>
       <td class="px-3 py-3 whitespace-nowrap text-clay-500">${o.fecha}</td>
       <td class="px-3 py-3 font-medium">${o.proveedor}</td>
@@ -2723,12 +2800,22 @@ function renderCompras(){
       <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(ordTotal(o))}</td>
       <td class="px-3 py-3 whitespace-nowrap">${o.estado==='recibido'?pill('Recibido','green'):pill('Pendiente','amber')}</td>
       <td class="px-5 py-3 text-right whitespace-nowrap">
-        <button onclick="downloadOrderPDF('${o.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">PDF</button>
-        ${puede&&o.estado!=='recibido'?`<button onclick="recibirOrder('${o.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2.5 py-1.5 rounded-lg ml-1">Recibir</button>`:''}
-        ${puede?`<button onclick="openOrder('${o.id}')" class="text-xs text-clay-600 hover:text-clay-900 px-1.5 ml-1">Editar</button>`:''}
+        <button onclick="event.stopPropagation();downloadOrderPDF('${o.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">PDF</button>
+        ${puede&&o.estado!=='recibido'?`<button onclick="event.stopPropagation();recibirOrder('${o.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2.5 py-1.5 rounded-lg ml-1">Recibir</button>`:''}
+        ${puede?`<button onclick="event.stopPropagation();openOrder('${o.id}')" class="text-xs text-clay-600 hover:text-clay-900 px-1.5 ml-1">Editar</button>`:''}
       </td>
     </tr>`).join('')}
-    </tbody></table></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes pedidos a proveedor. Crea el primero con "Nuevo pedido".</div>`}
+    </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
+      ${orders.map(o=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openOrder('${o.id}')">
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0"><div class="font-bold truncate">OC ${o.numero} · ${o.proveedor}</div><div class="text-xs text-clay-400 mt-0.5">${o.fecha}</div></div>
+          <div class="text-right shrink-0"><div class="font-bold whitespace-nowrap">${fmt(ordTotal(o))}</div><div class="mt-0.5">${o.estado==='recibido'?pill('Recibido','green'):pill('Pendiente','amber')}</div></div>
+        </div>
+        <div class="text-xs text-clay-500 mt-1.5 leading-snug">${o.items.map(i=>{const p=productById(i.productId);return `${i.cantidad}× ${p?productName(p):'?'}`;}).join(', ')}</div>
+        <div class="flex gap-2 mt-2.5 pt-2.5 border-t border-clay-100"><button onclick="event.stopPropagation();downloadOrderPDF('${o.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1.5 rounded-lg text-center">PDF</button>${puede&&o.estado!=='recibido'?`<button onclick="event.stopPropagation();recibirOrder('${o.id}')" class="flex-1 text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1.5 rounded-lg text-center">Recibir</button>`:''}</div>
+      </div>`).join('')}
+    </div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes pedidos a proveedor. Crea el primero con "Nuevo pedido".</div>`}
   </div>
 
   <div class="card overflow-hidden">
@@ -2736,15 +2823,25 @@ function renderCompras(){
       <div><div class="font-semibold">Compras recibidas</div><div class="text-xs text-clay-400">Mercadería que llegó y sumó al stock.</div></div>
       ${puede?`<button onclick="openPurchase()" class="text-sm text-clay-700 font-medium">+ Registrar recibida</button>`:''}
     </div>
-    ${rows.length?`<div class="overflow-x-auto"><table class="w-full text-sm" id="comtbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${rows.length?`<div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm" id="comtbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">Fecha</th><th class="text-left px-3 py-3">Proveedor</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="px-5 py-3"></th></tr></thead><tbody>
-    ${rows.map(c=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+    ${rows.map(c=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 ${puede?'cursor-pointer':''}" ${puede?`onclick="openPurchase('${c.id}')"`:''}>
       <td class="px-5 py-3 whitespace-nowrap text-clay-500">${c.fecha}</td><td class="px-3 py-3 font-medium">${c.proveedor}</td>
       <td class="px-3 py-3 text-clay-600 text-xs">${c.items.map(i=>{const p=productById(i.productId);return `${i.cantidad}× ${p?productName(p):'?'}`;}).join('<br>')}</td>
       <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(c.items.reduce((a,i)=>a+i.cantidad*i.costo,0))}</td>
-      <td class="px-5 py-3 text-right">${puede?`<button onclick="openPurchase('${c.id}')" class="text-clay-600 hover:text-clay-900 text-sm">Ver</button>`:''}</td>
+      <td class="px-5 py-3 text-right">${puede?`<button onclick="event.stopPropagation();openPurchase('${c.id}')" class="text-clay-600 hover:text-clay-900 text-sm">Ver</button>`:''}</td>
     </tr>`).join('')}
-    </tbody></table></div>${pagControlsHTML('comtbl')}`:`<div class="p-10 text-center text-clay-400 text-sm">Sin compras recibidas todavía.</div>`}
+    </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
+      ${rows.map(c=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 ${puede?'cursor-pointer hover:border-clay-300':''}" ${puede?`onclick="openPurchase('${c.id}')"`:''}>
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0"><div class="font-bold truncate">${c.proveedor}</div><div class="text-xs text-clay-400 mt-0.5">${c.fecha}</div></div>
+          <div class="font-bold whitespace-nowrap shrink-0">${fmt(c.items.reduce((a,i)=>a+i.cantidad*i.costo,0))}</div>
+        </div>
+        <div class="text-xs text-clay-500 mt-1.5 leading-snug">${c.items.map(i=>{const p=productById(i.productId);return `${i.cantidad}× ${p?productName(p):'?'}`;}).join(', ')}</div>
+      </div>`).join('')}
+    </div>
+    <div class="hidden sm:block">${pagControlsHTML('comtbl')}</div>`:`<div class="p-10 text-center text-clay-400 text-sm">Sin compras recibidas todavía.</div>`}
   </div>`;
   pagRender('comtbl');
 }
