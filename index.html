@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.10-14';
+const APP_VERSION = '2026.06.11-4';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -181,6 +181,7 @@ const milesParse = v => parseInt(String(v||'').replace(/[^\d]/g,''),10)||0;
 // Reformatea el input mientras se escribe y devuelve el número.
 function moneyInput(el){ const n=milesParse(el.value); el.value = n? n.toLocaleString('es-CL') : ''; return n; }
 const todayISO = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+const horaHM = ts => { if(!ts) return ''; const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
 const uid = p => p + '-' + Math.random().toString(36).slice(2,8);
 // ¿Es un celular o tablet? (en computador descargamos directo; solo en móvil usamos "Compartir")
 const isMobileDevice = () => (navigator.maxTouchPoints>0) && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.platform==='MacIntel');
@@ -226,6 +227,7 @@ function toastInfo(msg){
 // Guarda/comparte un PDF de jsPDF. En celular usa el menú nativo "Compartir" (evita el bug del enlace blob: en iOS).
 async function savePdfDoc(doc, filename){
   if(isMobileDevice()){
+    // Celular: menú nativo de compartir / descargar (lo más confiable en móvil)
     try{
       const blob = doc.output('blob');
       const file = new File([blob], filename, {type:'application/pdf'});
@@ -234,9 +236,16 @@ async function savePdfDoc(doc, filename){
         return;
       }
     }catch(e){ if(e && e.name==='AbortError') return; /* si falla, baja por descarga normal */ }
+    try{ doc.save(filename); }
+    catch(e){ try{ window.open(doc.output('bloburl'),'_blank'); }catch(_){ alert('No se pudo generar el PDF en este dispositivo.'); } }
+    return;
   }
-  try{ doc.save(filename); }
-  catch(e){ try{ window.open(doc.output('bloburl'),'_blank'); }catch(_){ alert('No se pudo generar el PDF en este dispositivo.'); } }
+  // Computador: abrir en una pestaña nueva para verlo online (desde el visor se puede descargar o imprimir)
+  try{
+    const url=doc.output('bloburl');
+    const w=window.open(url,'_blank');
+    if(!w){ doc.save(filename); } // si el navegador bloquea la pestaña, se descarga
+  }catch(e){ try{ doc.save(filename); }catch(_){ alert('No se pudo generar el PDF.'); } }
 }
 // Guarda/comparte una imagen (canvas). En celular usa el menú nativo "Compartir".
 async function saveCanvasImage(canvas, filename){
@@ -424,7 +433,7 @@ function clientBalance(clientId){
 const NAV = [
   {id:'dashboard', label:'Dashboard', roles:['admin','vendedor','bodega'], icon:'M3 12l9-9 9 9M5 10v10h14V10'},
   {id:'presupuestos', label:'Presupuestos', roles:['admin','vendedor'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6'},
-  {id:'ventas',    label:'Ventas',    roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
+  {id:'ventas',    label:'Pedidos',   roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
   {id:'reportes',  label:'Reportes',  roles:['admin','vendedor'], icon:'M3 3v18h18M8 16V9M13 16V5M18 16v-4'},
   {id:'despachos', label:'Despachos', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'calendario', label:'Calendario', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
@@ -432,7 +441,7 @@ const NAV = [
   {id:'cobranzas', label:'Cobranzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
   {id:'stock',     label:'Stock',     roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'productos', label:'Productos', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
-  {id:'compras',   label:'Compras',   roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
+  {id:'compras',   label:'Órdenes de compra', roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
   {id:'facturas',  label:'Facturas de compra', roles:['admin'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h4'},
   {id:'usuarios',  label:'Usuarios',  roles:['admin'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75'}
 ];
@@ -598,7 +607,7 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Ventas',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Compras',facturas:'Facturas de compra',usuarios:'Usuarios'};
+  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
@@ -606,7 +615,7 @@ function go(view){
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
-  if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nueva venta');
+  if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nuevo pedido');
   if(view==='presupuestos' && SESSION.rol!=='bodega') return btn('openQuote()','Nuevo presupuesto');
   if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
@@ -1425,7 +1434,7 @@ function renderSaleModal(){
   const total=saleTotal(s);
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <h3 class="text-lg font-bold">${s.id?'Editar venta':'Nueva venta'}</h3>
+      <h3 class="text-lg font-bold">${s.id?'Editar pedido':'Nuevo pedido'}</h3>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-5 space-y-4">
@@ -1585,6 +1594,9 @@ function saveSale(){
   if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
   if(EDIT.estadoDespacho==='entregado'&&!EDIT.entregadoAt) EDIT.entregadoAt=Date.now();
   const esNueva=!EDIT.id;
+  // ¿Pasó a "entregado" recién con esta edición? -> abrir el comprobante de entrega
+  const prev = EDIT.id ? DB.sales.find(x=>x.id===EDIT.id) : null;
+  const reciénEntregado = EDIT.estadoDespacho==='entregado' && (!prev || prev.estadoDespacho!=='entregado');
   const tel=(document.getElementById('s_cli_tel')?.value||'').trim();
   const email=(document.getElementById('s_cli_email')?.value||'').trim();
   const cli=resolveClient(EDIT.clienteNombre, EDIT.ciudad, EDIT.comuna, EDIT.direccion, tel, email);
@@ -1600,6 +1612,7 @@ function saveSale(){
   const sid=EDIT.id;
   save();closeModal();go(CURRENT==='despachos'?'despachos':'ventas');
   if(esNueva) openConfirmacion(sid);
+  else if(reciénEntregado) openEntrega(sid);
 }
 function deleteSale(id){if(!confirm('¿Eliminar esta venta?'))return;DB.sales=DB.sales.filter(s=>s.id!==id);save();closeModal();go('ventas');}
 
@@ -1772,6 +1785,7 @@ function subirFotoEntrega(saleId){
         if(s.fotoEntregaId && FB.deleteBlob) FB.deleteBlob(s.fotoEntregaId);
         s.fotoEntregaId=fileId; delete s.fotoEntrega; // la foto ya NO va en el documento principal
         if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
+        if(!s.entregadoAt) s.entregadoAt=Date.now(); // registra fecha y hora del respaldo
         save();
         if(CURRENT==='despachos') renderDespachos();
         openEntrega(saleId, dataUrl); // muestra el comprobante con la foto recién subida
@@ -1788,6 +1802,29 @@ function confirmarEntrega(saleId){
   if(CURRENT==='despachos') renderDespachos();
   toastInfo('✓ Entrega confirmada');
   openEntrega(saleId);
+}
+// Alterna el estado de despacho entregado <-> pendiente desde el detalle del pedido.
+// Al pasar a ENTREGADO siempre abre el comprobante de entrega (para foto y/o enviar al cliente).
+function toggleEntregaEstado(saleId, backFecha){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openSaleDetail(saleId, backFecha||''); }
+  else { s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('✓ Pedido marcado como entregado'); openEntrega(saleId); }
+}
+// Desde el comprobante de entrega: volver el pedido a "pendiente" (mantiene la foto por si se re-entrega).
+function revertirAPendiente(saleId){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  if(!confirm('¿Volver este pedido a "pendiente"? Dejará de figurar como entregado.')) return;
+  s.estadoDespacho='pendiente'; delete s.entregadoAt;
+  save();
+  if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario();
+  toastInfo('Pedido vuelto a pendiente');
+  closeModal();
+}
+// Igual, desde el resumen del día (calendario).
+function toggleEntregaDia(saleId, fecha){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openDiaEntregas(fecha); }
+  else { s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('✓ Pedido marcado como entregado'); openEntrega(saleId); }
 }
 function quitarFotoEntrega(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
@@ -1812,7 +1849,7 @@ function comprobanteEntregaHTML(s, fotoUrl){
         <svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg> ¡Pedido entregado!
       </div>
       ${row('Cliente',`<b>${nombre}</b>`)}
-      ${row('Fecha de entrega',`<b>${s.fotoEntregaFecha||s.fechaEntrega||todayISO()}</b>`)}
+      ${row('Fecha de entrega',`<b>${s.fotoEntregaFecha||s.fechaEntrega||todayISO()}${s.entregadoAt?' · '+horaHM(s.entregadoAt):''}</b>`)}
       ${lugar?row('Despacho a',lugar):''}
       ${s.courier?row('Vía',s.courier):''}
       <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
@@ -1838,6 +1875,7 @@ async function openEntrega(saleId, fotoUrlPreloaded){
     }
   }
   const hasFoto=!!fotoUrl;
+  const entregado=s.estadoDespacho==='entregado';
   const dlIcon='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
@@ -1845,23 +1883,23 @@ async function openEntrega(saleId, fotoUrlPreloaded){
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-4 sm:p-5 bg-clay-50 flex flex-col items-center gap-4">
-      ${hasFoto?`
-      ${s.estadoDespacho==='entregado'?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}</div>`:''}
+      ${(entregado||hasFoto)?`
+      ${entregado?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}${s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>`:''}
       <div class="w-full flex justify-center">${comprobanteEntregaHTML(s, fotoUrl)}</div>
       <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
-        ${s.estadoDespacho!=='entregado'?`<button onclick="confirmarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ Confirmar entrega</button>`:''}
+        ${!entregado?`<button onclick="confirmarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ Confirmar entrega</button>`:''}
         <button onclick="descargarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
       </div>
       <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
-        <button onclick="subirFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-clay-200 bg-white hover:bg-clay-50 text-clay-700 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🔄 Cambiar foto</button>
-        <button onclick="quitarFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-red-200 bg-white hover:bg-red-50 text-red-600 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🗑️ Eliminar foto</button>
+        <button onclick="subirFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-clay-200 bg-white hover:bg-clay-50 text-clay-700 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">${hasFoto?'🔄 Cambiar foto':'📷 Agregar foto de respaldo'}</button>
+        ${hasFoto?`<button onclick="quitarFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-red-200 bg-white hover:bg-red-50 text-red-600 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🗑️ Eliminar foto</button>`:''}
       </div>
-      <div class="text-xs text-clay-400 text-center max-w-[420px]">${s.estadoDespacho!=='entregado'?'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.':'Comparte el comprobante con el cliente por WhatsApp.'}</div>`
-      :`${s.estadoDespacho==='entregado'?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}</div>`:''}
-        <div class="text-center text-clay-500 text-sm py-2 max-w-[420px]"><div class="text-4xl mb-2">📦</div>${s.estadoDespacho==='entregado'?'Pedido entregado (sin foto de respaldo). Si quieres, agrega una foto.':'Sube una foto desde tu galería o tómala con la cámara, o marca la entrega sin foto.'}</div>
+      <div class="text-xs text-clay-400 text-center max-w-[420px]">${!entregado?'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.':(hasFoto?'Pedido entregado ✓. Comparte el comprobante con el cliente por WhatsApp.':'Pedido entregado ✓. Puedes agregar una foto de respaldo y/o compartir este comprobante con el cliente por WhatsApp.')}</div>
+      ${entregado?`<button onclick="revertirAPendiente('${s.id}')" class="mt-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">↩️ Volver a pendiente</button>`:''}`
+      :`<div class="text-center text-clay-500 text-sm py-2 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Sube una foto de respaldo o marca la entrega sin foto. Al marcarlo entregado se genera el comprobante para enviar al cliente.</div>
         <div class="flex flex-wrap gap-2 w-full max-w-[420px] justify-center">
-          <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 ${s.estadoDespacho==='entregado'?'Agregar foto':'Subir / tomar foto'}</button>
-          ${s.estadoDespacho!=='entregado'?`<button onclick="confirmarEntrega('${s.id}')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">✓ Marcar entregado sin foto</button>`:''}
+          <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 Subir / tomar foto</button>
+          <button onclick="confirmarEntrega('${s.id}')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">✓ Marcar entregado sin foto</button>
         </div>`}
     </div>
   `);
@@ -1936,7 +1974,8 @@ function openSaleDetail(id, backFecha){
         <div class="bg-clay-50 rounded-xl p-3.5">
           <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
           <div class="flex flex-wrap gap-1.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
-          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}</div>
+          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
+          <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':'✓ Marcar como entregado'}</button>
         </div>
       </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
@@ -2023,7 +2062,7 @@ function renderDespachos(){
       </div>`;}).join('')}
   </div>`;
 }
-function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);s.estadoDespacho=s.estadoDespacho==='pendiente'?'en_camino':'entregado';if(s.estadoDespacho==='entregado'&&!s.entregadoAt)s.entregadoAt=Date.now();save();go('despachos');}
+function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);const next=s.estadoDespacho==='pendiente'?'en_camino':'entregado';s.estadoDespacho=next;if(next==='entregado'){if(!s.entregadoAt)s.entregadoAt=Date.now();save();if(CURRENT==='despachos')renderDespachos();openEntrega(id);return;}save();go('despachos');}
 function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fDoc'); if(d){ d.value='pendiente'; filterVentas(); } }
 
 /* ===================== CALENDARIO ===================== */
@@ -2157,7 +2196,10 @@ function openDiaEntregas(fecha){
       <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
       <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
       <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
-      ${done?'':`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>`}
+      <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
+        ${done?'<span></span>':`<div class="flex items-center gap-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>`}
+        <button onclick="event.stopPropagation();toggleEntregaDia('${s.id}','${fecha}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${done?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${done?'↩️ Marcar pendiente':'✓ Marcar entregado'}</button>
+      </div>
     </div>`;};
   const grupoUnidades=g=>g.sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const cargaRow=r=>`<div class="flex items-center justify-between px-3 py-2 text-sm"><span>${r.name}</span><span class="font-semibold tabular-nums">${r.cant}</span></div>`;
@@ -2677,7 +2719,7 @@ function renderProductos(){
     || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'}));
   let lastModelo=null;
   v.innerHTML=`<div class="card overflow-hidden">
-    <div class="p-4 border-b border-clay-100"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-80"></div>
+    <div class="p-4 border-b border-clay-100 flex flex-wrap items-center gap-2"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px] sm:max-w-xs">${SESSION.rol!=='vendedor'?`<button onclick="crearOCDesdeProductos()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap">🧾 Crear orden de compra</button>`:''}</div>
     <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-4 py-3 w-24">SKU</th><th class="text-left px-4 py-3">Modelo</th><th class="text-center px-3 py-3 w-20">Tamaño</th><th class="text-left px-4 py-3">Color</th><th class="text-right px-4 py-3">Costo</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-center px-3 py-3 w-24">Margen</th><th class="text-center px-3 py-3 w-20">Stock</th>${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
     ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
@@ -2765,6 +2807,66 @@ function saveProduct(){
   save();closeModal();go('productos');
 }
 function deleteProduct(id){if(!confirm('¿Eliminar producto?'))return;DB.products=DB.products.filter(p=>p.id!==id);save();closeModal();go('productos');}
+
+/* ----- Crear una OC seleccionando modelos y cantidades desde Productos ----- */
+let OCSEL=null;
+function crearOCDesdeProductos(){ OCSEL={qty:{}, prov:'', fecha:todayISO(), entrega:'', notas:''}; renderOCSelector(); }
+function setOCQty(pid, q){ q=Math.max(0,parseInt(q,10)||0); if(q>0) OCSEL.qty[pid]=q; else delete OCSEL.qty[pid]; actualizarOCTotal(); }
+function actualizarOCTotal(){
+  const total=Object.entries(OCSEL.qty).reduce((a,[pid,q])=>{const p=productById(pid);return a+(p?p.costo:0)*(q||0);},0);
+  const n=Object.values(OCSEL.qty).filter(q=>q>0).length;
+  const t=document.getElementById('octotal'); if(t) t.textContent=fmt(total);
+  const c=document.getElementById('occount'); if(c) c.textContent=n;
+  const b=document.getElementById('occonfirm'); if(b) b.disabled=n===0;
+}
+function filterOCList(q){ q=(q||'').toLowerCase(); document.querySelectorAll('.oc-row').forEach(el=>{ el.style.display=(!q||(el.dataset.text||'').includes(q))?'':'none'; }); }
+function syncOCSelector(){ const g=id=>document.getElementById(id); if(g('oc_prov'))OCSEL.prov=g('oc_prov').value.trim(); if(g('oc_fecha'))OCSEL.fecha=g('oc_fecha').value; if(g('oc_entrega'))OCSEL.entrega=g('oc_entrega').value; if(g('oc_notas'))OCSEL.notas=g('oc_notas').value; }
+function renderOCSelector(){
+  const prods=[...DB.products].sort((a,b)=>(a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'})||sizeRank(a.tamano)-sizeRank(b.tamano)||(a.color||'').localeCompare(b.color||''));
+  const provs=[...new Set([...(DB.suppliers||[]).map(s=>s.nombre),...(DB.purchases||[]).map(p=>p.proveedor),...(DB.orders||[]).map(o=>o.proveedor)].filter(Boolean))];
+  const total=Object.entries(OCSEL.qty).reduce((a,[pid,q])=>{const p=productById(pid);return a+(p?p.costo:0)*(q||0);},0);
+  const n=Object.values(OCSEL.qty).filter(q=>q>0).length;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Nueva orden de compra</h3><div class="text-xs text-clay-400">Selecciona modelos y cantidades</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-sm font-medium">Proveedor</label><input id="oc_prov" list="ocProvList" value="${(OCSEL.prov||'').replace(/"/g,'&quot;')}" placeholder="Nombre del proveedor" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="ocProvList">${provs.map(p=>`<option value="${(p||'').replace(/"/g,'&quot;')}">`).join('')}</datalist></div>
+        <div><label class="text-sm font-medium">Fecha del pedido</label><input id="oc_fecha" type="date" value="${OCSEL.fecha||todayISO()}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Entrega estimada</label><input id="oc_entrega" type="date" value="${OCSEL.entrega||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-2"><label class="text-sm font-medium">Productos a pedir</label></div>
+        <input oninput="filterOCList(this.value)" placeholder="🔍  Filtrar productos..." class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mb-2">
+        <div class="border border-clay-200 rounded-xl overflow-hidden max-h-72 overflow-y-auto">
+          ${prods.map(p=>`<div class="oc-row flex items-center gap-3 px-3 py-2 border-b border-clay-100 last:border-0" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}">
+            <div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">${productName(p)}</div><div class="text-xs text-clay-400">${p.sku} · costo ${fmt(p.costo)}</div></div>
+            <input type="number" min="0" value="${OCSEL.qty[p.id]||''}" placeholder="0" oninput="setOCQty('${p.id}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1.5 text-sm text-center">
+          </div>`).join('')}
+        </div>
+      </div>
+      <div><label class="text-sm font-medium">Notas para el proveedor</label><input id="oc_notas" value="${(OCSEL.notas||'').replace(/"/g,'&quot;')}" placeholder="Condiciones, dirección de entrega, etc." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="bg-clay-50 rounded-xl p-4 flex items-center justify-between">
+        <div class="text-sm text-clay-600"><span id="occount">${n}</span> producto(s) seleccionado(s)</div>
+        <div class="text-right"><div class="text-xs text-clay-400">Total estimado (con IVA)</div><div class="text-xl font-bold" id="octotal">${fmt(total)}</div></div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2.5 rounded-xl border border-clay-200 text-sm">Cancelar</button>
+      <button id="occonfirm" onclick="confirmarOCDesdeProductos()" ${n===0?'disabled':''} class="bg-clay-700 hover:bg-clay-800 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl">Crear OC y generar PDF</button>
+    </div>
+  `);
+}
+function confirmarOCDesdeProductos(){
+  syncOCSelector();
+  if(!OCSEL.prov){ alert('Ingresa el proveedor.'); return; }
+  const items=Object.entries(OCSEL.qty).filter(([pid,q])=>q>0).map(([pid,q])=>{const p=productById(pid);return {productId:pid, cantidad:q, costo:p?p.costo:0};});
+  if(!items.length){ alert('Selecciona al menos un producto con cantidad.'); return; }
+  EDITO={id:null, numero:'', fecha:OCSEL.fecha||todayISO(), fechaEntrega:OCSEL.entrega||'', proveedor:OCSEL.prov, items, notas:OCSEL.notas||'', estado:'enviado'};
+  saveOrder(true); // registra en Compras (mismo formato) y genera el PDF
+}
 
 /* ===================== COMPRAS ===================== */
 function renderCompras(){
@@ -3080,8 +3182,9 @@ function renderFacturas(){
     ${filterCard('pagado','Pagadas',fmt(sum(pagadas)),pagadas.length+' factura'+(pagadas.length!==1?'s':''),'text-sage-600')}
     ${filterCard('','Todas',inv.length,'ver todas','text-clay-800')}
   </div>
-  <div class="flex gap-2 mb-4">
-    <div class="card p-3 flex-1"><input id="fact_q" oninput="filterFacturas()" placeholder="🔍  Buscar N° o proveedor..." class="w-full border-0 focus:outline-none px-2 py-1.5 text-sm bg-transparent"></div>
+  <div class="flex gap-2 mb-4 flex-wrap">
+    <div class="card p-3 flex-1 min-w-[160px]"><input id="fact_q" oninput="filterFacturas()" placeholder="🔍  Buscar N° o proveedor..." class="w-full border-0 focus:outline-none px-2 py-1.5 text-sm bg-transparent"></div>
+    ${porPagar.length?`<button onclick="simularPago()" class="border border-clay-300 text-clay-700 hover:bg-clay-50 text-sm font-semibold px-4 py-2 rounded-2xl flex items-center gap-1.5 whitespace-nowrap">🧮 Simular pago</button>`:''}
     ${porPagar.length?`<button onclick="openPagoMultiple()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 rounded-2xl flex items-center gap-1.5 whitespace-nowrap">💵 Registrar pago</button>`:''}
   </div>
   ${inv.length===0
@@ -3353,6 +3456,54 @@ function deleteFactura(id){
 /* ---- Pago de varias facturas en una sola transferencia ---- */
 let PAGO=null; // {sel:{}, pdfPago}
 function openPagoMultiple(){ PAGO={sel:{}, pdfPago:null}; renderPagoMultiple(); }
+/* ----- Simular pago: preparar una transferencia que cubre varias facturas (sin marcarlas pagadas) ----- */
+let SIMPAGO=null;
+function simularPago(){ SIMPAGO={sel:{}}; renderSimularPago(); }
+function toggleSimSel(id,checked){ if(checked)SIMPAGO.sel[id]=true; else delete SIMPAGO.sel[id]; actualizarSimResumen(); }
+function simSelectedFacturas(){ return Object.keys(SIMPAGO.sel).map(id=>DB.invoices.find(f=>f.id===id)).filter(Boolean); }
+function copiarTexto(t){ t=String(t); const ok=()=>toastInfo('✓ Copiado'); if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(ok).catch(()=>fallbackCopy(t)); } else fallbackCopy(t); }
+function fallbackCopy(t){ const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); try{ document.execCommand('copy'); toastInfo('✓ Copiado'); }catch(e){ alert('Copia manualmente:\n'+t); } ta.remove(); }
+function copiarMontoSim(){ const fs=simSelectedFacturas(); const total=fs.reduce((a,f)=>a+(f.monto||0),0); copiarTexto(String(total)); }
+function copiarDetalleSim(){ const fs=simSelectedFacturas(); const total=fs.reduce((a,f)=>a+(f.monto||0),0); const txt=fs.map(f=>'Factura N° '+(f.numero||'')+' · '+(f.proveedor||'')+' · '+fmt(f.monto||0)).join('\n')+'\nTOTAL: '+fmt(total); copiarTexto(txt); }
+function actualizarSimResumen(){
+  const cont=document.getElementById('simResumen'); if(!cont) return;
+  const fs=simSelectedFacturas();
+  if(fs.length===0){ cont.innerHTML='<div class="text-sm text-clay-400 text-center py-4 border border-dashed border-clay-200 rounded-xl">Marca facturas para ver el total a transferir.</div>'; return; }
+  const total=fs.reduce((a,f)=>a+(f.monto||0),0);
+  cont.innerHTML=`
+    <div class="flex items-center justify-between gap-3 bg-clay-50 rounded-xl p-4 mb-3 flex-wrap">
+      <div><div class="text-xs text-clay-400">Total a transferir (${fs.length} factura${fs.length!==1?'s':''})</div><div class="text-2xl font-bold">${fmt(total)}</div></div>
+      <button onclick="copiarMontoSim()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl whitespace-nowrap">📋 Copiar monto</button>
+    </div>
+    <div class="border border-clay-100 rounded-xl divide-y divide-clay-100 overflow-hidden">
+      ${fs.map(f=>`<div class="flex items-center justify-between gap-2 px-3 py-2 text-sm"><div class="min-w-0"><div class="font-medium truncate">${f.proveedor||'—'}</div><div class="text-xs text-clay-400">N° ${f.numero||'—'} · ${fmt(f.monto||0)}</div></div><button onclick="copiarTexto('${(f.numero||'').toString().replace(/'/g,'')}')" class="text-xs font-medium text-clay-700 border border-clay-200 hover:bg-clay-50 px-2.5 py-1 rounded-lg whitespace-nowrap">Copiar N°</button></div>`).join('')}
+    </div>
+    <button onclick="copiarDetalleSim()" class="w-full mt-3 border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl">📄 Copiar detalle completo (N° + montos + total)</button>`;
+}
+function renderSimularPago(){
+  const pend=DB.invoices.filter(f=>f.estado!=='pagado').sort((a,b)=>(a.vencimiento||'9999-99-99').localeCompare(b.vencimiento||'9999-99-99'));
+  const row=f=>{const checked=!!SIMPAGO.sel[f.id];return `<label class="flex items-center gap-3 px-3 py-2.5 border-b border-clay-100 last:border-0 cursor-pointer hover:bg-clay-50">
+      <input type="checkbox" ${checked?'checked':''} onchange="toggleSimSel('${f.id}',this.checked)" class="w-4 h-4 accent-clay-700">
+      <div class="flex-1 min-w-0"><div class="text-sm font-medium truncate">${f.proveedor||'—'} <span class="text-clay-400 font-normal">· N° ${f.numero||'—'}</span></div><div class="text-xs text-clay-400">Vence ${f.vencimiento||'—'} ${diasVencBadge(f)}</div></div>
+      <div class="text-sm font-semibold whitespace-nowrap">${fmt(f.monto||0)}</div>
+    </label>`;};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Simular pago</h3><div class="text-xs text-clay-400">Prepara una transferencia que cubre varias facturas</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      ${pend.length===0?`<div class="text-center text-clay-400 py-6 text-sm">No hay facturas por pagar.</div>`:`
+      <div class="text-xs text-clay-500">Marca las facturas que pagarás en una sola transferencia. <b>No se marcan como pagadas</b>; solo te ayuda a juntar el monto y copiar los datos para el banco.</div>
+      <div class="border border-clay-200 rounded-xl overflow-hidden max-h-64 overflow-y-auto">${pend.map(row).join('')}</div>
+      <div id="simResumen"></div>`}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2.5 rounded-xl border border-clay-200 text-sm">Cerrar</button>
+    </div>
+  `);
+  actualizarSimResumen();
+}
 function renderPagoMultiple(){
   const pend=DB.invoices.filter(f=>f.estado!=='pagado').sort((a,b)=>(a.vencimiento||'9999-99-99').localeCompare(b.vencimiento||'9999-99-99'));
   const m=PAGO.pdfPago;
