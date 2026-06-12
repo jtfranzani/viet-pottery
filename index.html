@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.11-12';
+const APP_VERSION = '2026.06.12-1';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -647,10 +647,10 @@ function headerAction(view){
 
 /* ---------- Componentes UI ---------- */
 function statCard(label,value,sub,color){
-  return `<div class="card p-5">
-    <div class="text-sm text-clay-500">${label}</div>
-    <div class="text-2xl font-bold mt-1 ${color||''}">${value}</div>
-    ${sub?`<div class="text-xs text-clay-400 mt-1">${sub}</div>`:''}
+  return `<div class="card p-3 sm:p-5">
+    <div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${label}</div>
+    <div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${value}</div>
+    ${sub?`<div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div>`:''}
   </div>`;
 }
 function pill(text,kind){
@@ -719,12 +719,63 @@ function renderDashboard(){
   if(esAdmin) cards.push(`<button onclick="go('facturas')" class="block text-left w-full">${statCard('Facturas por pagar',fmt(facPorPagarMonto),facPorPagar.length+' factura'+(facPorPagar.length!==1?'s':'')+' · ver →','text-amber-600')}</button>`);
   cards.push(`<button onclick="go('tareas')" class="block text-left w-full">${statCard('Tareas pendientes',tareasPend.length,tareasPend.length?'por hacer · ver →':'todo al día 👍','text-blue-600')}</button>`);
 
+  // ===== Banner de pendientes (cosas que requieren atención) =====
+  const _hoy=todayISO();
+  const facVencidas=facPorPagar.filter(f=>f.vencimiento && f.vencimiento<_hoy);
+  const facHoy=facPorPagar.filter(f=>f.vencimiento===_hoy);
+  const facPronto=facPorPagar.filter(f=>{if(!f.vencimiento||f.vencimiento<=_hoy)return false;const d=Math.round((new Date(f.vencimiento)-new Date(_hoy))/86400000);return d<=5;});
+  const entHoy=despPend.filter(s=>s.fechaEntrega===_hoy);
+  const entAtras=despPend.filter(s=>s.fechaEntrega && s.fechaEntrega<_hoy);
+  const tarHoy=tareasPend.filter(t=>t.fecha===_hoy);
+  const tarAtras=tareasPend.filter(t=>t.fecha && t.fecha<_hoy);
+  const alerts=[];
+  if(esAdmin && (facVencidas.length||facHoy.length)){
+    const n=facVencidas.length+facHoy.length;
+    const monto=[...facVencidas,...facHoy].reduce((a,f)=>a+(f.monto||0),0);
+    alerts.push({icon:'💳',tone:'red',titulo:`${n} factura${n>1?'s':''} por pagar ${facVencidas.length?'vencida'+(facVencidas.length>1?'s':''):'vencen hoy'}`,sub:`Total ${fmt(monto)}. Paga para no acumular atrasos.`,btn:'Ver facturas',fn:`go('facturas')`});
+  }
+  if(esAdmin && facPronto.length){
+    alerts.push({icon:'📅',tone:'amber',titulo:`${facPronto.length} factura${facPronto.length>1?'s':''} por vencer pronto`,sub:`Vence${facPronto.length>1?'n':''} en los próximos días · ${fmt(facPronto.reduce((a,f)=>a+(f.monto||0),0))}`,btn:'Ver facturas',fn:`go('facturas')`});
+  }
+  if(entAtras.length){
+    alerts.push({icon:'🚚',tone:'red',titulo:`${entAtras.length} entrega${entAtras.length>1?'s':''} atrasada${entAtras.length>1?'s':''}`,sub:`Tienen fecha anterior a hoy y siguen sin entregar.`,btn:'Ver despachos',fn:`go('despachos')`});
+  }
+  if(entHoy.length){
+    alerts.push({icon:'📦',tone:'amber',titulo:`${entHoy.length} entrega${entHoy.length>1?'s':''} para hoy`,sub:`Programadas para repartir hoy.`,btn:'Ver despachos',fn:`go('despachos')`});
+  }
+  if(tarAtras.length){
+    alerts.push({icon:'📋',tone:'red',titulo:`${tarAtras.length} tarea${tarAtras.length>1?'s':''} atrasada${tarAtras.length>1?'s':''}`,sub:`Quedaron con fecha pasada sin completar.`,btn:'Ver tareas',fn:`go('tareas')`});
+  }
+  if(tarHoy.length){
+    alerts.push({icon:'📌',tone:'violet',titulo:`${tarHoy.length} tarea${tarHoy.length>1?'s':''} para hoy`,sub:`Programadas para hoy.`,btn:'Ver tareas',fn:`go('tareas')`});
+  }
+  const toneCls={red:{bd:'#fca5a5',bg:'#fef2f2',tx:'text-red-800',sub:'text-red-600',bt:'bg-red-600 hover:bg-red-700'},amber:{bd:'#fcd34d',bg:'#fffbeb',tx:'text-amber-800',sub:'text-amber-600',bt:'bg-amber-500 hover:bg-amber-600'},violet:{bd:'#c4b5fd',bg:'#f5f3ff',tx:'text-violet-800',sub:'text-violet-600',bt:'bg-violet-600 hover:bg-violet-700'}};
+  let alertBanner='';
+  if(alerts.length){
+    const totalP=alerts.length;
+    alertBanner=`<div class="card overflow-hidden mb-4 sm:mb-6 border-0 ring-1 ring-clay-200">
+      <div class="flex items-center gap-2 px-4 sm:px-5 py-3 bg-clay-800 text-white">
+        <span class="text-lg">🔔</span>
+        <div class="font-semibold text-sm sm:text-base">Pendientes que requieren atención</div>
+        <span class="ml-auto text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full">${totalP}</span>
+      </div>
+      <div class="divide-y divide-clay-100">
+        ${alerts.map(a=>{const c=toneCls[a.tone];return `<div class="flex items-center gap-3 px-4 sm:px-5 py-3" style="background:${c.bg}">
+          <span class="text-xl shrink-0">${a.icon}</span>
+          <div class="flex-1 min-w-0"><div class="font-semibold text-sm leading-tight ${c.tx}">${a.titulo}</div><div class="text-[11px] sm:text-xs ${c.sub} leading-tight mt-0.5">${a.sub}</div></div>
+          <button onclick="${a.fn}" class="shrink-0 text-white text-xs font-semibold px-3 py-2 rounded-lg ${c.bt}"><span class="hidden sm:inline">${a.btn}</span><span class="sm:hidden">Ver</span></button>
+        </div>`;}).join('')}
+      </div>
+    </div>`;
+  }
+
   const v=document.getElementById('view');
   v.innerHTML = `
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  ${alertBanner}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4 sm:mb-6">
     ${cards.join('')}
   </div>
-  <div class="text-xs text-clay-400 -mt-3 mb-6 px-1">Nota: "Ventas del mes" incluye el envío. "Por cobrar" es la parte de tus ventas aún no pagada (de cualquier fecha), no se suma a las ventas.</div>
+  <div class="text-[11px] sm:text-xs text-clay-400 -mt-2 sm:-mt-3 mb-5 sm:mb-6 px-1">Nota: "Ventas del mes" incluye el envío. "Por cobrar" es la parte de tus ventas aún no pagada (de cualquier fecha), no se suma a las ventas.</div>
   ${metaCardDash}
   ${docsPend.length?`<button onclick="goVentasPendientes()" class="w-full text-left card p-4 mb-6 flex items-center gap-3 hover:border-amber-300 transition" style="border-color:#fcd34d;background:#fffbeb">
     <span class="text-xl">📌</span>
@@ -2341,6 +2392,41 @@ function renderCalendario(){
   const trail=(7-((lead+dim)%7))%7;
   for(let i=0;i<trail;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
 
+  // ===== Vista agenda para móvil (más limpia que la grilla en pantallas chicas) =====
+  const dayCards=[];
+  for(let d=1; d<=dim; d++){
+    const list=byDay[d]||[]; const tlist=byDayTask[d]||[];
+    if(!list.length && !tlist.length) continue;
+    const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const wd=dow[(new Date(y,m,d).getDay()+6)%7];
+    const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
+    const cam=list.filter(s=>s.estadoDespacho==='en_camino').length;
+    const ent=list.filter(s=>s.estadoDespacho==='entregado').length;
+    const dot=(n,cl)=>n?`<span class="inline-flex items-center gap-1 text-[10px] text-clay-500"><span class="w-2 h-2 rounded-full ${cl} inline-block"></span>${n}</span>`:'';
+    dayCards.push(`<div class="card p-3 ${isToday(d)?'ring-1 ring-clay-400':''}">
+      <div class="flex items-center gap-3 mb-2">
+        <div class="flex flex-col items-center justify-center w-12 h-12 rounded-xl ${isToday(d)?'bg-clay-700 text-white':'bg-clay-100 text-clay-700'} shrink-0">
+          <span class="text-[10px] font-semibold leading-none uppercase">${wd}</span>
+          <span class="text-xl font-bold leading-none mt-0.5">${d}</span>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap gap-1.5">
+            ${list.length?`<button onclick="openDiaEntregas('${dstr}')" class="text-[11px] font-bold bg-clay-700 text-white px-2.5 py-1 rounded-full">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
+            ${tlist.length?`<button onclick="openDiaTareas('${dstr}')" class="text-[11px] font-bold bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full">📋 ${tlist.length} ${tlist.length===1?'tarea':'tareas'}</button>`:''}
+          </div>
+          ${list.length?`<div class="flex items-center gap-2.5 mt-1.5">${dot(pend,'bg-amber-300')}${dot(cam,'bg-blue-300')}${dot(ent,'bg-sage-300')}</div>`:''}
+        </div>
+      </div>
+      <div class="space-y-1">
+        ${list.slice(0,3).map(calChip).join('')}
+        ${list.length>3?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${list.length-3} entrega${list.length-3!==1?'s':''} más →</button>`:''}
+        ${tlist.slice(0,2).map(taskChip).join('')}
+        ${tlist.length>2?`<button onclick="openDiaTareas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-violet-600 hover:text-violet-800 px-1.5 py-1 rounded hover:bg-violet-50">+${tlist.length-2} tarea${tlist.length-2!==1?'s':''} más →</button>`:''}
+      </div>
+    </div>`);
+  }
+  const mobileAgenda=dayCards.length?dayCards.join(''):'<div class="card p-8 text-center text-clay-400 text-sm">No hay entregas ni tareas programadas este mes.</div>';
+
   const v=document.getElementById('view');
   v.innerHTML=`
   <div class="card p-4 mb-4 flex flex-wrap items-center gap-2">
@@ -2352,24 +2438,25 @@ function renderCalendario(){
   <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
     <div class="flex items-center gap-2">
       <button onclick="calNav(-1)" class="w-9 h-9 rounded-lg border border-clay-200 hover:bg-clay-100">←</button>
-      <div class="text-lg font-bold w-48 text-center">${monthNames[m]} ${y}</div>
+      <div class="text-base sm:text-lg font-bold w-32 sm:w-48 text-center">${monthNames[m]} ${y}</div>
       <button onclick="calNav(1)" class="w-9 h-9 rounded-lg border border-clay-200 hover:bg-clay-100">→</button>
       <button onclick="calToday()" class="px-3 h-9 rounded-lg border border-clay-200 hover:bg-clay-100 text-sm">Hoy</button>
-      <span class="text-sm text-clay-500 ml-1">${entregasMes} entrega${entregasMes!==1?'s':''} este mes</span>
+      <span class="text-sm text-clay-500 ml-1 hidden sm:inline">${entregasMes} entrega${entregasMes!==1?'s':''} este mes</span>
     </div>
-    <div class="flex items-center gap-3 text-xs text-clay-500">
+    <div class="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-clay-500 flex-wrap">
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-200 inline-block"></span>Pendiente</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-200 inline-block"></span>En camino</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-sage-200 inline-block"></span>Entregado</span>
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-violet-200 inline-block"></span>📋 Tarea</span>
     </div>
   </div>
-  <div class="card p-3 overflow-x-auto">
+  <div class="hidden sm:block card p-3 overflow-x-auto">
     <div class="min-w-[760px]">
       <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(d=>`<div class="text-xs font-semibold text-clay-500 text-center py-1">${d}</div>`).join('')}</div>
       <div class="grid grid-cols-7 gap-1.5">${cells}</div>
     </div>
   </div>
+  <div class="sm:hidden space-y-2.5">${mobileAgenda}</div>
   ${sinFecha.length?`<div class="card p-4 mt-4">
     <div class="font-semibold mb-2 flex items-center gap-2">⚠️ Pedidos sin fecha de entrega ${pill(sinFecha.length,'amber')}</div>
     <div class="divide-y divide-clay-100">${sinFecha.map(s=>{const c=clientById(s.clienteId);return `<div class="flex items-center justify-between text-sm py-2 gap-2"><div class="min-w-0"><span class="font-medium">${c?c.nombre:(s.clienteNombre||'—')}</span> <span class="text-clay-400">· ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</span></div>${SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="shrink-0 text-clay-600 hover:text-clay-900 text-xs font-medium">Asignar fecha →</button>`:''}</div>`;}).join('')}</div>
