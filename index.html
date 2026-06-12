@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-4';
+const APP_VERSION = '2026.06.12-6';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1470,7 +1470,7 @@ function renderVentas(){
           <td class="px-4 py-3">${dispPill(s)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
+            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2.5 py-1.5 rounded-lg" title="Link de pago">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
           </td></tr>`;}).join('')}
         </tbody>
       </table>
@@ -1489,7 +1489,7 @@ function renderVentas(){
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(' · ')}</div>
         <div class="flex flex-wrap gap-1.5 mt-2.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="flex gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2 py-2 rounded-lg text-center">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
     <div class="px-4 py-3 border-t border-clay-100 flex items-center justify-between gap-3 flex-wrap">
@@ -1788,43 +1788,39 @@ function openEmitirLink(id){
   const cfg=pagoConfig();
   const tiene=!!s.linkPago;
   modal(`
-    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10"><div><h3 class="text-lg font-bold">💳 Link de pago Getnet</h3><div class="text-xs text-clay-400">${nombre} · ${fmt(total)}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10"><div><h3 class="text-lg font-bold">💳 Link de pago</h3><div class="text-xs text-clay-400">${nombre} · ${fmt(total)}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
     <div class="p-5 space-y-4">
       <div class="bg-clay-50 rounded-xl p-4 text-center">
         <div class="text-xs text-clay-500">Monto a cobrar</div>
         <div class="text-3xl font-extrabold text-clay-800 mt-0.5">${fmt(total)}</div>
+        <button onclick="copiarMontoLink(${total})" class="text-xs text-clay-500 hover:text-clay-800 mt-1 underline">Copiar monto</button>
         ${s.pagado?'<div class="text-xs text-sage-600 font-medium mt-1">Este pedido ya está marcado como pagado</div>':''}
       </div>
       ${tiene?`<div class="border border-sage-200 bg-sage-50 rounded-xl p-3.5">
-        <div class="text-xs text-sage-700 font-semibold mb-1.5">✓ Link generado${s.linkPagoAt?' · '+new Date(s.linkPagoAt).toLocaleDateString('es-CL'):''}</div>
-        <div class="text-xs text-clay-600 break-all bg-white rounded-lg p-2 border border-sage-100">${s.linkPago}</div>
+        <div class="text-xs text-sage-700 font-semibold mb-1.5">✓ Link guardado en este pedido</div>
+        <a href="${s.linkPago}" target="_blank" rel="noopener" class="block text-xs text-blue-700 underline break-all bg-white rounded-lg p-2 border border-sage-100">${s.linkPago}</a>
         <div class="grid grid-cols-2 gap-2 mt-3">
           <button onclick="copiarLinkPago('${id}')" class="text-sm font-medium border border-clay-200 bg-white hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar link</button>
           <button onclick="enviarLinkWhatsApp('${id}')" class="text-sm font-medium text-white px-3 py-2 rounded-xl" style="background:#25D366">📲 Enviar WhatsApp</button>
         </div>
       </div>`:''}
-      <div>
-        <button id="lk_genbtn" onclick="generarLinkPago('${id}')" class="w-full bg-clay-700 hover:bg-clay-800 text-white font-semibold px-4 py-3 rounded-xl">${tiene?'🔄 Generar un nuevo link':'⚡ Generar link automático'}</button>
-        <div class="text-[11px] text-clay-400 mt-1.5 text-center">Se crea el link en Getnet y queda guardado en el pedido.</div>
+      <div class="border border-clay-200 rounded-xl p-4 space-y-3">
+        <div class="text-sm font-semibold text-clay-700">${tiene?'Cambiar el link':'Crear y pegar el link'}</div>
+        <ol class="text-xs text-clay-500 space-y-1 list-decimal list-inside">
+          <li>Abre el panel de Getnet y crea el link con el monto de arriba.</li>
+          <li>Copia el link que te genera Getnet.</li>
+          <li>Pégalo aquí abajo y guarda. Queda listo para enviar por WhatsApp.</li>
+        </ol>
+        <a href="https://micrositios.getnet.cl/login" target="_blank" rel="noopener" class="block text-center bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 py-2.5 rounded-xl">Abrir panel de Getnet ↗</a>
+        <div class="flex gap-2">
+          <input id="lk_manual" value="${tiene?s.linkPago.replace(/"/g,'&quot;'):''}" placeholder="Pega aquí el link de Getnet" class="flex-1 border border-clay-200 rounded-xl px-3 py-2 text-sm">
+          <button onclick="guardarLinkManual('${id}')" class="text-sm font-medium bg-clay-100 hover:bg-clay-200 text-clay-700 px-3 py-2 rounded-xl whitespace-nowrap">Guardar</button>
+        </div>
       </div>
-      <details class="text-sm" ${cfg.getnetWorkerUrl?'':'open'}>
-        <summary class="cursor-pointer text-clay-600 font-medium">⚙️ Configuración (una sola vez)</summary>
-        <div class="mt-3 space-y-2">
-          <div><label class="text-xs text-clay-500">URL de tu Worker de Getnet</label><input id="lk_worker" value="${(cfg.getnetWorkerUrl||'').replace(/"/g,'&quot;')}" placeholder="https://getnet-link.tucuenta.workers.dev" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 text-sm"></div>
-          <div><label class="text-xs text-clay-500">URL de retorno (a dónde vuelve el cliente tras pagar)</label><input id="lk_return" value="${(cfg.getnetReturnUrl||'').replace(/"/g,'&quot;')}" placeholder="${location.origin}${location.pathname}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 text-sm"></div>
-          <button onclick="guardarPagoConfig()" class="text-sm font-medium border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">Guardar configuración</button>
-        </div>
-      </details>
-      <details class="text-sm">
-        <summary class="cursor-pointer text-clay-500">¿No tienes el Worker aún? Pega un link manual</summary>
-        <div class="mt-2 flex gap-2">
-          <input id="lk_manual" placeholder="Pega aquí un link de Getnet" class="flex-1 border border-clay-200 rounded-xl px-3 py-2 text-sm">
-          <button onclick="guardarLinkManual('${id}')" class="text-sm font-medium border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl whitespace-nowrap">Guardar</button>
-        </div>
-      </details>
     </div>
   `);
 }
+function copiarMontoLink(total){ navigator.clipboard.writeText(String(total)).then(()=>toastInfo('Monto copiado 📋')).catch(()=>{}); }
 function guardarPagoConfig(){
   const cfg=pagoConfig();
   cfg.getnetWorkerUrl=(document.getElementById('lk_worker')?.value||'').trim();
