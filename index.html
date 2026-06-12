@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-1';
+const APP_VERSION = '2026.06.12-2';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2376,13 +2376,12 @@ function renderCalendario(){
     const extra=list.length-4;
     const tExtra=tlist.length-2;
     cells+=`<div class="bg-white border ${isToday(d)?'border-clay-500 ring-1 ring-clay-300':'border-clay-100'} rounded-lg p-1.5 min-h-[96px]">
-      <div class="flex items-center justify-between mb-1.5 gap-1">
+      <div class="flex items-center justify-between gap-1">
         <span class="text-xs font-bold ${isToday(d)?'text-clay-700':'text-clay-500'}">${d}</span>
-        <div class="flex items-center gap-1">
-          ${tlist.length>0?`<button onclick="openDiaTareas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-violet-100 hover:bg-violet-200 text-violet-700 px-2 py-0.5 rounded-full" title="Ver tareas del día">📋 ${tlist.length} ${tlist.length===1?'tarea':'tareas'}</button>`:''}
-          ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
-        </div>
+        ${list.length>0?`<button onclick="openDiaEntregas('${dstr}')" class="inline-flex items-center gap-1 text-[10px] font-bold bg-clay-700 hover:bg-clay-800 text-white px-2 py-0.5 rounded-full" title="Ver resumen del día">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
       </div>
+      ${tlist.length>0?`<button onclick="openDiaTareas('${dstr}')" class="flex items-center justify-center gap-1 w-full text-[10px] font-bold bg-violet-100 hover:bg-violet-200 text-violet-700 px-2 py-0.5 rounded-full mt-1" title="Ver tareas del día">📋 ${tlist.length} ${tlist.length===1?'tarea':'tareas'}</button>`:''}
+      <div class="mt-1.5"></div>
       ${list.slice(0,4).map(calChip).join('')}
       ${extra>0?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${extra} más</button>`:''}
       ${tlist.slice(0,2).map(taskChip).join('')}
@@ -2391,41 +2390,6 @@ function renderCalendario(){
   }
   const trail=(7-((lead+dim)%7))%7;
   for(let i=0;i<trail;i++) cells+='<div class="bg-clay-50/40 rounded-lg"></div>';
-
-  // ===== Vista agenda para móvil (más limpia que la grilla en pantallas chicas) =====
-  const dayCards=[];
-  for(let d=1; d<=dim; d++){
-    const list=byDay[d]||[]; const tlist=byDayTask[d]||[];
-    if(!list.length && !tlist.length) continue;
-    const dstr=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
-    const wd=dow[(new Date(y,m,d).getDay()+6)%7];
-    const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
-    const cam=list.filter(s=>s.estadoDespacho==='en_camino').length;
-    const ent=list.filter(s=>s.estadoDespacho==='entregado').length;
-    const dot=(n,cl)=>n?`<span class="inline-flex items-center gap-1 text-[10px] text-clay-500"><span class="w-2 h-2 rounded-full ${cl} inline-block"></span>${n}</span>`:'';
-    dayCards.push(`<div class="card p-3 ${isToday(d)?'ring-1 ring-clay-400':''}">
-      <div class="flex items-center gap-3 mb-2">
-        <div class="flex flex-col items-center justify-center w-12 h-12 rounded-xl ${isToday(d)?'bg-clay-700 text-white':'bg-clay-100 text-clay-700'} shrink-0">
-          <span class="text-[10px] font-semibold leading-none uppercase">${wd}</span>
-          <span class="text-xl font-bold leading-none mt-0.5">${d}</span>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-wrap gap-1.5">
-            ${list.length?`<button onclick="openDiaEntregas('${dstr}')" class="text-[11px] font-bold bg-clay-700 text-white px-2.5 py-1 rounded-full">${list.length} ${list.length===1?'entrega':'entregas'}</button>`:''}
-            ${tlist.length?`<button onclick="openDiaTareas('${dstr}')" class="text-[11px] font-bold bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full">📋 ${tlist.length} ${tlist.length===1?'tarea':'tareas'}</button>`:''}
-          </div>
-          ${list.length?`<div class="flex items-center gap-2.5 mt-1.5">${dot(pend,'bg-amber-300')}${dot(cam,'bg-blue-300')}${dot(ent,'bg-sage-300')}</div>`:''}
-        </div>
-      </div>
-      <div class="space-y-1">
-        ${list.slice(0,3).map(calChip).join('')}
-        ${list.length>3?`<button onclick="openDiaEntregas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-clay-600 hover:text-clay-900 px-1.5 py-1 rounded hover:bg-clay-100">+${list.length-3} entrega${list.length-3!==1?'s':''} más →</button>`:''}
-        ${tlist.slice(0,2).map(taskChip).join('')}
-        ${tlist.length>2?`<button onclick="openDiaTareas('${dstr}')" class="block w-full text-left text-[11px] font-semibold text-violet-600 hover:text-violet-800 px-1.5 py-1 rounded hover:bg-violet-50">+${tlist.length-2} tarea${tlist.length-2!==1?'s':''} más →</button>`:''}
-      </div>
-    </div>`);
-  }
-  const mobileAgenda=dayCards.length?dayCards.join(''):'<div class="card p-8 text-center text-clay-400 text-sm">No hay entregas ni tareas programadas este mes.</div>';
 
   const v=document.getElementById('view');
   v.innerHTML=`
@@ -2450,13 +2414,12 @@ function renderCalendario(){
       <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-violet-200 inline-block"></span>📋 Tarea</span>
     </div>
   </div>
-  <div class="hidden sm:block card p-3 overflow-x-auto">
-    <div class="min-w-[760px]">
-      <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(d=>`<div class="text-xs font-semibold text-clay-500 text-center py-1">${d}</div>`).join('')}</div>
-      <div class="grid grid-cols-7 gap-1.5">${cells}</div>
+  <div class="card p-2 sm:p-3 overflow-x-auto">
+    <div class="min-w-[720px] sm:min-w-[760px]">
+      <div class="grid grid-cols-7 gap-1 sm:gap-1.5 mb-1 sm:mb-1.5">${dow.map(d=>`<div class="text-xs font-semibold text-clay-500 text-center py-1">${d}</div>`).join('')}</div>
+      <div class="grid grid-cols-7 gap-1 sm:gap-1.5">${cells}</div>
     </div>
   </div>
-  <div class="sm:hidden space-y-2.5">${mobileAgenda}</div>
   ${sinFecha.length?`<div class="card p-4 mt-4">
     <div class="font-semibold mb-2 flex items-center gap-2">⚠️ Pedidos sin fecha de entrega ${pill(sinFecha.length,'amber')}</div>
     <div class="divide-y divide-clay-100">${sinFecha.map(s=>{const c=clientById(s.clienteId);return `<div class="flex items-center justify-between text-sm py-2 gap-2"><div class="min-w-0"><span class="font-medium">${c?c.nombre:(s.clienteNombre||'—')}</span> <span class="text-clay-400">· ${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</span></div>${SESSION.rol!=='bodega'?`<button onclick="openSale('${s.id}')" class="shrink-0 text-clay-600 hover:text-clay-900 text-xs font-medium">Asignar fecha →</button>`:''}</div>`;}).join('')}</div>
