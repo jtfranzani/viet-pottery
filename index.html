@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-2';
+const APP_VERSION = '2026.06.12-3';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2129,14 +2129,22 @@ function renderDespachos(){
   </div>
   <div class="grid lg:grid-cols-3 gap-4">
     ${cols.map(([key,title,color])=>{
+      const hoy=todayISO();
       const list=sales.filter(s=>s.estadoDespacho===key);
-      if(key==='entregado') list.sort((a,b)=>recencyEntregado(b)-recencyEntregado(a));
+      if(key==='entregado'){ list.sort((a,b)=>recencyEntregado(b)-recencyEntregado(a)); }
+      else { list.sort((a,b)=>{const fa=a.fechaEntrega||'9999-12-31',fb=b.fechaEntrega||'9999-12-31';return fa.localeCompare(fb)|| (a.fecha||'').localeCompare(b.fecha||'');}); }
+      const atrasadosN = key!=='entregado' ? list.filter(s=>s.fechaEntrega && s.fechaEntrega<hoy).length : 0;
       const LIMIT=5; const expanded=DESP_SHOW[key]; const shown=expanded?list:list.slice(0,LIMIT);
       return `<div class="card p-4 ${DESP_COL===key?'':'hidden'} lg:block">
-        <div class="flex items-center justify-between mb-3"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}</div></div>
+        <div class="flex items-center justify-between mb-3 gap-2 flex-wrap"><div class="font-semibold flex items-center gap-2">${title} ${pill(list.length,color)}${atrasadosN>0?`<span class="badge bg-red-100 text-red-700">⚠️ ${atrasadosN} atrasad${atrasadosN!==1?'os':'o'}</span>`:''}</div></div>
         <div class="space-y-2">
-        ${list.length?shown.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);return `<div class="border border-clay-100 rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
-          <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400 whitespace-nowrap">${s.fecha}</div></div>
+        ${list.length?shown.map(s=>{const c=clientById(s.clienteId);const tp=tipoDespachoOf(s);
+          const atrasado = key!=='entregado' && s.fechaEntrega && s.fechaEntrega<hoy;
+          const esHoy = key!=='entregado' && s.fechaEntrega===hoy;
+          const diasAtr = atrasado? Math.round((new Date(hoy)-new Date(s.fechaEntrega))/86400000) : 0;
+          return `<div class="border ${atrasado?'border-red-300 ring-1 ring-red-200 bg-red-50/40':'border-clay-100'} rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
+          ${atrasado?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-red-700 bg-red-100 rounded-lg px-2 py-1 mb-2">⚠️ Atrasado ${diasAtr} día${diasAtr!==1?'s':''} · debía entregarse el ${s.fechaEntrega}</div>`:esHoy?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-lg px-2 py-1 mb-2">📦 Entrega programada para hoy</div>`:''}
+          <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs ${atrasado?'text-red-600 font-semibold':'text-clay-400'} whitespace-nowrap text-right">${s.fechaEntrega?'📅 '+s.fechaEntrega:s.fecha}</div></div>
           <div class="mt-1 flex flex-wrap gap-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}${autoBadge(s.auto)}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
