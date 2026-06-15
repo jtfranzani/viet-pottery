@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-6';
+const APP_VERSION = '2026.06.12-8';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -226,26 +226,41 @@ function toastInfo(msg){
 }
 // Guarda/comparte un PDF de jsPDF. En celular usa el menú nativo "Compartir" (evita el bug del enlace blob: en iOS).
 async function savePdfDoc(doc, filename){
-  if(isMobileDevice()){
-    // Celular: menú nativo de compartir / descargar (lo más confiable en móvil)
-    try{
-      const blob = doc.output('blob');
-      const file = new File([blob], filename, {type:'application/pdf'});
-      if(navigator.canShare && navigator.canShare({files:[file]})){
-        await navigator.share({files:[file], title:filename});
-        return;
-      }
-    }catch(e){ if(e && e.name==='AbortError') return; /* si falla, baja por descarga normal */ }
-    try{ doc.save(filename); }
-    catch(e){ try{ window.open(doc.output('bloburl'),'_blank'); }catch(_){ alert('No se pudo generar el PDF en este dispositivo.'); } }
-    return;
-  }
-  // Computador: abrir en una pestaña nueva para verlo online (desde el visor se puede descargar o imprimir)
+  // Vista previa dentro de la app: se ve el PDF sin descargarlo, con botones para abrir, descargar o compartir.
+  let blob;
+  try{ blob = doc.output('blob'); }
+  catch(e){ try{ doc.save(filename); }catch(_){ alert('No se pudo generar el PDF.'); } return; }
+  if(window.__pdfUrl){ try{ URL.revokeObjectURL(window.__pdfUrl); }catch(_){} }
+  window.__pdfBlob = blob;
+  window.__pdfUrl = URL.createObjectURL(blob);
+  window.__pdfName = filename || 'documento.pdf';
+  openPdfPreview();
+}
+function openPdfPreview(){
+  const url=window.__pdfUrl, name=window.__pdfName||'documento.pdf';
+  const mobile=isMobileDevice();
+  modal(`
+    <div class="p-4 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-base font-bold truncate">📄 ${name}</h3><div class="text-xs text-clay-400">Vista previa</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="bg-clay-100">
+      <iframe src="${url}" class="w-full" style="height:62vh;border:0;background:#fff" title="Vista previa del PDF"></iframe>
+      ${mobile?`<div class="text-[11px] text-clay-500 text-center px-4 py-2">Si la vista se ve en blanco en tu celular, toca "Abrir pantalla completa".</div>`:''}
+    </div>
+    <div class="p-4 border-t border-clay-100 flex flex-wrap gap-2 sticky bottom-0 bg-white">
+      <button onclick="window.open(window.__pdfUrl,'_blank')" class="flex-1 text-sm font-medium border border-clay-200 hover:bg-clay-50 px-3 py-2.5 rounded-xl">🔍 Abrir pantalla completa</button>
+      ${mobile?`<button onclick="compartirPdf()" class="flex-1 text-sm font-medium bg-clay-700 hover:bg-clay-800 text-white px-3 py-2.5 rounded-xl">📲 Compartir / Descargar</button>`:`<button onclick="descargarPdf()" class="flex-1 text-sm font-medium bg-clay-700 hover:bg-clay-800 text-white px-3 py-2.5 rounded-xl">⬇️ Descargar</button>`}
+    </div>
+  `);
+}
+function descargarPdf(){ const a=document.createElement('a'); a.href=window.__pdfUrl; a.download=window.__pdfName||'documento.pdf'; document.body.appendChild(a); a.click(); a.remove(); }
+async function compartirPdf(){
   try{
-    const url=doc.output('bloburl');
-    const w=window.open(url,'_blank');
-    if(!w){ doc.save(filename); } // si el navegador bloquea la pestaña, se descarga
-  }catch(e){ try{ doc.save(filename); }catch(_){ alert('No se pudo generar el PDF.'); } }
+    const file=new File([window.__pdfBlob], window.__pdfName||'documento.pdf', {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file]}); return; }
+  }catch(e){ if(e && e.name==='AbortError') return; }
+  descargarPdf();
 }
 // Guarda/comparte una imagen (canvas). En celular usa el menú nativo "Compartir".
 async function saveCanvasImage(canvas, filename){
@@ -1577,7 +1592,7 @@ function renderSaleModal(){
           <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
-          <div><label class="text-xs text-clay-500">Courier</label><input id="s_courier" value="${s.courier}" placeholder="Starken, Pullman..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div><label class="text-xs text-clay-500">Courier</label><select id="s_courier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="" ${!s.courier?'selected':''}>Sin asignar</option><option value="Viet" ${s.courier==='Viet'?'selected':''}>Viet</option><option value="Fran" ${s.courier==='Fran'?'selected':''}>Fran</option><option value="Externo" ${s.courier==='Externo'?'selected':''}>Externo</option>${s.courier&&!['Viet','Fran','Externo'].includes(s.courier)?`<option value="${s.courier.replace(/"/g,'&quot;')}" selected>${s.courier}</option>`:''}</select></div>
           <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
         </div>
