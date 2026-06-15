@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-23';
+const APP_VERSION = '2026.06.12-24';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -4083,6 +4083,8 @@ function setOfertasView(view){ OFERTAS.view=view; renderOfertas(); }
 function toggleOfertaSel(pid){ if(OFERTAS.selected[pid]) delete OFERTAS.selected[pid]; else OFERTAS.selected[pid]=true; renderOfertas(); }
 function limpiarSeleccionOfertas(){ OFERTAS.selected={}; renderOfertas(); }
 /* ----- Campañas: una campaña guarda un set de productos en oferta y proyecta sus ventas ----- */
+let CAMP_TAB='sim';
+function abrirCampana(id){ CAMP_TAB='sim'; openCampana(id); }
 function campProj(c){
   let unidades=0, ventas=0, costo=0, ventasNormal=0;
   (c.items||[]).forEach(it=>{ const q=Math.max(0,+it.cantProyectada||0); unidades+=q; ventas+=(it.precioOferta||0)*q; costo+=(it.costo||0)*q; ventasNormal+=(it.precio||0)*q; });
@@ -4100,7 +4102,7 @@ function guardarCampanaDesdeSeleccion(){
   DB.campaigns.push(c); save();
   OFERTAS.selected={}; OFERTAS.view='campanas';
   toastInfo('✓ Campaña creada'); renderOfertas();
-  setTimeout(()=>openCampana(c.id),120);
+  setTimeout(()=>abrirCampana(c.id),120);
 }
 function setCampItemCant(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; it.cantProyectada=Math.max(0,Math.round(+val||0)); save(); openCampana(campId); }
 function setCampItemDisc(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; const d=Math.max(0,Math.min(95,Math.round(+val||0))); it.descPct=d; it.precioOferta=Math.round((it.precio||0)*(1-d/100)); save(); openCampana(campId); }
@@ -4110,7 +4112,7 @@ function nuevaCampana(){
   const nombre=prompt('Nombre de la nueva campaña:', 'Campaña '+new Date().toLocaleDateString('es-CL'));
   if(nombre===null) return;
   const c={id:uid('camp'), nombre:(nombre||'').trim()||'Campaña sin nombre', estado:'planificada', fechaInicio:todayISO(), fechaFin:'', condiciones:'', items:[], createdAt:Date.now()};
-  DB.campaigns.push(c); save(); renderOfertas(); setTimeout(()=>openCampana(c.id),100);
+  DB.campaigns.push(c); save(); renderOfertas(); setTimeout(()=>abrirCampana(c.id),100);
 }
 function openAddProductoCampana(campId){
   const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return;
@@ -4148,25 +4150,28 @@ function agregarProductoCampana(campId,pid){
 function setCampEstado(campId,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.estado=val; save(); if(isModalOpen())openCampana(campId); if(OFERTAS.view==='campanas')renderOfertas(); }
 function setCampField(campId,field,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c[field]=val; save(); }
 function deleteCampana(campId){ if(!confirm('¿Eliminar esta campaña?'))return; DB.campaigns=(DB.campaigns||[]).filter(x=>x.id!==campId); save(); closeModal(); renderOfertas(); }
+function setCampTab(id,t){ CAMP_TAB=t; openCampana(id); }
+function confirmarCampana(id){ const c=(DB.campaigns||[]).find(x=>x.id===id); if(!c) return; if(!(c.items||[]).length){ alert('Agrega al menos un producto antes de confirmar.'); return; } c.estado='activa'; save(); toastInfo('✓ Campaña confirmada'); CAMP_TAB='resumen'; openCampana(id); if(OFERTAS.view==='campanas')renderOfertas(); }
 function openCampana(id){
   const c=(DB.campaigns||[]).find(x=>x.id===id); if(!c) return;
   const pr=campProj(c);
   const mini=(t,v,col)=>`<div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-[11px] text-clay-500">${t}</div><div class="text-base font-bold ${col||''}">${v}</div></div>`;
-  const rows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);const venta=it.precioOferta*q;const margen=(it.precioOferta-(it.costo||0))*q;return `<tr class="border-t border-clay-100">
-    <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · normal ${fmt(it.precio)}</div></td>
-    <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${it.descPct}" onchange="setCampItemDisc('${c.id}','${it.productId}',this.value)" class="w-14 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div></td>
-    <td class="px-3 py-2.5 text-right font-medium text-clay-800">${fmt(it.precioOferta)}</td>
-    <td class="px-3 py-2.5 text-center"><input type="number" min="0" value="${q}" onchange="setCampItemCant('${c.id}','${it.productId}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"></td>
-    <td class="px-3 py-2.5 text-right font-medium">${fmt(venta)}</td>
-    <td class="px-3 py-2.5 text-right text-sage-700">${fmt(margen)}</td>
-    <td class="px-2 py-2.5 text-right"><button onclick="quitarCampItem('${c.id}','${it.productId}')" class="text-clay-300 hover:text-red-600 text-sm">✕</button></td>
-  </tr>`;}).join('');
-  modal(`
-    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <div class="min-w-0"><h3 class="text-lg font-bold leading-tight truncate">📣 ${c.nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Campaña de ofertas · proyección de ventas</div></div>
-      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
-    </div>
-    <div class="p-4 sm:p-5 space-y-4">
+  const mgColor=m=>m>=0.5?'text-sage-600':m>=0.35?'text-amber-600':'text-red-600';
+  const tabBar=`<div class="flex gap-2">
+    <button onclick="setCampTab('${id}','sim')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${CAMP_TAB!=='resumen'?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">🧪 Simulación</button>
+    <button onclick="setCampTab('${id}','resumen')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${CAMP_TAB==='resumen'?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">📋 Resumen</button>
+    <span class="ml-auto self-center">${campEstadoPill(c.estado)}</span>
+  </div>`;
+  let body;
+  if(CAMP_TAB==='resumen'){
+    const rrows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);return `<tr class="border-t border-clay-100">
+      <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · -${it.descPct}%</div></td>
+      <td class="px-3 py-2.5 text-right">${fmt(it.precioOferta)}</td>
+      <td class="px-3 py-2.5 text-center">${q}</td>
+      <td class="px-3 py-2.5 text-right font-medium">${fmt(it.precioOferta*q)}</td>
+      <td class="px-3 py-2.5 text-right text-sage-700">${fmt((it.precioOferta-(it.costo||0))*q)}</td>
+    </tr>`;}).join('');
+    body=`
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         ${mini('Unidades proyectadas',pr.unidades,'')}
         ${mini('Ventas proyectadas',fmt(pr.ventas),'text-clay-800')}
@@ -4184,17 +4189,57 @@ function openCampana(id){
         <div><label class="text-xs text-clay-500">Fin / validez</label><input type="date" value="${c.fechaFin||''}" onchange="setCampField('${c.id}','fechaFin',this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
       </div>
       <div><label class="text-xs text-clay-500">Condiciones</label><input value="${(c.condiciones||'').replace(/"/g,'&quot;')}" onchange="setCampField('${c.id}','condiciones',this.value)" placeholder="Condiciones de la campaña" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
-      <div class="flex items-center justify-between gap-2">
-        <div class="text-xs text-clay-400 uppercase tracking-wide">Productos de la campaña</div>
-        <button onclick="openAddProductoCampana('${c.id}')" class="text-sm font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-3 py-1.5 rounded-lg">➕ Agregar producto</button>
-      </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
-        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[560px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Desc.</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th><th class="px-2 py-2.5"></th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="px-3 py-6 text-center text-clay-400">Sin productos aún. Usa “➕ Agregar producto”.</td></tr>'}</tbody></table></div>
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[460px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-center px-3 py-2.5">Cant.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th></tr></thead><tbody>${rrows||'<tr><td colspan="5" class="px-3 py-6 text-center text-clay-400">Sin productos.</td></tr>'}</tbody></table></div>
       </div>
       <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
-        <button onclick="generarPdfCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">📄 PDF de la campaña</button>
-        <button onclick="deleteCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl border border-clay-200 text-red-600 hover:bg-red-50">🗑️ Eliminar</button>
+        ${c.estado!=='activa'?`<button onclick="confirmarCampana('${c.id}')" class="text-sm font-semibold px-4 py-2 rounded-xl bg-sage-600 hover:bg-sage-700 text-white">✓ Confirmar campaña</button>`:`<span class="text-sm font-medium text-sage-700 bg-sage-50 border border-sage-200 px-3 py-2 rounded-xl self-center">✓ Campaña confirmada</span>`}
+        <button onclick="generarPdfCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">📄 PDF</button>
+        <button onclick="deleteCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl border border-clay-200 text-red-600 hover:bg-red-50 ml-auto">🗑️ Eliminar</button>
+      </div>`;
+  } else {
+    const fromW=isoDaysAgo(28);
+    const soldWin={}; DB.sales.forEach(s=>{ if(s.perdido) return; if((s.fecha||'')>=fromW){ s.items.forEach(i=>{ if(i.productId) soldWin[i.productId]=(soldWin[i.productId]||0)+i.cantidad; }); } });
+    const srows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);const stock=p?stockOf(p.id):0;const vend=soldWin[it.productId]||0;const mgAct=it.precio?(it.precio-(it.costo||0))/it.precio:0;const mgOf=it.precioOferta?(it.precioOferta-(it.costo||0))/it.precioOferta:0;return `<tr class="border-t border-clay-100">
+      <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''}</div></td>
+      <td class="px-3 py-2.5 text-center">${vend}</td>
+      <td class="px-3 py-2.5 text-center ${stock<=0?'text-red-600':''}">${stock}</td>
+      <td class="px-3 py-2.5 text-right">${fmt(it.precio)}</td>
+      <td class="px-3 py-2.5 text-right text-clay-500">${fmt(it.costo)}</td>
+      <td class="px-3 py-2.5 text-right">${Math.round(mgAct*100)}%</td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${it.descPct}" onchange="setCampItemDisc('${c.id}','${it.productId}',this.value)" class="w-14 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div></td>
+      <td class="px-3 py-2.5 text-right font-bold text-clay-800">${fmt(it.precioOferta)}</td>
+      <td class="px-3 py-2.5 text-right ${mgColor(mgOf)} font-semibold">${Math.round(mgOf*100)}%</td>
+      <td class="px-3 py-2.5 text-center"><input type="number" min="0" value="${q}" onchange="setCampItemCant('${c.id}','${it.productId}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"></td>
+      <td class="px-3 py-2.5 text-right font-medium">${fmt(it.precioOferta*q)}</td>
+      <td class="px-2 py-2.5 text-right"><button onclick="quitarCampItem('${c.id}','${it.productId}')" class="text-clay-300 hover:text-red-600 text-sm">✕</button></td>
+    </tr>`;}).join('');
+    body=`
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-xs text-clay-400">Ajusta descuentos y cantidades para simular. Vendidas = últimas 4 semanas.</div>
+        <button onclick="openAddProductoCampana('${c.id}')" class="text-sm font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-3 py-1.5 rounded-lg whitespace-nowrap">➕ Agregar producto</button>
       </div>
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[940px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+          <th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Vendidas</th><th class="text-center px-3 py-2.5">Stock</th><th class="text-right px-3 py-2.5">Precio</th><th class="text-right px-3 py-2.5">Costo</th><th class="text-right px-3 py-2.5">Margen actual</th><th class="text-center px-3 py-2.5">Descuento</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-right px-3 py-2.5">Margen oferta</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="px-2 py-2.5"></th>
+        </tr></thead><tbody>${srows||'<tr><td colspan="12" class="px-3 py-6 text-center text-clay-400">Sin productos aún. Usa “➕ Agregar producto”.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="bg-clay-50 rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-clay-600">
+        <span>Unidades proy.: <b class="text-clay-800">${pr.unidades}</b></span>
+        <span>Ventas proy.: <b class="text-clay-800">${fmt(pr.ventas)}</b></span>
+        <span>Margen proy.: <b class="text-sage-600">${fmt(pr.margen)}</b> (${Math.round(pr.margenPct*100)}%)</span>
+        <span>Descuento otorgado: <b class="text-red-600">${fmt(pr.descuento)}</b></span>
+      </div>
+      <div class="flex justify-end"><button onclick="setCampTab('${c.id}','resumen')" class="text-sm font-semibold text-white bg-clay-700 hover:bg-clay-800 px-4 py-2 rounded-xl">Ir al resumen →</button></div>`;
+  }
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-lg font-bold leading-tight truncate">📣 ${c.nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Campaña de ofertas · simulación y proyección</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      ${tabBar}
+      ${body}
     </div>
   `);
 }
@@ -4233,7 +4278,7 @@ function renderCampanasHTML(){
   const totVentas=activas.reduce((a,c)=>a+campProj(c).ventas,0);
   const totMargen=activas.reduce((a,c)=>a+campProj(c).margen,0);
   const totUnid=activas.reduce((a,c)=>a+campProj(c).unidades,0);
-  const card=c=>{const pr=campProj(c);return `<div class="card p-4 cursor-pointer hover:border-clay-300" onclick="openCampana('${c.id}')">
+  const card=c=>{const pr=campProj(c);return `<div class="card p-4 cursor-pointer hover:border-clay-300" onclick="abrirCampana('${c.id}')">
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0"><div class="font-bold truncate">${c.nombre}</div><div class="text-xs text-clay-400 mt-0.5">${pr.nProductos} producto${pr.nProductos!==1?'s':''}${c.fechaInicio?' · desde '+c.fechaInicio:''}${c.fechaFin?' al '+c.fechaFin:''}</div></div>
       ${campEstadoPill(c.estado)}
