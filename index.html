@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-8';
+const APP_VERSION = '2026.06.12-19';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -454,13 +454,13 @@ const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1
 function stockOf(productId){
   const p = productById(productId); if(!p) return 0;
   let s = p.stockInicial;
-  DB.sales.forEach(v=>v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }));
+  DB.sales.forEach(v=>{ if(v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }));
   DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
   return s;
 }
 function clientBalance(clientId){
-  return DB.sales.filter(s=>s.clienteId===clientId && !s.pagado).reduce((a,s)=>a+saleTotal(s),0);
+  return DB.sales.filter(s=>s.clienteId===clientId && !s.pagado && !s.perdido).reduce((a,s)=>a+saleTotal(s),0);
 }
 
 /* ---------- Auth & layout ---------- */
@@ -469,6 +469,7 @@ const NAV = [
   {id:'presupuestos', label:'Presupuestos', roles:['admin','vendedor'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6'},
   {id:'ventas',    label:'Pedidos',   roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
   {id:'reportes',  label:'Reportes',  roles:['admin','vendedor'], icon:'M3 3v18h18M8 16V9M13 16V5M18 16v-4'},
+  {id:'ofertas',   label:'Ofertas',   roles:['admin','vendedor'], icon:'M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01'},
   {id:'despachos', label:'Despachos', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'calendario', label:'Calendario', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
   {id:'tareas',    label:'Tareas',    roles:['admin','vendedor','bodega'], icon:'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'},
@@ -642,11 +643,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
+  const titles={dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
+  ({dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
@@ -691,22 +692,23 @@ function entregaCell(s){
 function renderDashboard(){
   const now=new Date(), m=now.getMonth(), y=now.getFullYear();
   const ym = y+'-'+String(m+1).padStart(2,'0');
+  const SALES = DB.sales.filter(s=>!s.perdido);   // los pedidos perdidos no cuentan como venta ni despacho
   const inMonth = s => (s.fecha||'').slice(0,7)===ym;   // comparación por texto YYYY-MM (sin zona horaria)
-  const ventasMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleTotal(s),0);
-  const productosMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s),0);
-  const enviosMes = DB.sales.filter(inMonth).reduce((a,s)=>a+(s.costoEnvio||0),0);
-  const porCobrar = DB.sales.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
+  const ventasMes = SALES.filter(inMonth).reduce((a,s)=>a+saleTotal(s),0);
+  const productosMes = SALES.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s),0);
+  const enviosMes = SALES.filter(inMonth).reduce((a,s)=>a+(s.costoEnvio||0),0);
+  const porCobrar = SALES.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
   const stockBajo = DB.products.filter(p=>stockOf(p.id)<=p.stockMin);
-  const despPend  = DB.sales.filter(s=>s.estadoDespacho!=='entregado');
-  const margenMes = DB.sales.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0);
-  const docsPend = DB.sales.filter(s=>s.docTipo==='pendiente');
+  const despPend  = SALES.filter(s=>s.estadoDespacho!=='entregado');
+  const margenMes = SALES.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0);
+  const docsPend = SALES.filter(s=>s.docTipo==='pendiente');
   const facPorPagar = (DB.invoices||[]).filter(f=>f.estado!=='pagado');
   const facPorPagarMonto = facPorPagar.reduce((a,f)=>a+(f.monto||0),0);
   const presPend = (DB.quotes||[]).filter(q=>q.estado==='abierto');
   const tareasPend = (DB.tasks||[]).filter(t=>t.estado!=='completada');
   const esAdmin = SESSION.rol==='admin';
   const esVendedor = SESSION.rol!=='bodega';
-  const unidadesMes = DB.sales.filter(inMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const unidadesMes = SALES.filter(inMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const metaMes = (DB.metaUnidades&&DB.metaUnidades[ym])||0;
   const metaPctMes = metaMes?Math.min(100,Math.round(unidadesMes/metaMes*100)):0;
   const MESES_D=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -728,7 +730,11 @@ function renderDashboard(){
   const cards=[];
   cards.push(statCard('Ventas del mes',fmt(ventasMes),'Prod. '+fmt(productosMes)+' + envío '+fmt(enviosMes),'text-clay-800'));
   cards.push(statCard('Margen del mes',fmt(margenMes),'Utilidad estimada (sin envío)','text-sage-600'));
-  cards.push(`<button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(porCobrar),DB.sales.filter(s=>!s.pagado).length+' impagas · ya incluido en ventas →','text-red-600')}</button>`);
+  cards.push(`<button onclick="go('cobranzas')" class="block text-left w-full card p-3 sm:p-5 ring-2 ring-red-300 hover:ring-red-400 transition" style="background:#fef2f2;border-color:#fca5a5">
+    <div class="flex items-center gap-1.5"><span class="text-sm">💰</span><span class="text-[11px] sm:text-sm text-red-700 font-semibold leading-tight">Por cobrar</span></div>
+    <div class="text-xl sm:text-3xl font-extrabold mt-0.5 sm:mt-1 text-red-700">${fmt(porCobrar)}</div>
+    <div class="text-[10px] sm:text-xs text-red-600 mt-0.5 sm:mt-1 leading-tight font-medium">${SALES.filter(s=>!s.pagado).length} impagas · ver cobranzas →</div>
+  </button>`);
   cards.push(`<button onclick="go('despachos')" class="block text-left w-full">${statCard('Despachos pendientes',despPend.length,'Por entregar · ver →','text-amber-600')}</button>`);
   if(esVendedor) cards.push(`<button onclick="go('presupuestos')" class="block text-left w-full">${statCard('Presupuestos pendientes',presPend.length,presPend.length?'Por cerrar · seguimiento →':'Sin pendientes 👍','text-blue-600')}</button>`);
   if(esAdmin) cards.push(`<button onclick="go('facturas')" class="block text-left w-full">${statCard('Facturas por pagar',fmt(facPorPagarMonto),facPorPagar.length+' factura'+(facPorPagar.length!==1?'s':'')+' · ver →','text-amber-600')}</button>`);
@@ -743,7 +749,11 @@ function renderDashboard(){
   const entAtras=despPend.filter(s=>s.fechaEntrega && s.fechaEntrega<_hoy);
   const tarHoy=tareasPend.filter(t=>t.fecha===_hoy);
   const tarAtras=tareasPend.filter(t=>t.fecha && t.fecha<_hoy);
+  const negStock = DB.products.map(p=>({p,st:stockOf(p.id)})).filter(x=>x.st<0).sort((a,b)=>a.st-b.st);
   const alerts=[];
+  if(negStock.length){
+    alerts.push({icon:'📥',tone:'red',titulo:`${negStock.length} producto${negStock.length>1?'s':''} por pedir`,sub:`Stock negativo: vendidos pero aún no están en bodega.`,btn:'Ver productos',fn:`go('productos')`});
+  }
   if(esAdmin && (facVencidas.length||facHoy.length)){
     const n=facVencidas.length+facHoy.length;
     const monto=[...facVencidas,...facHoy].reduce((a,f)=>a+(f.monto||0),0);
@@ -784,6 +794,23 @@ function renderDashboard(){
     </div>`;
   }
 
+  // Tarjeta de productos por pedir (negStock se calculó arriba, junto a las alertas)
+  const negStockCard = negStock.length?`<div class="card overflow-hidden mb-6">
+    <div class="flex items-center gap-2 px-4 sm:px-5 py-3 bg-red-600 text-white">
+      <span class="text-lg">📥</span>
+      <div class="font-semibold text-sm sm:text-base">Productos por pedir</div>
+      <span class="ml-auto text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full">${negStock.length}</span>
+    </div>
+    <div class="px-4 sm:px-5 py-2.5 text-[11px] sm:text-xs text-clay-600 bg-red-50">Estos productos ya están vendidos o comprometidos pero todavía no los tienes en bodega (stock negativo). Compra al menos la cantidad que falta para reponer y poder cumplir los pedidos.</div>
+    <div class="divide-y divide-clay-100">
+      ${negStock.map(({p,st})=>`<div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-clay-50/60" onclick="openTrazabilidad('${p.id}')">
+        <div class="min-w-0"><div class="font-medium text-sm truncate">${productName(p)}</div><div class="text-xs text-clay-400">${p.sku}</div></div>
+        <div class="text-right shrink-0"><div class="text-sm font-bold text-red-600">Faltan ${-st} u</div><div class="text-[11px] text-clay-400">stock ${st}</div></div>
+      </div>`).join('')}
+    </div>
+    ${SESSION.rol!=='vendedor'?`<div class="p-3 border-t border-clay-100"><button onclick="go('productos')" class="w-full text-sm font-medium text-white bg-clay-700 hover:bg-clay-800 px-3 py-2.5 rounded-xl">Crear orden de compra →</button></div>`:''}
+  </div>`:'';
+
   const v=document.getElementById('view');
   v.innerHTML = `
   ${alertBanner}
@@ -806,40 +833,37 @@ function renderDashboard(){
       </div>`).join('')}
     </div>
   </div>`:''}
-  <div class="grid lg:grid-cols-3 gap-4 mb-6">
-    <div class="card p-5 lg:col-span-2"><div class="font-semibold mb-3">Ventas por mes</div><canvas id="chMes" height="120"></canvas></div>
-    <div class="card p-5"><div class="font-semibold mb-3">Ventas por ciudad</div><canvas id="chCiudad" height="120"></canvas></div>
-  </div>
-  <div class="grid lg:grid-cols-2 gap-4">
-    <div class="card p-5">
-      <div class="flex items-center justify-between mb-3"><div class="font-semibold">Stock bajo</div><button onclick="go('stock')" class="text-xs text-clay-600 hover:underline">Ver stock →</button></div>
-      ${stockBajo.length? stockBajo.map(p=>`<div class="flex items-center justify-between py-2 border-b border-clay-100 last:border-0">
-        <div class="text-sm">${productName(p)} <span class="text-clay-400">· ${p.sku}</span></div>
-        <div>${pill(stockOf(p.id)+' u · mín '+p.stockMin, stockOf(p.id)<=0?'red':'amber')}</div></div>`).join('') : '<div class="text-sm text-clay-400 py-4 text-center">Todo el stock está sobre el mínimo 👍</div>'}
-    </div>
-    <div class="card p-5">
-      <div class="flex items-center justify-between mb-3"><div class="font-semibold">Top productos (por venta)</div></div>
-      <canvas id="chTop" height="160"></canvas>
-    </div>
-  </div>`;
-
-  // Charts
-  const byMonth={}; DB.sales.forEach(s=>{const k=s.fecha.slice(0,7); byMonth[k]=(byMonth[k]||0)+saleTotal(s);});
-  const mk=Object.keys(byMonth).sort();
-  drawChart('chMes','bar',mk,mk.map(k=>byMonth[k]),'#496150');
-  const byCity={}; DB.sales.forEach(s=>{byCity[s.ciudad]=(byCity[s.ciudad]||0)+saleTotal(s);});
-  drawChart('chCiudad','doughnut',Object.keys(byCity),Object.values(byCity),['#3a4e40','#5f7f4d','#7d977f','#a7bdaa','#9fb98f']);
-  const byProd={}; DB.sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const n=p?productName(p):i.descripcion;byProd[n]=(byProd[n]||0)+lineTotal(i);}));
-  const top=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  drawChart('chTop','bar',top.map(t=>t[0]),top.map(t=>t[1]),'#5f7f4d',true);  // verde herbal para top productos
+  ${negStockCard}`;
 }
 let charts={};
+function shadeHex(hex,pct){const n=parseInt(hex.slice(1),16);const f=t=>Math.max(0,Math.min(255,Math.round(pct<0?t*(1+pct):t+(255-t)*pct)));const r=f((n>>16)&255),g=f((n>>8)&255),b=f(n&255);return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);}
 function drawChart(id,type,labels,data,color,horizontal){
   if(charts[id]) charts[id].destroy();
   const ctx=document.getElementById(id); if(!ctx||!window.Chart) return;
-  charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,backgroundColor:Array.isArray(color)?color:color,borderRadius:6,borderWidth:0}]},
-    options:{indexAxis:horizontal?'y':'x',plugins:{legend:{display:type==='doughnut',position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
-      scales:type==='doughnut'?{}:{y:{ticks:{callback:v=>'$'+(v/1000)+'k',font:{size:10}},grid:{color:'#e6ece7'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}});
+  const isDough = type==='doughnut';
+  let bg;
+  if(isDough){
+    bg = Array.isArray(color)?color:[color];
+  } else {
+    // Barras con profundidad: degradado vertical + cada barra con un tono distinto del verde base
+    bg = (c)=>{
+      const area=c.chart.chartArea, cx=c.chart.ctx;
+      const base = Array.isArray(color)?color[c.dataIndex%color.length]:color;
+      if(!area) return base;
+      const n=c.dataset.data.length, i=c.dataIndex;
+      const t = n>1 ? i/(n-1) : 0;
+      const barBase = shadeHex(base, 0.22 - t*0.40);   // primeras barras más claras, últimas más oscuras
+      const grad = horizontal
+        ? cx.createLinearGradient(area.left,0,area.right,0)
+        : cx.createLinearGradient(0,area.bottom,0,area.top);
+      grad.addColorStop(0, shadeHex(barBase,-0.08));
+      grad.addColorStop(1, shadeHex(barBase, 0.24));
+      return grad;
+    };
+  }
+  charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,backgroundColor:bg,borderRadius:isDough?0:6,borderWidth:isDough?2:0,borderColor:isDough?'#ffffff':'transparent',hoverOffset:isDough?8:0,spacing:isDough?1:0}]},
+    options:{indexAxis:horizontal?'y':'x',cutout:isDough?'62%':undefined,plugins:{legend:{display:isDough,position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+      scales:isDough?{}:{y:{ticks:{callback:v=>'$'+(v/1000)+'k',font:{size:10}},grid:{color:'#e6ece7'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}});
 }
 
 /* ===================== REPORTES ===================== */
@@ -888,7 +912,7 @@ function geoAgg(sales, level){
 }
 function repData(){
   const [from,to]=repRange();
-  const sales=DB.sales.filter(s=>s.fecha>=from && s.fecha<=to);
+  const sales=DB.sales.filter(s=>!s.perdido && s.fecha>=from && s.fecha<=to);
   const byProd={}, byCat={};
   sales.forEach(s=>s.items.forEach(i=>{
     const p=productById(i.productId);
@@ -1180,7 +1204,7 @@ function renderPresupuestos(){
       <td class="px-3 py-3 whitespace-nowrap">${quoteEstadoPill(q.estado)}</td>
       <td class="px-5 py-3 text-right whitespace-nowrap">
         <button onclick="event.stopPropagation();downloadQuotePDF('${q.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg mr-1">PDF</button>
-        ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2.5 py-1.5 rounded-lg mr-1">Convertir a venta</button><button onclick="event.stopPropagation();openQuote('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Editar</button><button onclick="event.stopPropagation();marcarPerdido('${q.id}')" class="text-clay-400 hover:text-red-600 text-xs px-1.5">Perdido</button>`:''}
+        ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2.5 py-1.5 rounded-lg mr-1">Convertir a venta</button><button onclick="event.stopPropagation();marcarPerdido('${q.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-red-50 hover:text-red-600 px-2.5 py-1.5 rounded-lg mr-1">Perdido</button><button onclick="event.stopPropagation();openQuote('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Editar</button>`:''}
         ${q.estado==='perdido'?`<button onclick="event.stopPropagation();reabrirPresupuesto('${q.id}')" class="text-clay-600 hover:text-clay-900 text-xs px-1.5">Reabrir</button>`:''}
         ${q.estado==='ganado'?`<span class="text-xs text-sage-600">✓ vendido</span>`:''}
       </td>
@@ -1195,7 +1219,7 @@ function renderPresupuestos(){
         <div class="text-xs text-clay-500 mt-1.5 leading-snug">${q.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
         <div class="flex gap-2 mt-2.5 pt-2.5 border-t border-clay-100">
           <button onclick="event.stopPropagation();downloadQuotePDF('${q.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1.5 rounded-lg text-center">PDF</button>
-          ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="flex-1 text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2 py-1.5 rounded-lg text-center">Convertir a venta</button>`:''}
+          ${puede&&q.estado==='abierto'?`<button onclick="event.stopPropagation();convertirPresupuesto('${q.id}')" class="flex-1 text-xs font-medium text-white bg-sage-600 hover:bg-sage-700 px-2 py-1.5 rounded-lg text-center">Convertir a venta</button><button onclick="event.stopPropagation();marcarPerdido('${q.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-red-50 hover:text-red-600 px-2 py-1.5 rounded-lg text-center">Perdido</button>`:''}
           ${q.estado==='perdido'?`<button onclick="event.stopPropagation();reabrirPresupuesto('${q.id}')" class="flex-1 text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1.5 rounded-lg text-center">Reabrir</button>`:''}
           ${q.estado==='ganado'?`<span class="flex-1 text-xs text-sage-600 text-center self-center">✓ vendido</span>`:''}
         </div>
@@ -1370,6 +1394,24 @@ function convertirPresupuesto(qid){
 function marcarPerdido(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;if(!confirm('¿Marcar el presupuesto '+(q.numero||'')+' como perdido?'))return;q.estado='perdido';save();closeModal();go('presupuestos');}
 function reabrirPresupuesto(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;q.estado='abierto';save();closeModal();go('presupuestos');}
 function deleteQuote(id){if(!confirm('¿Eliminar este presupuesto?'))return;DB.quotes=(DB.quotes||[]).filter(q=>q.id!==id);save();closeModal();go('presupuestos');}
+// ----- Pedidos perdidos (se conservan como respaldo, pero no cuentan como venta ni despacho) -----
+function ventasActivas(){ return DB.sales.filter(s=>!s.perdido); }
+function marcarPedidoPerdido(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const motivo=prompt('¿Por qué se perdió este pedido? (opcional)\nEj: cliente se arrepintió, no pagó, sin stock…', s.perdidoMotivo||'');
+  if(motivo===null) return;
+  s.perdido=true; s.perdidoAt=Date.now(); s.perdidoMotivo=(motivo||'').trim();
+  save(); toastInfo('Pedido marcado como perdido');
+  if(isModalOpen()) closeModal();
+  if(CURRENT==='ventas') renderVentas(); else go(CURRENT);
+}
+function reabrirPedido(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  s.perdido=false; s.perdidoAt=null;
+  save(); toastInfo('Pedido reabierto');
+  if(isModalOpen()) closeModal();
+  if(CURRENT==='ventas') renderVentas(); else go(CURRENT);
+}
 function downloadQuotePDF(id){
   const q=DB.quotes.find(x=>x.id===id); if(!q) return;
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
@@ -1475,23 +1517,23 @@ function renderVentas(){
           ${(()=>{const sortThV=(key,label,align)=>{const act=VENTAS_SORT.key===key;const arr=act?(VENTAS_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-4 py-3"><button onclick="setVentasSort('${key}')" class="uppercase ${act?'text-clay-800 font-semibold':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};return `<tr>${sortThV('fecha','Fecha')}${sortThV('entrega','Entrega')}${sortThV('cliente','Cliente')}<th class="text-left px-4 py-3">Productos</th>${sortThV('total','Total','text-right')}${sortThV('pago','Pago')}${sortThV('despacho','Despacho')}${sortThV('doc','Doc')}<th class="px-4 py-3"></th></tr>`;})()}
         </thead>
         <tbody>
-        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+        ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
           <td class="px-4 py-3">${dispPill(s)}</td>
           <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docLabel(s)}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap">
-            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2.5 py-1.5 rounded-lg" title="Link de pago">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div>`:''}
+            ${SESSION.rol!=='bodega'?`<div class="inline-flex items-center gap-1.5">${s.perdido?`<button onclick="event.stopPropagation();reabrirPedido('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">↩️ Reabrir</button><button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Comprobante</button>`:`${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Emitir boleta/factura en el SII">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2.5 py-1.5 rounded-lg" title="Link de pago">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg" title="Generar comprobante para el cliente">Comprobante</button><button onclick="event.stopPropagation();marcarPedidoPerdido('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-red-50 hover:text-red-600 px-2.5 py-1.5 rounded-lg" title="Marcar pedido como perdido">Perdido</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button>`}</div>`:''}
           </td></tr>`;}).join('')}
         </tbody>
       </table>
     </div>
     <div id="vcards" class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
+      ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             <div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
@@ -1503,8 +1545,8 @@ function renderVentas(){
           </div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(' · ')}</div>
-        <div class="flex flex-wrap gap-1.5 mt-2.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-clay-100">${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2 py-2 rounded-lg text-center">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="flex flex-wrap gap-1.5 mt-2.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-clay-100">${s.perdido?`<button onclick="event.stopPropagation();reabrirPedido('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">↩️ Reabrir</button><button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Comprobante</button>`:`${s.docTipo==='pendiente'?`<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Emitir SII</button>`:''}${(!s.pagado||s.linkPago)?`<button onclick="event.stopPropagation();openEmitirLink('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium ${s.linkPago?'text-sage-700 bg-sage-100 hover:bg-sage-200':'text-clay-700 bg-clay-100 hover:bg-clay-200'} px-2 py-2 rounded-lg text-center">💳 Link</button>`:''}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();marcarPedidoPerdido('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-600 border border-clay-200 hover:bg-red-50 hover:text-red-600 px-2 py-2 rounded-lg text-center">Perdido</button><button onclick="event.stopPropagation();openSale('${s.id}')" class="flex-1 min-w-[30%] text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button>`}</div>
       </div>`;}).join('')}
     </div>
     <div class="px-4 py-3 border-t border-clay-100 flex items-center justify-between gap-3 flex-wrap">
@@ -2177,7 +2219,8 @@ function openSaleDetail(id, backFecha){
         </div>
         <div class="bg-clay-50 rounded-xl p-3.5">
           <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
-          <div class="flex flex-wrap gap-1.5">${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
+          <div class="flex flex-wrap gap-1.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
+          ${s.perdido?`<div class="text-xs text-red-600 mt-2 bg-red-50 rounded-lg px-2.5 py-1.5">Pedido perdido${s.perdidoAt?' el '+new Date(s.perdidoAt).toLocaleDateString('es-CL'):''}${s.perdidoMotivo?' · '+s.perdidoMotivo:''}</div>`:''}
           <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
           <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':'✓ Marcar como entregado'}</button>
         </div>
@@ -2210,9 +2253,10 @@ function openSaleDetail(id, backFecha){
         <div class="flex flex-wrap gap-2">
           ${actBtn(`openConfirmacion('${s.id}')`,'🧾 Comprobante de venta',true)}
           ${actBtn(`openEntrega('${s.id}')`,'📦 Comprobante de entrega')}
-          ${!esBodega&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
-          ${!esBodega?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
+          ${!esBodega&&!s.perdido&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
+          ${!esBodega&&!s.perdido?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
           ${!esBodega?actBtn(`openSale('${s.id}')`,'✏️ Editar pedido'):''}
+          ${!esBodega?(s.perdido?actBtn(`reabrirPedido('${s.id}')`,'↩️ Reabrir pedido'):actBtn(`marcarPedidoPerdido('${s.id}')`,'🚫 Marcar perdido')):''}
         </div>
       </div>
     </div>
@@ -2230,7 +2274,7 @@ function toggleDespShow(key){ DESP_SHOW[key]=!DESP_SHOW[key]; renderDespachos();
 function renderDespachos(){
   const v=document.getElementById('view');
   const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
-  const all=[...DB.sales].sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const all=DB.sales.filter(s=>!s.perdido).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const activos=t=> all.filter(s=>tipoDespachoOf(s)===t && s.estadoDespacho!=='entregado').length;
   const sales = DESP_TIPO==='Todos'? all : all.filter(s=>tipoDespachoOf(s)===DESP_TIPO);
   const tab=(t,label,badge)=>`<button onclick="setDespTipo('${t}')" class="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 ${DESP_TIPO===t?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${badge!=null?`<span class="text-xs ${DESP_TIPO===t?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${badge}</span>`:''}</button>`;
@@ -2480,6 +2524,7 @@ function renderCalendario(){
 
   const byDay={}; const sinFecha=[];
   DB.sales.forEach(s=>{
+    if(s.perdido) return;
     if(!s.fechaEntrega){ sinFecha.push(s); return; }
     const [yy,mm,dd]=s.fechaEntrega.split('-').map(Number);
     if(yy===y && (mm-1)===m){ (byDay[dd]=byDay[dd]||[]).push(s); }
@@ -2647,7 +2692,7 @@ function diasDesde(iso){ if(!iso) return 0; const d=new Date(iso+'T00:00:00'); r
 function markPaid(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.pagado=true; save(); go('cobranzas'); }
 function renderCobranzas(){
   const v=document.getElementById('view');
-  const impagas=DB.sales.filter(s=>!s.pagado).sort((a,b)=>a.fecha.localeCompare(b.fecha)); // más antiguas primero
+  const impagas=DB.sales.filter(s=>!s.pagado && !s.perdido).sort((a,b)=>a.fecha.localeCompare(b.fecha)); // más antiguas primero
   const totalCobrar=impagas.reduce((a,s)=>a+saleTotal(s),0);
   const clientesDeuda=new Set(impagas.map(s=>s.clienteId)).size;
   const vencido30=impagas.filter(s=>diasDesde(s.fecha)>30).reduce((a,s)=>a+saleTotal(s),0);
@@ -2769,79 +2814,87 @@ function saveClient(){
 }
 
 /* ===================== STOCK ===================== */
+let STOCK_SORT={key:'producto',dir:'asc'}, STOCK_Q='', STOCK_EST='';
+function setStockSort(key){ STOCK_Q=(document.getElementById('fStock')?.value)??STOCK_Q; STOCK_EST=(document.getElementById('fStockEstado')?.value)??STOCK_EST; if(STOCK_SORT.key===key){ STOCK_SORT.dir=STOCK_SORT.dir==='asc'?'desc':'asc'; } else { STOCK_SORT.key=key; STOCK_SORT.dir=(key==='producto'||key==='sku')?'asc':'desc'; } renderStock(); }
+function setStockEstadoChip(val){ STOCK_EST=val; const sel=document.getElementById('fStockEstado'); if(sel) sel.value=val; filterStock(); }
 function renderStock(){
   const v=document.getElementById('view');
   const prods=DB.products;
-  const valorStock=prods.reduce((a,p)=>a+stockOf(p.id)*p.costo,0);
+  const valorCosto=prods.reduce((a,p)=>a+stockOf(p.id)*(p.costo||0),0);
+  const valorVenta=prods.reduce((a,p)=>a+stockOf(p.id)*(p.precioRef||0),0);
+  const ganancia=valorVenta-valorCosto;
   const unidades=prods.reduce((a,p)=>a+stockOf(p.id),0);
-  const bajo=prods.filter(p=>stockOf(p.id)<=p.stockMin).length;
+  const bajo=prods.filter(p=>{const st=stockOf(p.id);return st>0 && st<=p.stockMin;}).length;
+  const agotado=prods.filter(p=>stockOf(p.id)<=0).length;
   const puede=SESSION.rol!=='vendedor';
+  const sortVal=p=>{const k=STOCK_SORT.key, st=stockOf(p.id); if(k==='sku')return (p.sku||'').toLowerCase(); if(k==='producto')return productName(p).toLowerCase(); if(k==='stock')return st; if(k==='min')return p.stockMin||0; if(k==='estado')return st<=0?0:st<=p.stockMin?1:2; if(k==='valorcosto')return st*(p.costo||0); if(k==='valorventa')return st*(p.precioRef||0); return 0;};
+  const dir=STOCK_SORT.dir==='asc'?1:-1;
+  const prodsSorted=[...prods].sort((a,b)=>{const va=sortVal(a),vb=sortVal(b); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;});
+  const sortTh=(key,label,align)=>{const act=STOCK_SORT.key===key;const arr=act?(STOCK_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-3 py-3"><button onclick="setStockSort('${key}')" class="uppercase font-semibold ${act?'text-clay-800':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
+  const chip=(val,label,n,col)=>`<button onclick="setStockEstadoChip('${val}')" class="text-xs font-medium px-3 py-1.5 rounded-full border ${STOCK_EST===val?'bg-clay-700 text-white border-clay-700':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="${STOCK_EST===val?'opacity-80':col||''}">${n}</span>`:''}</button>`;
   v.innerHTML=`
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Unidades en stock',unidades,'','')}
-    ${statCard('Valor de inventario',fmt(valorStock),'a costo','text-sage-600')}
-    ${statCard('Productos con stock bajo',bajo,'',bajo>0?'text-amber-600':'')}
-    ${statCard('SKUs',prods.length,'','')}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Unidades en stock',unidades,prods.length+' productos','')}
+    ${statCard('Valor a costo',fmt(valorCosto),'lo que te costó','text-clay-800')}
+    ${statCard('Valor a precio venta',fmt(valorVenta),'si vendes todo','text-sage-600')}
+    ${statCard('Ganancia potencial',fmt(ganancia),valorVenta?Math.round(ganancia/valorVenta*100)+'% de margen':'','text-sage-600')}
   </div>
   <div class="card overflow-hidden">
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
-      <input id="fStock" oninput="filterStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
-      <select id="fStockEstado" onchange="filterStock()" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
-        <option value="">Todos los estados</option>
-        <option value="ok">OK</option>
-        <option value="bajo">Stock bajo</option>
-        <option value="agotado">Agotado</option>
+      <input id="fStock" value="${STOCK_Q.replace(/"/g,'&quot;')}" oninput="filterStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <div class="flex items-center gap-1.5">${chip('','Todos')}${chip('bajo','Bajo',bajo,'text-amber-600')}${chip('agotado','Agotado',agotado,'text-red-600')}</div>
+      <select id="fStockEstado" onchange="filterStock()" class="hidden">
+        <option value="" ${STOCK_EST===''?'selected':''}>Todos</option>
+        <option value="ok" ${STOCK_EST==='ok'?'selected':''}>OK</option>
+        <option value="bajo" ${STOCK_EST==='bajo'?'selected':''}>Stock bajo</option>
+        <option value="agotado" ${STOCK_EST==='agotado'?'selected':''}>Agotado</option>
       </select>
-      <button onclick="descargarPlanillaInventario()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl flex items-center gap-1.5" title="Descargar planilla en PDF para imprimir y tomar inventario"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Planilla de inventario</button>
+      <button onclick="descargarPlanillaInventario()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl flex items-center gap-1.5" title="Descargar planilla en PDF para imprimir y tomar inventario"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg><span class="hidden sm:inline">Planilla</span></button>
       <div id="stCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
     </div>
-    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[640px]" id="sttbl">
-      <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-        <th class="text-left font-semibold px-5 py-3">SKU</th>
-        <th class="text-left font-semibold px-3 py-3">Producto</th>
-        <th class="text-right font-semibold px-3 py-3">Stock</th>
-        <th class="text-right font-semibold px-3 py-3">Mínimo</th>
-        <th class="text-left font-semibold px-3 py-3">Estado</th>
-        <th class="text-right font-semibold px-3 py-3">Valor</th>
+    <div class="hidden sm:block overflow-auto max-h-[68vh]"><table class="w-full text-sm min-w-[720px]" id="sttbl">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+        ${sortTh('sku','SKU')}${sortTh('producto','Producto')}${sortTh('stock','Stock','text-right')}${sortTh('min','Mínimo','text-right')}${sortTh('estado','Estado')}${sortTh('valorcosto','Valor costo','text-right')}${sortTh('valorventa','Valor venta','text-right')}
         <th class="px-5 py-3"></th>
       </tr></thead><tbody>
-      ${prods.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
-        <td class="px-5 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
+      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
+        <td class="px-3 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
         <td class="px-3 py-3"><div class="font-medium">${productName(p)}</div></td>
-        <td class="px-3 py-3 text-right font-semibold">${st}</td>
+        <td class="px-3 py-3 text-right font-semibold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st}</td>
         <td class="px-3 py-3 text-right text-clay-400">${p.stockMin}</td>
         <td class="px-3 py-3">${estado}</td>
-        <td class="px-3 py-3 text-right whitespace-nowrap">${fmt(st*p.costo)}</td>
+        <td class="px-3 py-3 text-right whitespace-nowrap text-clay-500">${fmt(st*(p.costo||0))}</td>
+        <td class="px-3 py-3 text-right whitespace-nowrap font-medium text-sage-700">${fmt(st*(p.precioRef||0))}</td>
         <td class="px-5 py-3 text-right whitespace-nowrap">
-          <span class="text-clay-300 text-xs mr-2 hidden sm:inline">historial</span>
           ${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg">Ajustar</button>`:''}
         </td>
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50" id="stcards">
-      ${prods.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<div class="stcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
+      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<div class="stcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0"><div class="font-bold truncate">${productName(p)}</div><div class="text-xs text-clay-400 mt-0.5">${p.sku}</div></div>
-          <div class="text-right shrink-0"><div class="text-lg font-bold">${st} <span class="text-xs text-clay-400 font-normal">u</span></div>${estado}</div>
+          <div class="text-right shrink-0"><div class="text-lg font-bold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st} <span class="text-xs text-clay-400 font-normal">u</span></div>${estado}</div>
         </div>
-        <div class="flex items-center justify-between mt-2.5 pt-2.5 border-t border-clay-100 text-xs"><span class="text-clay-500">Mín ${p.stockMin} · valor ${fmt(st*p.costo)}</span>${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1 rounded-lg">Ajustar</button>`:''}</div>
+        <div class="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-clay-100 text-xs">
+          <div><div class="text-clay-400">Valor a costo</div><div class="font-medium text-clay-600">${fmt(st*(p.costo||0))}</div></div>
+          <div><div class="text-clay-400">Valor a venta</div><div class="font-medium text-sage-700">${fmt(st*(p.precioRef||0))}</div></div>
+        </div>
+        <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Mínimo ${p.stockMin}</span>${puede?`<button onclick="event.stopPropagation();openAdjust('${p.id}')" class="font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1 rounded-lg">Ajustar</button>`:''}</div>
       </div>`;}).join('')}
     </div>
-    <div class="hidden sm:block">${pagControlsHTML('sttbl')}</div>
   </div>
-  <div class="text-xs text-clay-400 mt-3 px-1">💡 Haz clic en cualquier producto para ver su trazabilidad (historial de movimientos).</div>`;
-  PAG_MATCH['sttbl']=stockMatch;
-  pagRender('sttbl');
+  <div class="text-xs text-clay-400 mt-3 px-1">💡 Toca cualquier producto para ver su trazabilidad (historial de movimientos). Ordena por cualquier columna haciendo clic en su título.</div>`;
+  filterStock();
 }
-function stockMatch(tr){
-  const q=(((document.getElementById('fStock')||{}).value)||'').toLowerCase();
+function filterStock(){
+  const q=((document.getElementById('fStock')||{}).value||'').toLowerCase();
   const est=((document.getElementById('fStockEstado')||{}).value)||'';
-  return tr.textContent.toLowerCase().includes(q) && (!est||tr.dataset.estado===est);
-}
-function filterStock(){ const st=pagState('sttbl'); st.page=1; pagApply('sttbl');
-  const q=(((document.getElementById('fStock')||{}).value)||'').toLowerCase();
-  const est=((document.getElementById('fStockEstado')||{}).value)||'';
+  STOCK_Q=q; STOCK_EST=est;
+  let n=0;
+  document.querySelectorAll('#sttbl tbody tr').forEach(tr=>{ const ok=tr.textContent.toLowerCase().includes(q)&&(!est||tr.dataset.estado===est); tr.style.display=ok?'':'none'; if(ok)n++; });
   document.querySelectorAll('.stcard').forEach(el=>{ const ok=(!q||(el.dataset.text||'').includes(q))&&(!est||el.dataset.estado===est); el.style.display=ok?'':'none'; });
+  const c=document.getElementById('stCount'); if(c) c.textContent=n+' producto'+(n!==1?'s':'');
 }
 /* ----- Trazabilidad: historial de movimientos de un producto ----- */
 function stockMovements(productId){
@@ -2948,7 +3001,7 @@ function renderProductos(){
   if(PROD_SORT.key==='modelo'){
     prods=[...DB.products].sort((a,b)=> dir*((a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'}) || sizeRank(a.tamano)-sizeRank(b.tamano) || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'})));
   } else {
-    const val=p=>{const k=PROD_SORT.key; if(k==='sku')return p.sku; if(k==='tamano')return sizeRank(p.tamano); if(k==='color')return p.color; if(k==='costo')return p.costo; if(k==='precio')return p.precioRef; if(k==='margen')return prodMargenPct(p); if(k==='stock')return stockOf(p.id); return 0;};
+    const val=p=>{const k=PROD_SORT.key; if(k==='sku')return p.sku; if(k==='tamano')return sizeRank(p.tamano); if(k==='color')return p.color; if(k==='costo')return p.costo; if(k==='precio')return p.precioRef; if(k==='margen')return prodMargenPct(p); if(k==='margendinero')return prodMargenDinero(p); if(k==='stock')return stockOf(p.id); return 0;};
     prods=[...DB.products].sort((a,b)=>{const va=val(a),vb=val(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb),undefined,{sensitivity:'base'}) : dir*(va-vb);});
   }
   const agrupar = PROD_SORT.key==='modelo' && PROD_SORT.dir==='asc';
@@ -2968,8 +3021,8 @@ function renderProductos(){
   </div>
   <div class="card overflow-hidden">
     <div class="p-4 border-b border-clay-100 flex flex-wrap items-center gap-2"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px] sm:max-w-xs">${SESSION.rol!=='vendedor'?`<button onclick="crearOCDesdeProductos()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap">🧾 Crear orden de compra</button>`:''}</div>
-    <div class="hidden sm:block overflow-auto max-h-[70vh]"><table class="w-full text-sm min-w-[720px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
-      ${sortTh('sku','SKU','text-left','w-24')}${sortTh('modelo','Modelo','text-left')}${sortTh('tamano','Tamaño','text-center','w-20')}${sortTh('color','Color','text-left')}${sortTh('costo','Costo','text-right')}${sortTh('precio','Precio ref.','text-right')}${sortTh('margen','Margen','text-center','w-24')}${sortTh('stock','Stock','text-center','w-20')}${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
+    <div class="hidden sm:block overflow-auto max-h-[70vh]"><table class="w-full text-sm min-w-[840px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+      ${sortTh('sku','SKU','text-left','w-24')}${sortTh('modelo','Modelo','text-left')}${sortTh('tamano','Tamaño','text-center','w-20')}${sortTh('color','Color','text-left')}${sortTh('costo','Costo','text-right')}${sortTh('precio','Precio ref.','text-right')}${sortTh('margen','Margen %','text-center','w-20')}${sortTh('margendinero','Margen $','text-right','w-24')}${sortTh('stock','Stock','text-center','w-20')}${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
     ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=agrupar&&p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
       <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
       <td class="px-4 py-2.5 font-medium text-clay-800">${p.modelo}</td>
@@ -2978,6 +3031,7 @@ function renderProductos(){
       <td class="px-4 py-2.5 text-right text-clay-500">${fmt(p.costo)}</td>
       <td class="px-4 py-2.5 text-right font-semibold">${fmt(p.precioRef)}</td>
       <td class="px-3 py-2.5 text-center">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</td>
+      <td class="px-4 py-2.5 text-right font-medium ${prodMargenDinero(p)>0?'text-sage-700':'text-clay-400'}">${fmt(prodMargenDinero(p))}</td>
       <td class="px-3 py-2.5 text-center ${stCls}">${st}</td>
       ${SESSION.rol!=='vendedor'?`<td class="px-4 py-2.5 text-right"><button onclick="event.stopPropagation();openProduct('${p.id}')" class="text-clay-600 hover:text-clay-900 font-medium">Editar</button></td>`:''}
     </tr>`;}).join('')}
@@ -2988,7 +3042,7 @@ function renderProductos(){
           <div class="min-w-0"><div class="font-bold truncate">${p.modelo} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span></div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
           <div class="text-right shrink-0"><div class="font-bold">${fmt(p.precioRef)}</div><div class="mt-0.5">${pill(mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</div></div>
         </div>
-        <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Costo ${fmt(p.costo)}</span><span class="${stCls}">Stock: ${st}</span></div>
+        <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Costo ${fmt(p.costo)} · Margen ${fmt(prodMargenDinero(p))}</span><span class="${stCls}">Stock: ${st}</span></div>
       </div>`;}).join('')}
     </div>
     <div class="hidden sm:block">${pagControlsHTML('ptbl')}</div></div>`;
@@ -3015,10 +3069,11 @@ function openProductDetail(id){
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         ${mini('Precio ref.',fmt(p.precioRef),'text-clay-800')}
         ${mini('Costo',fmt(p.costo),'text-clay-500')}
-        ${mini('Margen',mg+'%',mg>=50?'text-sage-600':mg>=35?'text-amber-600':'text-red-600')}
-        ${mini('Stock',st+' u',stCol)}
+        ${mini('Margen %',mg+'%',mg>=50?'text-sage-600':mg>=35?'text-amber-600':'text-red-600')}
+        ${mini('Margen $ /u',fmt(prodMargenDinero(p)),prodMargenDinero(p)>0?'text-sage-600':'text-clay-400')}
       </div>
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-3 gap-3">
+        ${mini('Stock',st+' u',stCol)}
         ${mini('Unidades vendidas',vendidas,'')}
         ${mini('Ingreso generado',fmt(ingreso),'text-sage-600')}
       </div>
@@ -4006,6 +4061,136 @@ function taskCard(t){
     </div>
     <button onclick="event.stopPropagation();toggleTaskDone('${t.id}')" class="w-full mt-3 text-xs font-medium px-3 py-1.5 rounded-lg ${done?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${done?'↩️ Reabrir':'✓ Completar'}</button>
   </div>`;
+}
+/* ===================== OFERTAS (recomendador de liquidación) ===================== */
+let OFERTAS={preset:'sem', weeks:2, from:'', to:'', floor:0.20, override:{}, sort:{venta:{key:'vendidas',dir:'asc'}, stock:{key:'stock',dir:'desc'}}};
+function setOfertasWeeks(w){ OFERTAS.preset='sem'; OFERTAS.weeks=+w; renderOfertas(); }
+function setOfertasPreset(p){ OFERTAS.preset=p; if(p==='custom'){ if(!OFERTAS.from) OFERTAS.from=isoDaysAgo(14); if(!OFERTAS.to) OFERTAS.to=todayISO(); } renderOfertas(); }
+function setOfertasFrom(v){ OFERTAS.from=v; renderOfertas(); }
+function setOfertasTo(v){ OFERTAS.to=v; renderOfertas(); }
+function setOfertasFloor(f){ OFERTAS.floor=+f; renderOfertas(); }
+function setOfertaDisc(pid,val){ if(val===''||val==null){ delete OFERTAS.override[pid]; } else { OFERTAS.override[pid]=Math.max(0,Math.min(95,Math.round(+val))); } renderOfertas(); }
+function resetOfertaDisc(){ OFERTAS.override={}; renderOfertas(); }
+function setOfertaSort(which,key){ const st=OFERTAS.sort[which]; if(st.key===key){ st.dir=st.dir==='asc'?'desc':'asc'; } else { st.key=key; st.dir = (key==='producto')?'asc':'desc'; } renderOfertas(); }
+function isoDaysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${da}`; }
+function ofertaRec(p,u,floor){
+  const precio=p.precioRef||0, costo=p.costo||0, stock=stockOf(p.id);
+  if(!precio||!costo||stock<=0) return null;             // sin precio, sin costo o sin stock no se considera
+  const minPrice=costo/(1-floor);                        // precio al que el margen sería exactamente el piso
+  const maxDisc=1-minPrice/precio;                       // descuento máximo sin romper el piso
+  if(maxDisc<0.05) return null;                          // casi no hay margen, no conviene ofertar
+  let frac; if(u===0) frac=0.80; else if(u<=2) frac=0.55; else if(u<=5) frac=0.35; else frac=0.15; // si rota bien, igual una oferta suave si hay stock
+  const over=(p.stockMin&&stock>=2*p.stockMin)||stock>=20; // empujar más fuerte si hay sobre-stock
+  if(over) frac=Math.min(0.9,frac+0.15);
+  let discPct=Math.round((maxDisc*frac*100)/5)*5;        // redondea a múltiplos de 5%
+  discPct=Math.max(5,Math.min(Math.floor(maxDisc*100),discPct));
+  return {discSug:discPct, maxDiscPct:Math.floor(maxDisc*100), stock, u, precio, costo, margenActPct:(precio-costo)/precio, slow:u<=5};
+}
+function ofertaEff(r){
+  const ov=OFERTAS.override[r.p.id];
+  const discPct=(ov!=null)?ov:r.discSug;
+  const precioOferta=Math.round(r.precio*(1-discPct/100));
+  const margenOfPct=precioOferta>0?(precioOferta-r.costo)/precioOferta:0;
+  return {discPct, precioOferta, margenOfPct, margenOfDinero:precioOferta-r.costo, custom:ov!=null};
+}
+function ofertaSortVal(r,key){
+  const e=ofertaEff(r);
+  switch(key){
+    case 'producto': return productName(r.p).toLowerCase();
+    case 'vendidas': return r.u;
+    case 'stock': return r.stock;
+    case 'precio': return r.precio;
+    case 'costo': return r.costo;
+    case 'margenact': return r.margenActPct;
+    case 'descuento': return e.discPct;
+    case 'preciooferta': return e.precioOferta;
+    case 'margenoferta': return e.margenOfPct;
+    case 'stockval': return r.stock*r.costo;
+    default: return 0;
+  }
+}
+function sortRecs(list,st){ const dir=st.dir==='asc'?1:-1; return [...list].sort((a,b)=>{const va=ofertaSortVal(a,st.key),vb=ofertaSortVal(b,st.key); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;}); }
+function renderOfertas(){
+  const v=document.getElementById('view');
+  const floor=OFERTAS.floor;
+  let fromW,toW,winLabel;
+  if(OFERTAS.preset==='custom'){ fromW=OFERTAS.from||isoDaysAgo(14); toW=OFERTAS.to||todayISO(); winLabel='personalizado'; }
+  else { fromW=isoDaysAgo(OFERTAS.weeks*7); toW=todayISO(); winLabel=OFERTAS.weeks+' sem'; }
+  const soldWin={};
+  DB.sales.forEach(s=>{ if(s.perdido) return; const f=s.fecha||''; if(f>=fromW && f<=toW){ s.items.forEach(i=>{ if(i.productId) soldWin[i.productId]=(soldWin[i.productId]||0)+i.cantidad; }); } });
+  const recs=[];
+  DB.products.forEach(p=>{ const u=soldWin[p.id]||0; const r=ofertaRec(p,u,floor); if(r){ r.p=p; recs.push(r); } });
+  const slowRecs=recs.filter(r=>r.slow);
+  const porVenta=sortRecs(slowRecs,OFERTAS.sort.venta).slice(0,12);
+  const porStock=sortRecs(recs,OFERTAS.sort.stock).slice(0,15);
+  const stockInmov=slowRecs.reduce((a,r)=>a+r.stock*r.costo,0);
+  const hayOverrides=Object.keys(OFERTAS.override).length>0;
+  const weeksBtn=(w,l)=>`<button onclick="setOfertasWeeks(${w})" class="px-3 py-1.5 rounded-lg text-sm font-medium ${OFERTAS.preset==='sem'&&OFERTAS.weeks===w?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${l}</button>`;
+  const customBtn=`<button onclick="setOfertasPreset('custom')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${OFERTAS.preset==='custom'?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">Personalizado</button>`;
+  const dateInputs=OFERTAS.preset==='custom'?`<div class="flex items-center gap-2 mt-2"><span class="text-xs text-clay-500">Del</span><input type="date" value="${fromW}" onchange="setOfertasFrom(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"><span class="text-xs text-clay-500">al</span><input type="date" value="${toW}" onchange="setOfertasTo(this.value)" class="border border-clay-200 rounded-lg px-2 py-1.5 text-sm"></div>`:'';
+  const floorSel=`<select onchange="setOfertasFloor(this.value)" class="border border-clay-200 rounded-lg px-3 py-1.5 text-sm bg-white">${[[0.30,'30%'],[0.20,'20%'],[0.10,'10%'],[0,'al costo (0%)']].map(([f,l])=>`<option value="${f}" ${floor===f?'selected':''}>Margen mínimo ${l}</option>`).join('')}</select>`;
+  const mgColor=m=>m>=0.5?'text-sage-600':m>=0.35?'text-amber-600':'text-red-600';
+  const th=(which,key,label,align)=>{const st=OFERTAS.sort[which];const act=st.key===key;const arr=act?(st.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-4 py-3"><button onclick="setOfertaSort('${which}','${key}')" class="uppercase ${act?'text-clay-800 font-semibold':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
+  const rowDesk=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+    <td class="px-4 py-3 font-medium cursor-pointer" onclick="openProductDetail('${r.p.id}')">${productName(r.p)}<div class="text-xs text-clay-400">${r.p.sku}</div></td>
+    <td class="px-4 py-3 text-center">${r.u}</td>
+    <td class="px-4 py-3 text-center ${r.stock>=20?'text-amber-600 font-semibold':''}">${r.stock}</td>
+    <td class="px-4 py-3 text-right">${fmt(r.precio)}</td>
+    <td class="px-4 py-3 text-right text-clay-500">${fmt(r.costo)}</td>
+    <td class="px-4 py-3 text-right">${Math.round(r.margenActPct*100)}%</td>
+    <td class="px-4 py-3 text-center" onclick="event.stopPropagation()"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${e.discPct}" onchange="setOfertaDisc('${r.p.id}',this.value)" class="w-14 border ${e.custom?'border-clay-400':'border-clay-200'} rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div>${e.custom?`<div class="text-[10px] text-clay-400 mt-0.5">sug. ${r.discSug}%</div>`:''}</td>
+    <td class="px-4 py-3 text-right font-bold text-clay-800">${fmt(e.precioOferta)}</td>
+    <td class="px-4 py-3 text-right ${mgColor(e.margenOfPct)} font-semibold">${Math.round(e.margenOfPct*100)}%<div class="text-xs ${bajo?'text-red-500':'text-clay-400'}">${bajo?'bajo el piso':fmt(e.margenOfDinero)}</div></td>
+  </tr>`;};
+  const cardMob=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;return `<div class="card p-3.5">
+    <div class="flex justify-between items-start gap-2 cursor-pointer" onclick="openProductDetail('${r.p.id}')">
+      <div class="min-w-0"><div class="font-bold truncate">${productName(r.p)}</div><div class="text-xs text-clay-400">${r.p.sku}</div></div>
+      <div class="text-right shrink-0"><div class="text-[11px] text-clay-400 line-through">${fmt(r.precio)}</div><div class="text-lg font-bold text-clay-800">${fmt(e.precioOferta)}</div></div>
+    </div>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-clay-500 mt-2">
+      <span>Vendidas: <b class="text-clay-700">${r.u}</b></span>
+      <span>Stock: <b class="${r.stock>=20?'text-amber-600':'text-clay-700'}">${r.stock}</b></span>
+      <span>Margen actual: <b class="text-clay-700">${Math.round(r.margenActPct*100)}%</b></span>
+    </div>
+    <div class="flex items-center justify-between mt-2.5 pt-2.5 border-t border-clay-100 gap-2">
+      <div class="flex items-center gap-1.5"><span class="text-xs text-clay-500">Descuento</span><input type="number" min="0" max="95" value="${e.discPct}" onchange="setOfertaDisc('${r.p.id}',this.value)" class="w-16 border ${e.custom?'border-clay-400':'border-clay-200'} rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div>
+      <div class="text-right"><div class="text-[11px] text-clay-400">Margen oferta</div><div class="text-sm font-semibold ${mgColor(e.margenOfPct)}">${Math.round(e.margenOfPct*100)}%${bajo?' ⚠️':' · '+fmt(e.margenOfDinero)}</div></div>
+    </div>
+  </div>`;};
+  const tabla=(list,which,vacio)=> list.length? `
+    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[880px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      ${th(which,'producto','Producto')}${th(which,'vendidas','Vendidas','text-center')}${th(which,'stock','Stock','text-center')}${th(which,'precio','Precio','text-right')}${th(which,'costo','Costo','text-right')}${th(which,'margenact','Margen actual','text-right')}${th(which,'descuento','Descuento','text-center')}${th(which,'preciooferta','Precio oferta','text-right')}${th(which,'margenoferta','Margen oferta','text-right')}
+    </tr></thead><tbody>${list.map(rowDesk).join('')}</tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${list.map(cardMob).join('')}</div>`
+    : `<div class="p-10 text-center text-clay-400 text-sm">${vacio}</div>`;
+  v.innerHTML=`
+  <div class="card p-4 mb-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="text-sm font-semibold mr-1">Analizar ventas de:</span>
+      ${weeksBtn(2,'2 sem')}${weeksBtn(4,'4 sem')}${weeksBtn(6,'6 sem')}${customBtn}
+      <span class="sm:ml-auto">${floorSel}</span>
+    </div>
+    ${dateInputs}
+    <div class="text-xs text-clay-400 mt-2">Recomienda descuentos para productos de baja rotación sin que el margen baje del mínimo elegido. Puedes editar el descuento de cada producto y ordenar cualquier columna haciendo clic en su título.</div>
+  </div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-5">
+    ${statCard('Productos en alerta',slowRecs.length,'baja rotación','text-amber-600')}
+    ${statCard('Stock inmovilizado',fmt(stockInmov),'valorizado a costo','text-clay-800')}
+    ${statCard('Ventana analizada',winLabel,fromW+' a '+toW,'')}
+    ${statCard('Margen mínimo',Math.round(floor*100)+'%','piso protegido','text-sage-600')}
+  </div>
+  ${hayOverrides?`<div class="flex justify-end mb-3"><button onclick="resetOfertaDisc()" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">↺ Restablecer descuentos sugeridos</button></div>`:''}
+  ${(porVenta.length===0 && porStock.length===0)?`<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">🎉</div>No hay productos con stock y margen suficiente para ofertar en este período.</div>`:`
+  <div class="card overflow-hidden mb-5">
+    <div class="p-4 border-b border-clay-100"><div class="font-semibold flex items-center gap-2">🐌 Recomendaciones por baja venta</div><div class="text-xs text-clay-400 mt-0.5">Los productos que menos se han vendido en el período seleccionado (5 o menos unidades).</div></div>
+    ${tabla(porVenta,'venta','No hay productos de baja rotación en este período.')}
+  </div>
+  <div class="card overflow-hidden">
+    <div class="p-4 border-b border-clay-100"><div class="font-semibold flex items-center gap-2">📦 Recomendaciones por stock acumulado</div><div class="text-xs text-clay-400 mt-0.5">Los productos con más stock en bodega (mayor capital inmovilizado), se vendan poco o mucho.</div></div>
+    ${tabla(porStock,'stock','Sin datos en este período.')}
+  </div>`}
+  <div class="text-[11px] text-clay-400 mt-4 px-1">El descuento sugerido nunca deja el margen bajo ${Math.round(floor*100)}%. Si editas el descuento manualmente por sobre el máximo, te avisamos con "bajo el piso".</div>
+  `;
 }
 function renderTareas(){
   const v=document.getElementById('view');
