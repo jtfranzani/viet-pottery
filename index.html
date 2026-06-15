@@ -152,7 +152,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-41';
+const APP_VERSION = '2026.06.12-42';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2349,7 +2349,7 @@ function openSaleDetail(id, backFecha){
           ${actBtn(`openEntrega('${s.id}')`,'📦 Comprobante de entrega')}
           ${!esBodega&&!s.perdido&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
           ${!esBodega&&!s.perdido?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
-          ${!esBodega&&!s.perdido&&!s.pagado&&(()=>{const c=clientById(s.clienteId);return c&&c.telefono;})()?actBtn(`recordatorioCobranza('${s.id}')`,'📲 Recordar cobro'):''}
+          ${!esBodega&&!s.perdido&&!s.pagado?actBtn(`recordatorioCobranza('${s.id}')`,'📲 Recordar cobro'):''}
           ${!esBodega?actBtn(`openSale('${s.id}')`,'✏️ Editar pedido'):''}
           ${!esBodega?(s.perdido?actBtn(`reabrirPedido('${s.id}')`,'↩️ Reabrir pedido'):actBtn(`marcarPedidoPerdido('${s.id}')`,'🚫 Marcar perdido')):''}
         </div>
@@ -2512,7 +2512,7 @@ function renderMiDia(){
   const cobroRow=s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<div class="flex items-center gap-3 px-4 py-3">
     <div class="flex-1 min-w-0 cursor-pointer" onclick="openSaleDetail('${s.id}')"><div class="font-medium text-sm truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400">${s.fecha}${d>0?' · hace '+d+'d':''}</div></div>
     <div class="font-semibold text-red-600 text-sm whitespace-nowrap shrink-0">${fmt(saleTotal(s))}</div>
-    ${(c&&c.telefono)?`<button onclick="recordatorioCobranza('${s.id}')" class="shrink-0 text-xs font-medium text-white px-2.5 py-1.5 rounded-lg" style="background:#25D366">📲</button>`:''}
+    <button onclick="recordatorioCobranza('${s.id}')" class="shrink-0 text-xs font-medium text-white px-2.5 py-1.5 rounded-lg" style="background:#25D366" title="Recordar cobro">📲</button>
   </div>`;};
   v.innerHTML=`
   <div class="mb-5"><div class="text-sm text-clay-500 capitalize">${saludoFecha}</div><h2 class="text-xl sm:text-2xl font-bold">Hola, ${(SESSION.nombre||'').split(' ')[0]} 👋</h2></div>
@@ -3131,7 +3131,7 @@ function renderCobranzas(){
           <td class="px-3 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-3 py-3 text-clay-600 whitespace-nowrap">${s.cuenta||'—'}</td>
           <td class="px-3 py-3 whitespace-nowrap">${docLabel(s)}</td>
-          <td class="px-5 py-3 text-right"><div class="inline-flex items-center gap-1.5">${(c&&c.telefono)?`<button onclick="event.stopPropagation();recordatorioCobranza('${s.id}')" class="text-xs font-medium text-white px-2.5 py-1.5 rounded-lg whitespace-nowrap" style="background:#25D366" title="Recordar cobro por WhatsApp">📲 Recordar</button>`:''}<button onclick="event.stopPropagation();markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg whitespace-nowrap">Marcar pagado ✓</button></div></td>
+          <td class="px-5 py-3 text-right"><div class="inline-flex items-center gap-1.5"><button onclick="event.stopPropagation();recordatorioCobranza('${s.id}')" class="text-xs font-medium text-white px-2.5 py-1.5 rounded-lg whitespace-nowrap" style="background:#25D366" title="Recordar cobro por WhatsApp">📲 Recordar</button><button onclick="event.stopPropagation();markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg whitespace-nowrap">Marcar pagado ✓</button></div></td>
         </tr>`;}).join('')}
         </tbody>
         <tfoot>
@@ -3150,7 +3150,7 @@ function renderCobranzas(){
           <div class="text-right shrink-0"><div class="font-bold whitespace-nowrap">${fmt(saleTotal(s))}</div><div class="mt-0.5">${ageBadge(d)}</div></div>
         </div>
         <div class="text-xs text-clay-500 mt-1.5 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
-        <div class="flex justify-between items-center mt-2.5 pt-2.5 border-t border-clay-100 gap-2">${docLabel(s)}<div class="flex gap-2">${(c&&c.telefono)?`<button onclick="event.stopPropagation();recordatorioCobranza('${s.id}')" class="text-xs font-medium text-white px-2.5 py-1.5 rounded-lg" style="background:#25D366">📲 Recordar</button>`:''}<button onclick="event.stopPropagation();markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg">Pagado ✓</button></div></div>
+        <div class="flex justify-between items-center mt-2.5 pt-2.5 border-t border-clay-100 gap-2">${docLabel(s)}<div class="flex gap-2"><button onclick="event.stopPropagation();recordatorioCobranza('${s.id}')" class="text-xs font-medium text-white px-2.5 py-1.5 rounded-lg" style="background:#25D366">📲 Recordar</button><button onclick="event.stopPropagation();markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg">Pagado ✓</button></div></div>
       </div>`;}).join('')}
       <div class="bg-white border border-clay-200 rounded-2xl p-3.5 flex justify-between font-bold"><span>Total por cobrar</span><span class="text-red-600">${fmt(totalCobrar)}</span></div>
     </div>
@@ -3168,7 +3168,7 @@ function renderCobranzas(){
           <div class="min-w-0"><div class="font-medium truncate">${c?c.nombre:'—'}</div><div class="text-xs text-clay-400">${ventas} venta${ventas!==1?'s':''} por cobrar</div></div>
           <div class="font-bold text-red-600 whitespace-nowrap">${fmt(r.monto)}</div>
         </div>
-        ${(c&&c.telefono)?`<button onclick="event.stopPropagation();recordatorioClienteDeuda('${r.cid}')" class="w-full mt-2.5 text-xs font-medium text-white px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5" style="background:#25D366" title="Enviar recordatorio con todo lo que debe">📲 Recordar por WhatsApp</button>`:''}
+        <button onclick="event.stopPropagation();recordatorioClienteDeuda('${r.cid}')" class="w-full mt-2.5 text-xs font-medium text-white px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5" style="background:#25D366" title="Enviar recordatorio con todo lo que debe">📲 Recordar por WhatsApp</button>
       </div>`;}).join('')}
     </div>
   </div>`}`;
