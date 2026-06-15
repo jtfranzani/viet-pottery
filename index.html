@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-22';
+const APP_VERSION = '2026.06.12-23';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -4103,7 +4103,48 @@ function guardarCampanaDesdeSeleccion(){
   setTimeout(()=>openCampana(c.id),120);
 }
 function setCampItemCant(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; it.cantProyectada=Math.max(0,Math.round(+val||0)); save(); openCampana(campId); }
+function setCampItemDisc(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; const d=Math.max(0,Math.min(95,Math.round(+val||0))); it.descPct=d; it.precioOferta=Math.round((it.precio||0)*(1-d/100)); save(); openCampana(campId); }
 function quitarCampItem(campId,pid){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.items=c.items.filter(i=>i.productId!==pid); save(); openCampana(campId); }
+function nuevaCampana(){
+  if(!DB.campaigns) DB.campaigns=[];
+  const nombre=prompt('Nombre de la nueva campaña:', 'Campaña '+new Date().toLocaleDateString('es-CL'));
+  if(nombre===null) return;
+  const c={id:uid('camp'), nombre:(nombre||'').trim()||'Campaña sin nombre', estado:'planificada', fechaInicio:todayISO(), fechaFin:'', condiciones:'', items:[], createdAt:Date.now()};
+  DB.campaigns.push(c); save(); renderOfertas(); setTimeout(()=>openCampana(c.id),100);
+}
+function openAddProductoCampana(campId){
+  const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return;
+  const yaIds=new Set((c.items||[]).map(i=>i.productId));
+  const prods=[...DB.products].filter(p=>!yaIds.has(p.id)).sort((a,b)=>productName(a).localeCompare(productName(b)));
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-lg font-bold">Agregar producto</h3><div class="text-xs text-clay-500 truncate">a la campaña “${c.nombre}”</div></div>
+      <button onclick="openCampana('${campId}')" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5">
+      <input id="addProdQ" oninput="filterAddProd()" placeholder="Buscar SKU, modelo o color..." class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mb-3">
+      <div class="space-y-1.5 max-h-[55vh] overflow-auto">
+        ${prods.length?prods.map(p=>`<button onclick="agregarProductoCampana('${campId}','${p.id}')" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" class="addprow w-full text-left flex items-center justify-between gap-3 border border-clay-100 rounded-xl px-3 py-2 hover:border-clay-300 hover:bg-clay-50">
+          <div class="min-w-0"><div class="font-medium text-sm truncate">${productName(p)}</div><div class="text-[11px] text-clay-400">${p.sku} · stock ${stockOf(p.id)} · margen ${prodMargenPct(p)?Math.round(prodMargenPct(p))+'%':'—'}</div></div>
+          <div class="text-sm font-semibold shrink-0">${fmt(p.precioRef)}</div>
+        </button>`).join(''):'<div class="text-sm text-clay-400 text-center py-6">Todos los productos ya están en la campaña.</div>'}
+      </div>
+      <div class="text-right mt-3"><button onclick="openCampana('${campId}')" class="text-sm font-medium px-4 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">Listo</button></div>
+    </div>
+  `);
+}
+function filterAddProd(){ const q=(document.getElementById('addProdQ')?.value||'').toLowerCase(); document.querySelectorAll('.addprow').forEach(el=>{ el.style.display=(!q||(el.dataset.text||'').includes(q))?'':'none'; }); }
+function agregarProductoCampana(campId,pid){
+  const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return;
+  const p=productById(pid); if(!p) return;
+  c.items=c.items||[];
+  if(!c.items.some(i=>i.productId===pid)){
+    const stk=stockOf(pid);
+    c.items.push({productId:pid, precio:p.precioRef||0, descPct:0, precioOferta:p.precioRef||0, costo:p.costo||0, cantProyectada: stk>0?stk:0});
+    save();
+  }
+  openAddProductoCampana(campId);
+}
 function setCampEstado(campId,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.estado=val; save(); if(isModalOpen())openCampana(campId); if(OFERTAS.view==='campanas')renderOfertas(); }
 function setCampField(campId,field,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c[field]=val; save(); }
 function deleteCampana(campId){ if(!confirm('¿Eliminar esta campaña?'))return; DB.campaigns=(DB.campaigns||[]).filter(x=>x.id!==campId); save(); closeModal(); renderOfertas(); }
@@ -4112,7 +4153,9 @@ function openCampana(id){
   const pr=campProj(c);
   const mini=(t,v,col)=>`<div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-[11px] text-clay-500">${t}</div><div class="text-base font-bold ${col||''}">${v}</div></div>`;
   const rows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);const venta=it.precioOferta*q;const margen=(it.precioOferta-(it.costo||0))*q;return `<tr class="border-t border-clay-100">
-    <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · -${it.descPct}% · ${fmt(it.precioOferta)}</div></td>
+    <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · normal ${fmt(it.precio)}</div></td>
+    <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${it.descPct}" onchange="setCampItemDisc('${c.id}','${it.productId}',this.value)" class="w-14 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div></td>
+    <td class="px-3 py-2.5 text-right font-medium text-clay-800">${fmt(it.precioOferta)}</td>
     <td class="px-3 py-2.5 text-center"><input type="number" min="0" value="${q}" onchange="setCampItemCant('${c.id}','${it.productId}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"></td>
     <td class="px-3 py-2.5 text-right font-medium">${fmt(venta)}</td>
     <td class="px-3 py-2.5 text-right text-sage-700">${fmt(margen)}</td>
@@ -4141,8 +4184,12 @@ function openCampana(id){
         <div><label class="text-xs text-clay-500">Fin / validez</label><input type="date" value="${c.fechaFin||''}" onchange="setCampField('${c.id}','fechaFin',this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
       </div>
       <div><label class="text-xs text-clay-500">Condiciones</label><input value="${(c.condiciones||'').replace(/"/g,'&quot;')}" onchange="setCampField('${c.id}','condiciones',this.value)" placeholder="Condiciones de la campaña" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-xs text-clay-400 uppercase tracking-wide">Productos de la campaña</div>
+        <button onclick="openAddProductoCampana('${c.id}')" class="text-sm font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-3 py-1.5 rounded-lg">➕ Agregar producto</button>
+      </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
-        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th><th class="px-2 py-2.5"></th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="px-3 py-6 text-center text-clay-400">Sin productos en la campaña.</td></tr>'}</tbody></table></div>
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[560px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Desc.</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th><th class="px-2 py-2.5"></th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="px-3 py-6 text-center text-clay-400">Sin productos aún. Usa “➕ Agregar producto”.</td></tr>'}</tbody></table></div>
       </div>
       <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
         <button onclick="generarPdfCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">📄 PDF de la campaña</button>
@@ -4198,6 +4245,10 @@ function renderCampanasHTML(){
     </div>
   </div>`;};
   return `
+  <div class="flex items-center justify-between gap-2 mb-4">
+    <div class="text-sm text-clay-500">Tus campañas de oferta y su proyección de ventas.</div>
+    <button onclick="nuevaCampana()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl whitespace-nowrap">+ Nueva campaña</button>
+  </div>
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-5">
     ${statCard('Campañas',camps.length,activas.length+' activas/planificadas','')}
     ${statCard('Ventas proyectadas',fmt(totVentas),'campañas no cerradas','text-clay-800')}
@@ -4208,8 +4259,8 @@ function renderCampanasHTML(){
   <div class="card p-10 text-center text-clay-500">
     <div class="text-3xl mb-2">📣</div>
     <div class="font-medium">Aún no tienes campañas</div>
-    <div class="text-sm text-clay-400 mt-1">Ve a <b>Recomendaciones</b>, marca los productos que quieres ofertar y usa <b>"Guardar como campaña"</b>. Aquí podrás proyectar sus ventas, unidades y margen.</div>
-    <button onclick="setOfertasView('reco')" class="mt-4 text-sm font-medium text-white bg-clay-700 hover:bg-clay-800 px-4 py-2 rounded-xl">Ir a Recomendaciones →</button>
+    <div class="text-sm text-clay-400 mt-1">Crea una con <b>"+ Nueva campaña"</b> y agrega cualquier producto, o ve a <b>Recomendaciones</b>, marca productos y usa <b>"Guardar como campaña"</b>. En ambos casos podrás proyectar ventas, unidades y margen.</div>
+    <div class="flex gap-2 justify-center mt-4"><button onclick="nuevaCampana()" class="text-sm font-medium text-white bg-clay-700 hover:bg-clay-800 px-4 py-2 rounded-xl">+ Nueva campaña</button><button onclick="setOfertasView('reco')" class="text-sm font-medium border border-clay-200 hover:bg-clay-50 px-4 py-2 rounded-xl">Ver recomendaciones</button></div>
   </div>`}`;
 }
 function generarPdfOfertas(){
