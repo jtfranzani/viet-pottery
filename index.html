@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-19';
+const APP_VERSION = '2026.06.12-20';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -4063,7 +4063,40 @@ function taskCard(t){
   </div>`;
 }
 /* ===================== OFERTAS (recomendador de liquidación) ===================== */
-let OFERTAS={preset:'sem', weeks:2, from:'', to:'', floor:0.20, override:{}, sort:{venta:{key:'vendidas',dir:'asc'}, stock:{key:'stock',dir:'desc'}}};
+let OFERTAS={preset:'sem', weeks:2, from:'', to:'', floor:0.20, override:{}, selected:{}, ofTitulo:'', ofValidez:'', ofCondiciones:'', _eff:{}, sort:{venta:{key:'vendidas',dir:'asc'}, stock:{key:'stock',dir:'desc'}}};
+function toggleOfertaSel(pid){ if(OFERTAS.selected[pid]) delete OFERTAS.selected[pid]; else OFERTAS.selected[pid]=true; renderOfertas(); }
+function limpiarSeleccionOfertas(){ OFERTAS.selected={}; renderOfertas(); }
+function generarPdfOfertas(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión.'); return; }
+  const sel=Object.keys(OFERTAS.selected).filter(k=>OFERTAS.selected[k]);
+  if(!sel.length){ alert('Selecciona al menos un producto para la oferta.'); return; }
+  const items=sel.map(pid=>{const p=productById(pid); if(!p) return null; const e=OFERTAS._eff[pid]||{precio:p.precioRef||0,discPct:0,precioOferta:p.precioRef||0}; return {p,e};}).filter(Boolean)
+    .sort((a,b)=>productName(a.p).localeCompare(productName(b.p)));
+  const {jsPDF}=window.jspdf; const doc=new jsPDF();
+  const titulo=(OFERTAS.ofTitulo||'').trim(), validez=(OFERTAS.ofValidez||'').trim(), cond=(OFERTAS.ofCondiciones||'').trim();
+  const band=()=>{ doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F'); doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Ofertas',14,12); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text((titulo?titulo+'   ·   ':'')+'Emitida el '+new Date().toLocaleDateString('es-CL')+(validez?'   ·   Válida hasta '+validez:''),14,20); };
+  band();
+  let y=34;
+  if(cond){ doc.setTextColor(35,51,42); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Condiciones acordadas',14,y); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,90,80); const lines=doc.splitTextToSize(cond,182); doc.text(lines,14,y+5); y+=5+lines.length*4.6+5; }
+  doc.autoTable({
+    startY:y,
+    head:[['Producto','SKU','Precio normal','Descuento','Precio oferta']],
+    body:items.map(({p,e})=>[productName(p), p.sku||'', fmt(e.precio), '-'+e.discPct+'%', fmt(e.precioOferta)]),
+    styles:{fontSize:9.5,cellPadding:3.5,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{1:{cellWidth:24},2:{halign:'right',cellWidth:30},3:{halign:'center',cellWidth:24},4:{halign:'right',cellWidth:30,fontStyle:'bold'}},
+    margin:{left:14,right:14},
+    didDrawPage:()=>band()
+  });
+  let yy=doc.lastAutoTable.finalY+9;
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(35,51,42);
+  doc.text(items.length+' producto'+(items.length!==1?'s':'')+' en oferta',14,yy);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150,150,150);
+  doc.text('Precios en pesos chilenos. Oferta sujeta a las condiciones indicadas y disponibilidad de stock.',14,yy+6);
+  doc.text('Generado con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
+  savePdfDoc(doc,'ofertas-'+todayISO()+'.pdf');
+}
 function setOfertasWeeks(w){ OFERTAS.preset='sem'; OFERTAS.weeks=+w; renderOfertas(); }
 function setOfertasPreset(p){ OFERTAS.preset=p; if(p==='custom'){ if(!OFERTAS.from) OFERTAS.from=isoDaysAgo(14); if(!OFERTAS.to) OFERTAS.to=todayISO(); } renderOfertas(); }
 function setOfertasFrom(v){ OFERTAS.from=v; renderOfertas(); }
@@ -4120,6 +4153,8 @@ function renderOfertas(){
   DB.sales.forEach(s=>{ if(s.perdido) return; const f=s.fecha||''; if(f>=fromW && f<=toW){ s.items.forEach(i=>{ if(i.productId) soldWin[i.productId]=(soldWin[i.productId]||0)+i.cantidad; }); } });
   const recs=[];
   DB.products.forEach(p=>{ const u=soldWin[p.id]||0; const r=ofertaRec(p,u,floor); if(r){ r.p=p; recs.push(r); } });
+  OFERTAS._eff={}; recs.forEach(r=>{ const e=ofertaEff(r); OFERTAS._eff[r.p.id]={precio:r.precio,discPct:e.discPct,precioOferta:e.precioOferta}; });
+  const selCount=Object.keys(OFERTAS.selected||{}).filter(k=>OFERTAS.selected[k]).length;
   const slowRecs=recs.filter(r=>r.slow);
   const porVenta=sortRecs(slowRecs,OFERTAS.sort.venta).slice(0,12);
   const porStock=sortRecs(recs,OFERTAS.sort.stock).slice(0,15);
@@ -4131,7 +4166,8 @@ function renderOfertas(){
   const floorSel=`<select onchange="setOfertasFloor(this.value)" class="border border-clay-200 rounded-lg px-3 py-1.5 text-sm bg-white">${[[0.30,'30%'],[0.20,'20%'],[0.10,'10%'],[0,'al costo (0%)']].map(([f,l])=>`<option value="${f}" ${floor===f?'selected':''}>Margen mínimo ${l}</option>`).join('')}</select>`;
   const mgColor=m=>m>=0.5?'text-sage-600':m>=0.35?'text-amber-600':'text-red-600';
   const th=(which,key,label,align)=>{const st=OFERTAS.sort[which];const act=st.key===key;const arr=act?(st.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-4 py-3"><button onclick="setOfertaSort('${which}','${key}')" class="uppercase ${act?'text-clay-800 font-semibold':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
-  const rowDesk=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+  const rowDesk=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;const seld=!!OFERTAS.selected[r.p.id];return `<tr class="border-t border-clay-100 ${seld?'bg-sage-50':'hover:bg-clay-50/60'}">
+    <td class="px-3 py-3" onclick="event.stopPropagation()"><input type="checkbox" ${seld?'checked':''} onclick="toggleOfertaSel('${r.p.id}')" class="w-4 h-4 accent-clay-700 align-middle"></td>
     <td class="px-4 py-3 font-medium cursor-pointer" onclick="openProductDetail('${r.p.id}')">${productName(r.p)}<div class="text-xs text-clay-400">${r.p.sku}</div></td>
     <td class="px-4 py-3 text-center">${r.u}</td>
     <td class="px-4 py-3 text-center ${r.stock>=20?'text-amber-600 font-semibold':''}">${r.stock}</td>
@@ -4142,10 +4178,13 @@ function renderOfertas(){
     <td class="px-4 py-3 text-right font-bold text-clay-800">${fmt(e.precioOferta)}</td>
     <td class="px-4 py-3 text-right ${mgColor(e.margenOfPct)} font-semibold">${Math.round(e.margenOfPct*100)}%<div class="text-xs ${bajo?'text-red-500':'text-clay-400'}">${bajo?'bajo el piso':fmt(e.margenOfDinero)}</div></td>
   </tr>`;};
-  const cardMob=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;return `<div class="card p-3.5">
-    <div class="flex justify-between items-start gap-2 cursor-pointer" onclick="openProductDetail('${r.p.id}')">
-      <div class="min-w-0"><div class="font-bold truncate">${productName(r.p)}</div><div class="text-xs text-clay-400">${r.p.sku}</div></div>
-      <div class="text-right shrink-0"><div class="text-[11px] text-clay-400 line-through">${fmt(r.precio)}</div><div class="text-lg font-bold text-clay-800">${fmt(e.precioOferta)}</div></div>
+  const cardMob=r=>{const e=ofertaEff(r);const bajo=e.discPct>r.maxDiscPct;const seld=!!OFERTAS.selected[r.p.id];return `<div class="card p-3.5 ${seld?'ring-2 ring-sage-300':''}">
+    <div class="flex justify-between items-start gap-2">
+      <div class="flex items-start gap-2 min-w-0">
+        <input type="checkbox" ${seld?'checked':''} onclick="toggleOfertaSel('${r.p.id}')" class="w-4 h-4 accent-clay-700 mt-1 shrink-0">
+        <div class="min-w-0 cursor-pointer" onclick="openProductDetail('${r.p.id}')"><div class="font-bold truncate">${productName(r.p)}</div><div class="text-xs text-clay-400">${r.p.sku}</div></div>
+      </div>
+      <div class="text-right shrink-0 cursor-pointer" onclick="openProductDetail('${r.p.id}')"><div class="text-[11px] text-clay-400 line-through">${fmt(r.precio)}</div><div class="text-lg font-bold text-clay-800">${fmt(e.precioOferta)}</div></div>
     </div>
     <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-clay-500 mt-2">
       <span>Vendidas: <b class="text-clay-700">${r.u}</b></span>
@@ -4158,8 +4197,8 @@ function renderOfertas(){
     </div>
   </div>`;};
   const tabla=(list,which,vacio)=> list.length? `
-    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[880px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-      ${th(which,'producto','Producto')}${th(which,'vendidas','Vendidas','text-center')}${th(which,'stock','Stock','text-center')}${th(which,'precio','Precio','text-right')}${th(which,'costo','Costo','text-right')}${th(which,'margenact','Margen actual','text-right')}${th(which,'descuento','Descuento','text-center')}${th(which,'preciooferta','Precio oferta','text-right')}${th(which,'margenoferta','Margen oferta','text-right')}
+    <div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[920px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+      <th class="px-3 py-3 w-8"></th>${th(which,'producto','Producto')}${th(which,'vendidas','Vendidas','text-center')}${th(which,'stock','Stock','text-center')}${th(which,'precio','Precio','text-right')}${th(which,'costo','Costo','text-right')}${th(which,'margenact','Margen actual','text-right')}${th(which,'descuento','Descuento','text-center')}${th(which,'preciooferta','Precio oferta','text-right')}${th(which,'margenoferta','Margen oferta','text-right')}
     </tr></thead><tbody>${list.map(rowDesk).join('')}</tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${list.map(cardMob).join('')}</div>`
     : `<div class="p-10 text-center text-clay-400 text-sm">${vacio}</div>`;
@@ -4172,6 +4211,21 @@ function renderOfertas(){
     </div>
     ${dateInputs}
     <div class="text-xs text-clay-400 mt-2">Recomienda descuentos para productos de baja rotación sin que el margen baje del mínimo elegido. Puedes editar el descuento de cada producto y ordenar cualquier columna haciendo clic en su título.</div>
+  </div>
+  <div class="card p-4 mb-4 ring-1 ring-clay-200">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <div class="font-semibold flex items-center gap-2">🏷️ Armar oferta <span class="text-sm font-normal text-clay-500">· ${selCount} seleccionado${selCount!==1?'s':''}</span></div>
+      <div class="flex gap-2">
+        ${selCount?`<button onclick="limpiarSeleccionOfertas()" class="text-sm border border-clay-200 px-3 py-1.5 rounded-lg hover:bg-clay-50">Limpiar</button>`:''}
+        <button ${selCount?'':'disabled'} onclick="generarPdfOfertas()" class="text-sm font-medium text-white ${selCount?'bg-clay-700 hover:bg-clay-800':'bg-clay-300 cursor-not-allowed'} px-4 py-1.5 rounded-lg">📄 Generar PDF</button>
+      </div>
+    </div>
+    <div class="grid sm:grid-cols-3 gap-3 mt-3">
+      <div><label class="text-xs text-clay-500">Título / dirigida a</label><input value="${(OFERTAS.ofTitulo||'').replace(/"/g,'&quot;')}" oninput="OFERTAS.ofTitulo=this.value" placeholder="Ej: Oferta junio · Cliente X" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+      <div><label class="text-xs text-clay-500">Válida hasta</label><input type="date" value="${OFERTAS.ofValidez||''}" oninput="OFERTAS.ofValidez=this.value" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+      <div><label class="text-xs text-clay-500">Condiciones acordadas</label><input value="${(OFERTAS.ofCondiciones||'').replace(/"/g,'&quot;')}" oninput="OFERTAS.ofCondiciones=this.value" placeholder="Ej: pago contado, retira en bodega, despacho aparte..." class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+    </div>
+    <div class="text-[11px] text-clay-400 mt-2">Marca los productos en las tablas de abajo, ajusta el descuento si quieres, completa las condiciones y genera el PDF para imprimir o compartir.</div>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-5">
     ${statCard('Productos en alerta',slowRecs.length,'baja rotación','text-amber-600')}
