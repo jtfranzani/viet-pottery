@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-20';
+const APP_VERSION = '2026.06.12-22';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -400,6 +400,7 @@ async function bootData(){
   if(!DB.suppliers) DB.suppliers=[];
   if(!DB.metaUnidades) DB.metaUnidades={};
   if(!DB.tasks) DB.tasks=[];
+  if(!DB.campaigns) DB.campaigns=[];
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
@@ -502,7 +503,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; rerender(); });
     showApp();
   });
 }
@@ -1458,6 +1459,8 @@ function distinctCI(values){
 }
 let VENTAS_PAGE=1, VENTAS_PER=20;
 let VENTAS_SORT={key:'fecha', dir:'desc'};
+let PED_VIEW='activos'; // 'activos' (oculta perdidos) | 'perdidos' (solo perdidos)
+function setPedView(v){ PED_VIEW=v; VENTAS_PAGE=1; renderVentas(); }
 function setVentasSort(key){ if(VENTAS_SORT.key===key){ VENTAS_SORT.dir=VENTAS_SORT.dir==='asc'?'desc':'asc'; } else { VENTAS_SORT.key=key; VENTAS_SORT.dir = (key==='cliente'||key==='entrega')?'asc':'desc'; } renderVentas(); }
 function renderVentas(){
   const v=document.getElementById('view');
@@ -1467,7 +1470,19 @@ function renderVentas(){
   const rows=[...DB.sales].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
   const ciudades=distinctCI(DB.sales.map(s=>s.ciudad));
   const comunas=distinctCI(DB.sales.map(s=>s.comuna));
+  const activosCount=DB.sales.filter(s=>!s.perdido).length;
+  const perdidosCount=DB.sales.filter(s=>s.perdido).length;
   v.innerHTML=`
+  <div class="grid grid-cols-2 gap-3 mb-4 sm:max-w-md">
+    <button onclick="setPedView('activos')" class="card p-3 sm:p-4 text-left transition ${PED_VIEW==='activos'?'ring-2 ring-clay-500':'hover:border-clay-300'}">
+      <div class="text-xs text-clay-500">📦 Pedidos activos</div>
+      <div class="text-xl sm:text-2xl font-bold text-clay-800 mt-0.5">${activosCount}</div>
+    </button>
+    <button onclick="setPedView('perdidos')" class="card p-3 sm:p-4 text-left transition ${PED_VIEW==='perdidos'?'ring-2 ring-red-400':'hover:border-clay-300'}">
+      <div class="text-xs text-clay-500">🚫 Perdidos</div>
+      <div class="text-xl sm:text-2xl font-bold mt-0.5 ${perdidosCount?'text-red-600':'text-clay-400'}">${perdidosCount}</div>
+    </button>
+  </div>
   <div class="card overflow-hidden">
     <div class="p-4 flex flex-wrap gap-2 items-center border-b border-clay-100">
       <input id="fVenta" oninput="filterVentas()" placeholder="Buscar cliente o producto..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm w-full sm:w-52">
@@ -4063,9 +4078,140 @@ function taskCard(t){
   </div>`;
 }
 /* ===================== OFERTAS (recomendador de liquidación) ===================== */
-let OFERTAS={preset:'sem', weeks:2, from:'', to:'', floor:0.20, override:{}, selected:{}, ofTitulo:'', ofValidez:'', ofCondiciones:'', _eff:{}, sort:{venta:{key:'vendidas',dir:'asc'}, stock:{key:'stock',dir:'desc'}}};
+let OFERTAS={view:'reco', preset:'sem', weeks:2, from:'', to:'', floor:0.20, override:{}, selected:{}, ofTitulo:'', ofValidez:'', ofCondiciones:'', _eff:{}, sort:{venta:{key:'vendidas',dir:'asc'}, stock:{key:'stock',dir:'desc'}}};
+function setOfertasView(view){ OFERTAS.view=view; renderOfertas(); }
 function toggleOfertaSel(pid){ if(OFERTAS.selected[pid]) delete OFERTAS.selected[pid]; else OFERTAS.selected[pid]=true; renderOfertas(); }
 function limpiarSeleccionOfertas(){ OFERTAS.selected={}; renderOfertas(); }
+/* ----- Campañas: una campaña guarda un set de productos en oferta y proyecta sus ventas ----- */
+function campProj(c){
+  let unidades=0, ventas=0, costo=0, ventasNormal=0;
+  (c.items||[]).forEach(it=>{ const q=Math.max(0,+it.cantProyectada||0); unidades+=q; ventas+=(it.precioOferta||0)*q; costo+=(it.costo||0)*q; ventasNormal+=(it.precio||0)*q; });
+  return {unidades, ventas, costo, margen:ventas-costo, ventasNormal, descuento:ventasNormal-ventas, margenPct: ventas?(ventas-costo)/ventas:0, nProductos:(c.items||[]).length};
+}
+function campEstadoPill(e){ return e==='activa'?pill('Activa','green'):e==='cerrada'?pill('Cerrada','gray'):pill('Planificada','amber'); }
+function guardarCampanaDesdeSeleccion(){
+  const sel=Object.keys(OFERTAS.selected).filter(k=>OFERTAS.selected[k]);
+  if(!sel.length){ alert('Selecciona al menos un producto para crear la campaña.'); return; }
+  let nombre=(OFERTAS.ofTitulo||'').trim();
+  if(!nombre){ nombre=prompt('Nombre de la campaña:', 'Campaña '+new Date().toLocaleDateString('es-CL')); if(nombre===null) return; nombre=(nombre||'').trim()||'Campaña sin nombre'; }
+  if(!DB.campaigns) DB.campaigns=[];
+  const items=sel.map(pid=>{const p=productById(pid); if(!p) return null; const e=OFERTAS._eff[pid]||{precio:p.precioRef||0,discPct:0,precioOferta:p.precioRef||0}; const stk=stockOf(pid); return {productId:pid, precio:e.precio, descPct:e.discPct, precioOferta:e.precioOferta, costo:p.costo||0, cantProyectada: stk>0?stk:0};}).filter(Boolean);
+  const c={ id:uid('camp'), nombre, estado:'planificada', fechaInicio:todayISO(), fechaFin:OFERTAS.ofValidez||'', condiciones:OFERTAS.ofCondiciones||'', items, createdAt:Date.now() };
+  DB.campaigns.push(c); save();
+  OFERTAS.selected={}; OFERTAS.view='campanas';
+  toastInfo('✓ Campaña creada'); renderOfertas();
+  setTimeout(()=>openCampana(c.id),120);
+}
+function setCampItemCant(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; it.cantProyectada=Math.max(0,Math.round(+val||0)); save(); openCampana(campId); }
+function quitarCampItem(campId,pid){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.items=c.items.filter(i=>i.productId!==pid); save(); openCampana(campId); }
+function setCampEstado(campId,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.estado=val; save(); if(isModalOpen())openCampana(campId); if(OFERTAS.view==='campanas')renderOfertas(); }
+function setCampField(campId,field,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c[field]=val; save(); }
+function deleteCampana(campId){ if(!confirm('¿Eliminar esta campaña?'))return; DB.campaigns=(DB.campaigns||[]).filter(x=>x.id!==campId); save(); closeModal(); renderOfertas(); }
+function openCampana(id){
+  const c=(DB.campaigns||[]).find(x=>x.id===id); if(!c) return;
+  const pr=campProj(c);
+  const mini=(t,v,col)=>`<div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-[11px] text-clay-500">${t}</div><div class="text-base font-bold ${col||''}">${v}</div></div>`;
+  const rows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);const venta=it.precioOferta*q;const margen=(it.precioOferta-(it.costo||0))*q;return `<tr class="border-t border-clay-100">
+    <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · -${it.descPct}% · ${fmt(it.precioOferta)}</div></td>
+    <td class="px-3 py-2.5 text-center"><input type="number" min="0" value="${q}" onchange="setCampItemCant('${c.id}','${it.productId}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"></td>
+    <td class="px-3 py-2.5 text-right font-medium">${fmt(venta)}</td>
+    <td class="px-3 py-2.5 text-right text-sage-700">${fmt(margen)}</td>
+    <td class="px-2 py-2.5 text-right"><button onclick="quitarCampItem('${c.id}','${it.productId}')" class="text-clay-300 hover:text-red-600 text-sm">✕</button></td>
+  </tr>`;}).join('');
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div class="min-w-0"><h3 class="text-lg font-bold leading-tight truncate">📣 ${c.nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Campaña de ofertas · proyección de ventas</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        ${mini('Unidades proyectadas',pr.unidades,'')}
+        ${mini('Ventas proyectadas',fmt(pr.ventas),'text-clay-800')}
+        ${mini('Margen proyectado',fmt(pr.margen),'text-sage-600')}
+        ${mini('Margen %',Math.round(pr.margenPct*100)+'%','text-sage-600')}
+      </div>
+      <div class="bg-clay-50 rounded-xl p-3 text-xs text-clay-600 flex flex-wrap gap-x-4 gap-y-1">
+        <span>Precio normal proyectado: <b>${fmt(pr.ventasNormal)}</b></span>
+        <span>Descuento total otorgado: <b class="text-red-600">${fmt(pr.descuento)}</b></span>
+        <span>Costo proyectado: <b>${fmt(pr.costo)}</b></span>
+      </div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-xs text-clay-500">Estado</label><select onchange="setCampEstado('${c.id}',this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1 bg-white"><option value="planificada" ${c.estado==='planificada'?'selected':''}>Planificada</option><option value="activa" ${c.estado==='activa'?'selected':''}>Activa</option><option value="cerrada" ${c.estado==='cerrada'?'selected':''}>Cerrada</option></select></div>
+        <div><label class="text-xs text-clay-500">Inicio</label><input type="date" value="${c.fechaInicio||''}" onchange="setCampField('${c.id}','fechaInicio',this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+        <div><label class="text-xs text-clay-500">Fin / validez</label><input type="date" value="${c.fechaFin||''}" onchange="setCampField('${c.id}','fechaFin',this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+      </div>
+      <div><label class="text-xs text-clay-500">Condiciones</label><input value="${(c.condiciones||'').replace(/"/g,'&quot;')}" onchange="setCampField('${c.id}','condiciones',this.value)" placeholder="Condiciones de la campaña" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th><th class="px-2 py-2.5"></th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="px-3 py-6 text-center text-clay-400">Sin productos en la campaña.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
+        <button onclick="generarPdfCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl bg-clay-700 hover:bg-clay-800 text-white">📄 PDF de la campaña</button>
+        <button onclick="deleteCampana('${c.id}')" class="text-sm font-medium px-3 py-2 rounded-xl border border-clay-200 text-red-600 hover:bg-red-50">🗑️ Eliminar</button>
+      </div>
+    </div>
+  `);
+}
+function generarPdfCampana(id){
+  const c=(DB.campaigns||[]).find(x=>x.id===id); if(!c) return;
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
+  const pr=campProj(c);
+  const {jsPDF}=window.jspdf; const doc=new jsPDF();
+  const band=()=>{ doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F'); doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Campaña',14,12); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text(c.nombre+'   ·   '+(c.estado||'planificada')+(c.fechaInicio?'   ·   '+c.fechaInicio:'')+(c.fechaFin?' al '+c.fechaFin:''),14,20); };
+  band();
+  let y=34;
+  if(c.condiciones){ doc.setTextColor(35,51,42); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Condiciones',14,y); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,90,80); const lines=doc.splitTextToSize(c.condiciones,182); doc.text(lines,14,y+5); y+=5+lines.length*4.6+5; }
+  doc.autoTable({
+    startY:y,
+    head:[['Producto','SKU','Precio oferta','Cant. proy.','Venta proy.','Margen proy.']],
+    body:(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);return [p?productName(p):'(producto)', p?p.sku:'', fmt(it.precioOferta), String(q), fmt(it.precioOferta*q), fmt((it.precioOferta-(it.costo||0))*q)];}),
+    foot:[['Totales','','',String(pr.unidades),fmt(pr.ventas),fmt(pr.margen)]],
+    styles:{fontSize:9,cellPadding:3.2,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
+    headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
+    footStyles:{fillColor:[230,236,231],textColor:[35,51,42],fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[247,250,247]},
+    columnStyles:{1:{cellWidth:22},2:{halign:'right'},3:{halign:'center',cellWidth:20},4:{halign:'right'},5:{halign:'right'}},
+    margin:{left:14,right:14},
+    didDrawPage:()=>band()
+  });
+  let yy=doc.lastAutoTable.finalY+9;
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(35,51,42);
+  doc.text('Proyección: '+pr.unidades+' u · ventas '+fmt(pr.ventas)+' · margen '+fmt(pr.margen)+' ('+Math.round(pr.margenPct*100)+'%)',14,yy);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150,150,150);
+  doc.text('Proyección estimada según las cantidades ingresadas. Generado con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
+  savePdfDoc(doc,'campana-'+(c.nombre||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30)+'.pdf');
+}
+function renderCampanasHTML(){
+  const camps=[...(DB.campaigns||[])].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  const activas=camps.filter(c=>c.estado!=='cerrada');
+  const totVentas=activas.reduce((a,c)=>a+campProj(c).ventas,0);
+  const totMargen=activas.reduce((a,c)=>a+campProj(c).margen,0);
+  const totUnid=activas.reduce((a,c)=>a+campProj(c).unidades,0);
+  const card=c=>{const pr=campProj(c);return `<div class="card p-4 cursor-pointer hover:border-clay-300" onclick="openCampana('${c.id}')">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0"><div class="font-bold truncate">${c.nombre}</div><div class="text-xs text-clay-400 mt-0.5">${pr.nProductos} producto${pr.nProductos!==1?'s':''}${c.fechaInicio?' · desde '+c.fechaInicio:''}${c.fechaFin?' al '+c.fechaFin:''}</div></div>
+      ${campEstadoPill(c.estado)}
+    </div>
+    <div class="grid grid-cols-3 gap-2 mt-3 text-center">
+      <div class="bg-clay-50 rounded-lg p-2"><div class="text-[10px] text-clay-500">Unidades</div><div class="text-sm font-bold">${pr.unidades}</div></div>
+      <div class="bg-clay-50 rounded-lg p-2"><div class="text-[10px] text-clay-500">Ventas proy.</div><div class="text-sm font-bold text-clay-800">${fmt(pr.ventas)}</div></div>
+      <div class="bg-clay-50 rounded-lg p-2"><div class="text-[10px] text-clay-500">Margen proy.</div><div class="text-sm font-bold text-sage-600">${fmt(pr.margen)}</div></div>
+    </div>
+  </div>`;};
+  return `
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-5">
+    ${statCard('Campañas',camps.length,activas.length+' activas/planificadas','')}
+    ${statCard('Ventas proyectadas',fmt(totVentas),'campañas no cerradas','text-clay-800')}
+    ${statCard('Margen proyectado',fmt(totMargen),totVentas?Math.round(totMargen/totVentas*100)+'%':'','text-sage-600')}
+    ${statCard('Unidades proyectadas',totUnid,'a vender','')}
+  </div>
+  ${camps.length?`<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${camps.map(card).join('')}</div>`:`
+  <div class="card p-10 text-center text-clay-500">
+    <div class="text-3xl mb-2">📣</div>
+    <div class="font-medium">Aún no tienes campañas</div>
+    <div class="text-sm text-clay-400 mt-1">Ve a <b>Recomendaciones</b>, marca los productos que quieres ofertar y usa <b>"Guardar como campaña"</b>. Aquí podrás proyectar sus ventas, unidades y margen.</div>
+    <button onclick="setOfertasView('reco')" class="mt-4 text-sm font-medium text-white bg-clay-700 hover:bg-clay-800 px-4 py-2 rounded-xl">Ir a Recomendaciones →</button>
+  </div>`}`;
+}
 function generarPdfOfertas(){
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión.'); return; }
   const sel=Object.keys(OFERTAS.selected).filter(k=>OFERTAS.selected[k]);
@@ -4145,6 +4291,12 @@ function ofertaSortVal(r,key){
 function sortRecs(list,st){ const dir=st.dir==='asc'?1:-1; return [...list].sort((a,b)=>{const va=ofertaSortVal(a,st.key),vb=ofertaSortVal(b,st.key); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;}); }
 function renderOfertas(){
   const v=document.getElementById('view');
+  if(!DB.campaigns) DB.campaigns=[];
+  const tabBar=`<div class="flex gap-2 mb-4">
+    <button onclick="setOfertasView('reco')" class="px-4 py-2 rounded-xl text-sm font-medium ${OFERTAS.view!=='campanas'?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">💡 Recomendaciones</button>
+    <button onclick="setOfertasView('campanas')" class="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1.5 ${OFERTAS.view==='campanas'?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">📣 Campañas${DB.campaigns.length?`<span class="text-xs ${OFERTAS.view==='campanas'?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${DB.campaigns.length}</span>`:''}</button>
+  </div>`;
+  if(OFERTAS.view==='campanas'){ v.innerHTML=tabBar+renderCampanasHTML(); return; }
   const floor=OFERTAS.floor;
   let fromW,toW,winLabel;
   if(OFERTAS.preset==='custom'){ fromW=OFERTAS.from||isoDaysAgo(14); toW=OFERTAS.to||todayISO(); winLabel='personalizado'; }
@@ -4203,6 +4355,7 @@ function renderOfertas(){
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${list.map(cardMob).join('')}</div>`
     : `<div class="p-10 text-center text-clay-400 text-sm">${vacio}</div>`;
   v.innerHTML=`
+  ${tabBar}
   <div class="card p-4 mb-4">
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-semibold mr-1">Analizar ventas de:</span>
@@ -4217,6 +4370,7 @@ function renderOfertas(){
       <div class="font-semibold flex items-center gap-2">🏷️ Armar oferta <span class="text-sm font-normal text-clay-500">· ${selCount} seleccionado${selCount!==1?'s':''}</span></div>
       <div class="flex gap-2">
         ${selCount?`<button onclick="limpiarSeleccionOfertas()" class="text-sm border border-clay-200 px-3 py-1.5 rounded-lg hover:bg-clay-50">Limpiar</button>`:''}
+        <button ${selCount?'':'disabled'} onclick="guardarCampanaDesdeSeleccion()" class="text-sm font-medium ${selCount?'border border-clay-300 text-clay-700 hover:bg-clay-50':'border border-clay-200 text-clay-300 cursor-not-allowed'} px-4 py-1.5 rounded-lg">📣 Guardar como campaña</button>
         <button ${selCount?'':'disabled'} onclick="generarPdfOfertas()" class="text-sm font-medium text-white ${selCount?'bg-clay-700 hover:bg-clay-800':'bg-clay-300 cursor-not-allowed'} px-4 py-1.5 rounded-lg">📄 Generar PDF</button>
       </div>
     </div>
@@ -4422,7 +4576,9 @@ function ventasMatch(el){
   const ciudad=g('fCiudad')?g('fCiudad').value:'';
   const comuna=g('fComuna')?g('fComuna').value:'';
   const desp=g('fDespacho')?g('fDespacho').value:'';
-  return el.textContent.toLowerCase().includes(q)
+  const perdidoOk = PED_VIEW==='perdidos' ? el.dataset.perdido==='si' : el.dataset.perdido!=='si';
+  return perdidoOk
+    && el.textContent.toLowerCase().includes(q)
     && (!doc||el.dataset.doc===doc)
     && (!pago||el.dataset.pago===pago)
     && (!desp||el.dataset.despacho===desp)
