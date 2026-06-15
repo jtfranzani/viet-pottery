@@ -145,7 +145,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-24';
+const APP_VERSION = '2026.06.12-29';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -4106,6 +4106,7 @@ function guardarCampanaDesdeSeleccion(){
 }
 function setCampItemCant(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; it.cantProyectada=Math.max(0,Math.round(+val||0)); save(); openCampana(campId); }
 function setCampItemDisc(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; const d=Math.max(0,Math.min(95,Math.round(+val||0))); it.descPct=d; it.precioOferta=Math.round((it.precio||0)*(1-d/100)); save(); openCampana(campId); }
+function setCampItemPrecio(campId,pid,val){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; const it=c.items.find(i=>i.productId===pid); if(!it) return; const pre=Math.max(0,milesParse(val)); it.precioOferta=pre; const precio=it.precio||0; it.descPct = precio? Math.max(0,Math.round((1-pre/precio)*100)) : 0; save(); openCampana(campId); }
 function quitarCampItem(campId,pid){ const c=(DB.campaigns||[]).find(x=>x.id===campId); if(!c) return; c.items=c.items.filter(i=>i.productId!==pid); save(); openCampana(campId); }
 function nuevaCampana(){
   if(!DB.campaigns) DB.campaigns=[];
@@ -4164,12 +4165,15 @@ function openCampana(id){
   </div>`;
   let body;
   if(CAMP_TAB==='resumen'){
-    const rrows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);return `<tr class="border-t border-clay-100">
-      <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''} · -${it.descPct}%</div></td>
-      <td class="px-3 py-2.5 text-right">${fmt(it.precioOferta)}</td>
+    const rrows=(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);const costo=it.costo||0;const mgD=(it.precioOferta||0)-costo;const mgP=it.precioOferta?Math.round(mgD/it.precioOferta*100):0;return `<tr class="border-t border-clay-100">
+      <td class="px-3 py-2.5"><div class="font-medium text-sm">${p?productName(p):'(producto)'}</div><div class="text-[11px] text-clay-400">${p?p.sku:''}</div></td>
+      <td class="px-3 py-2.5 text-right text-clay-500">${fmt(it.precio)}</td>
+      <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${it.descPct}" onchange="setCampItemDisc('${c.id}','${it.productId}',this.value)" class="w-12 border border-clay-200 rounded-lg px-1.5 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div></td>
+      <td class="px-3 py-2.5 text-right"><input type="text" inputmode="numeric" value="${milesIn(it.precioOferta)}" oninput="moneyInput(this)" onchange="setCampItemPrecio('${c.id}','${it.productId}',this.value)" class="w-24 border border-clay-200 rounded-lg px-2 py-1 text-right text-sm font-bold text-clay-800"></td>
+      <td class="px-3 py-2.5 text-right ${mgColor(it.precioOferta?mgD/it.precioOferta:0)} font-medium">${fmt(mgD)}</td>
+      <td class="px-3 py-2.5 text-right ${mgColor(it.precioOferta?mgD/it.precioOferta:0)} font-semibold">${mgP}%</td>
       <td class="px-3 py-2.5 text-center">${q}</td>
       <td class="px-3 py-2.5 text-right font-medium">${fmt(it.precioOferta*q)}</td>
-      <td class="px-3 py-2.5 text-right text-sage-700">${fmt((it.precioOferta-(it.costo||0))*q)}</td>
     </tr>`;}).join('');
     body=`
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -4190,7 +4194,7 @@ function openCampana(id){
       </div>
       <div><label class="text-xs text-clay-500">Condiciones</label><input value="${(c.condiciones||'').replace(/"/g,'&quot;')}" onchange="setCampField('${c.id}','condiciones',this.value)" placeholder="Condiciones de la campaña" class="w-full border border-clay-200 rounded-xl px-3 py-2 text-sm mt-1"></div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
-        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[460px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-center px-3 py-2.5">Cant.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="text-right px-3 py-2.5">Margen</th></tr></thead><tbody>${rrows||'<tr><td colspan="5" class="px-3 py-6 text-center text-clay-400">Sin productos.</td></tr>'}</tbody></table></div>
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[700px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-right px-3 py-2.5">Precio normal</th><th class="text-center px-3 py-2.5">Desc.</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-right px-3 py-2.5">Margen $</th><th class="text-right px-3 py-2.5">Margen %</th><th class="text-center px-3 py-2.5">Cant.</th><th class="text-right px-3 py-2.5">Venta proy.</th></tr></thead><tbody>${rrows||'<tr><td colspan="8" class="px-3 py-6 text-center text-clay-400">Sin productos.</td></tr>'}</tbody></table></div>
       </div>
       <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
         ${c.estado!=='activa'?`<button onclick="confirmarCampana('${c.id}')" class="text-sm font-semibold px-4 py-2 rounded-xl bg-sage-600 hover:bg-sage-700 text-white">✓ Confirmar campaña</button>`:`<span class="text-sm font-medium text-sage-700 bg-sage-50 border border-sage-200 px-3 py-2 rounded-xl self-center">✓ Campaña confirmada</span>`}
@@ -4208,21 +4212,22 @@ function openCampana(id){
       <td class="px-3 py-2.5 text-right text-clay-500">${fmt(it.costo)}</td>
       <td class="px-3 py-2.5 text-right">${Math.round(mgAct*100)}%</td>
       <td class="px-3 py-2.5 text-center"><div class="inline-flex items-center gap-1"><input type="number" min="0" max="95" value="${it.descPct}" onchange="setCampItemDisc('${c.id}','${it.productId}',this.value)" class="w-14 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"><span class="text-xs text-clay-400">%</span></div></td>
-      <td class="px-3 py-2.5 text-right font-bold text-clay-800">${fmt(it.precioOferta)}</td>
+      <td class="px-3 py-2.5 text-right"><input type="text" inputmode="numeric" value="${milesIn(it.precioOferta)}" oninput="moneyInput(this)" onchange="setCampItemPrecio('${c.id}','${it.productId}',this.value)" class="w-24 border border-clay-200 rounded-lg px-2 py-1 text-right text-sm font-semibold text-clay-800"></td>
       <td class="px-3 py-2.5 text-right ${mgColor(mgOf)} font-semibold">${Math.round(mgOf*100)}%</td>
+      <td class="px-3 py-2.5 text-right ${mgColor(mgOf)} font-medium">${fmt(it.precioOferta-(it.costo||0))}</td>
       <td class="px-3 py-2.5 text-center"><input type="number" min="0" value="${q}" onchange="setCampItemCant('${c.id}','${it.productId}',this.value)" class="w-16 border border-clay-200 rounded-lg px-2 py-1 text-center text-sm"></td>
       <td class="px-3 py-2.5 text-right font-medium">${fmt(it.precioOferta*q)}</td>
       <td class="px-2 py-2.5 text-right"><button onclick="quitarCampItem('${c.id}','${it.productId}')" class="text-clay-300 hover:text-red-600 text-sm">✕</button></td>
     </tr>`;}).join('');
     body=`
       <div class="flex items-center justify-between gap-2">
-        <div class="text-xs text-clay-400">Ajusta descuentos y cantidades para simular. Vendidas = últimas 4 semanas.</div>
+        <div class="text-xs text-clay-400">Ajusta el descuento o escribe el precio de oferta exacto (ej: 54.500). Vendidas = últimas 4 semanas.</div>
         <button onclick="openAddProductoCampana('${c.id}')" class="text-sm font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-3 py-1.5 rounded-lg whitespace-nowrap">➕ Agregar producto</button>
       </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
-        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[940px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
-          <th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Vendidas</th><th class="text-center px-3 py-2.5">Stock</th><th class="text-right px-3 py-2.5">Precio</th><th class="text-right px-3 py-2.5">Costo</th><th class="text-right px-3 py-2.5">Margen actual</th><th class="text-center px-3 py-2.5">Descuento</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-right px-3 py-2.5">Margen oferta</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="px-2 py-2.5"></th>
-        </tr></thead><tbody>${srows||'<tr><td colspan="12" class="px-3 py-6 text-center text-clay-400">Sin productos aún. Usa “➕ Agregar producto”.</td></tr>'}</tbody></table></div>
+        <div class="overflow-x-auto"><table class="w-full text-sm min-w-[1040px]"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+          <th class="text-left px-3 py-2.5">Producto</th><th class="text-center px-3 py-2.5">Vendidas</th><th class="text-center px-3 py-2.5">Stock</th><th class="text-right px-3 py-2.5">Precio</th><th class="text-right px-3 py-2.5">Costo</th><th class="text-right px-3 py-2.5">Margen actual</th><th class="text-center px-3 py-2.5">Descuento</th><th class="text-right px-3 py-2.5">Precio oferta</th><th class="text-right px-3 py-2.5">Margen %</th><th class="text-right px-3 py-2.5">Margen $</th><th class="text-center px-3 py-2.5">Cant. proy.</th><th class="text-right px-3 py-2.5">Venta proy.</th><th class="px-2 py-2.5"></th>
+        </tr></thead><tbody>${srows||'<tr><td colspan="13" class="px-3 py-6 text-center text-clay-400">Sin productos aún. Usa “➕ Agregar producto”.</td></tr>'}</tbody></table></div>
       </div>
       <div class="bg-clay-50 rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-clay-600">
         <span>Unidades proy.: <b class="text-clay-800">${pr.unidades}</b></span>
@@ -4241,12 +4246,11 @@ function openCampana(id){
       ${tabBar}
       ${body}
     </div>
-  `);
+  `, 'wide');
 }
 function generarPdfCampana(id){
   const c=(DB.campaigns||[]).find(x=>x.id===id); if(!c) return;
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
-  const pr=campProj(c);
   const {jsPDF}=window.jspdf; const doc=new jsPDF();
   const band=()=>{ doc.setFillColor(35,51,42); doc.rect(0,0,210,26,'F'); doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Campaña',14,12); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(167,189,170); doc.text(c.nombre+'   ·   '+(c.estado||'planificada')+(c.fechaInicio?'   ·   '+c.fechaInicio:'')+(c.fechaFin?' al '+c.fechaFin:''),14,20); };
   band();
@@ -4254,22 +4258,21 @@ function generarPdfCampana(id){
   if(c.condiciones){ doc.setTextColor(35,51,42); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Condiciones',14,y); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,90,80); const lines=doc.splitTextToSize(c.condiciones,182); doc.text(lines,14,y+5); y+=5+lines.length*4.6+5; }
   doc.autoTable({
     startY:y,
-    head:[['Producto','SKU','Precio oferta','Cant. proy.','Venta proy.','Margen proy.']],
-    body:(c.items||[]).map(it=>{const p=productById(it.productId);const q=Math.max(0,+it.cantProyectada||0);return [p?productName(p):'(producto)', p?p.sku:'', fmt(it.precioOferta), String(q), fmt(it.precioOferta*q), fmt((it.precioOferta-(it.costo||0))*q)];}),
-    foot:[['Totales','','',String(pr.unidades),fmt(pr.ventas),fmt(pr.margen)]],
+    head:[['Producto','SKU','Precio normal','Desc.','Precio oferta','Margen $','Margen %']],
+    body:(c.items||[]).map(it=>{const p=productById(it.productId);const costo=it.costo||0;const mgD=(it.precioOferta||0)-costo;const mgP=it.precioOferta?Math.round(mgD/it.precioOferta*100):0;return [p?productName(p):'(producto)', p?p.sku:'', fmt(it.precio), '-'+it.descPct+'%', fmt(it.precioOferta), fmt(mgD), mgP+'%'];}),
     styles:{fontSize:9,cellPadding:3.2,lineColor:[230,236,231],lineWidth:0.1,textColor:[35,51,42]},
     headStyles:{fillColor:[58,78,64],textColor:[255,255,255],fontStyle:'bold'},
-    footStyles:{fillColor:[230,236,231],textColor:[35,51,42],fontStyle:'bold'},
     alternateRowStyles:{fillColor:[247,250,247]},
-    columnStyles:{1:{cellWidth:22},2:{halign:'right'},3:{halign:'center',cellWidth:20},4:{halign:'right'},5:{halign:'right'}},
+    columnStyles:{1:{cellWidth:22},2:{halign:'right',cellWidth:26},3:{halign:'center',cellWidth:18},4:{halign:'right',cellWidth:26,fontStyle:'bold'},5:{halign:'right',cellWidth:24},6:{halign:'center',cellWidth:20}},
     margin:{left:14,right:14},
     didDrawPage:()=>band()
   });
   let yy=doc.lastAutoTable.finalY+9;
   doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(35,51,42);
-  doc.text('Proyección: '+pr.unidades+' u · ventas '+fmt(pr.ventas)+' · margen '+fmt(pr.margen)+' ('+Math.round(pr.margenPct*100)+'%)',14,yy);
+  doc.text((c.items||[]).length+' producto'+((c.items||[]).length!==1?'s':'')+' en la campaña',14,yy);
   doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150,150,150);
-  doc.text('Proyección estimada según las cantidades ingresadas. Generado con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,290);
+  doc.text('Precios en pesos chilenos. El margen es por unidad después del descuento. Oferta sujeta a disponibilidad de stock.',14,yy+6);
+  doc.text('Generado con la plataforma Viet Pottery · '+new Date().toLocaleDateString('es-CL'),14,294);
   savePdfDoc(doc,'campana-'+(c.nombre||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30)+'.pdf');
 }
 function renderCampanasHTML(){
@@ -4660,7 +4663,7 @@ function descargarRespaldoExcel(){
 
 /* ---------- Utils UI ---------- */
 function val(id){return document.getElementById(id).value;}
-function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
+function modal(html,size){const box=document.getElementById('modalBox');box.classList.remove('sm:max-w-2xl','sm:max-w-4xl','sm:max-w-6xl');box.classList.add(size==='wide'?'sm:max-w-6xl':(size==='xl'?'sm:max-w-4xl':'sm:max-w-2xl'));box.innerHTML=html;document.getElementById('modal').classList.remove('hidden');}
 function closeModal(){document.getElementById('modal').classList.add('hidden');EDIT=EDITC=EDITP=EDITPU=null;CONVERT_QUOTE_ID=null;}
 function filterTable(tid,q){q=q.toLowerCase();document.querySelectorAll(`#${tid} tbody tr`).forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none';});}
 function ventasMatch(el){
