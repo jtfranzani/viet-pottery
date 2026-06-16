@@ -152,7 +152,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-42';
+const APP_VERSION = '2026.06.12-43';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -538,8 +538,8 @@ function clientBalance(clientId){
 /* ---------- Auth & layout ---------- */
 const NAV_GRUPOS = ['Principal','Ventas','Operaciones','Inventario','Finanzas','Administración'];
 const NAV = [
-  {id:'midia',     label:'Mi día',    grupo:'Principal', roles:['admin','vendedor','bodega'], icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3L4.9 4.9M17.7 6.3l1.4-1.4M6.3 17.7l-1.4 1.4M17.7 17.7l1.4 1.4M12 8a4 4 0 100 8 4 4 0 000-8z'},
   {id:'dashboard', label:'Dashboard', grupo:'Principal', roles:['admin','vendedor','bodega'], icon:'M3 12l9-9 9 9M5 10v10h14V10'},
+  {id:'midia',     label:'Mi día',    grupo:'Principal', roles:['admin','vendedor','bodega'], icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3L4.9 4.9M17.7 6.3l1.4-1.4M6.3 17.7l-1.4 1.4M17.7 17.7l1.4 1.4M12 8a4 4 0 100 8 4 4 0 000-8z'},
   {id:'ventas',    label:'Pedidos',   grupo:'Ventas', roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
   {id:'presupuestos', label:'Presupuestos', grupo:'Ventas', roles:['admin','vendedor'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6'},
   {id:'ofertas',   label:'Ofertas',   grupo:'Ventas', roles:['admin','vendedor'], icon:'M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01'},
@@ -559,7 +559,7 @@ const NAV = [
 
 function emailNombre(email){ const p=(email||'').split('@')[0].replace(/[._-]+/g,' ').trim(); return p.replace(/\b\w/g,c=>c.toUpperCase())||'Usuario'; }
 function showLogin(){ document.getElementById('app').classList.add('hidden'); document.getElementById('loginScreen').classList.remove('hidden'); }
-function showApp(){ document.getElementById('loginScreen').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); buildNav(); renderUserBox(); go('midia'); }
+function showApp(){ document.getElementById('loginScreen').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); buildNav(); renderUserBox(); go('dashboard'); }
 function isModalOpen(){ const m=document.getElementById('modal'); return m && !m.classList.contains('hidden'); }
 function rerender(){ if(SESSION && !isModalOpen()) go(CURRENT); }
 
