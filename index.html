@@ -86,6 +86,18 @@
     /* Pista visual de que las tablas se deslizan de lado */
     .overflow-x-auto{position:relative}
   }
+  /* ---- Botones: jerarquía visual (una sola acción principal por pantalla) ---- */
+  .btn-primary{background:#3a4e40;color:#fff;font-weight:600;border-radius:12px;padding:10px 16px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s;min-height:40px}
+  .btn-primary:hover{background:#2f4034}
+  .btn-secondary{background:#fff;color:#3a4e40;border:1px solid #cbd8cd;font-weight:600;border-radius:12px;padding:10px 16px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s;min-height:40px}
+  .btn-secondary:hover{background:#f4f7f4}
+  .btn-ghost{background:transparent;color:#5d7860;font-weight:600;border-radius:12px;padding:10px 12px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+  .btn-ghost:hover{background:#f4f7f4}
+  .btn-danger{background:#dc2626;color:#fff;font-weight:600;border-radius:12px;padding:10px 16px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s;min-height:40px}
+  .btn-danger:hover{background:#b91c1c}
+  /* ---- Esqueleto de carga: da sensación de rapidez mientras llegan los datos de la nube ---- */
+  .skeleton{background:linear-gradient(90deg,#eef2ee 25%,#e0e7e0 37%,#eef2ee 63%);background-size:800px 100%;animation:shimmer 1.4s infinite linear;border-radius:8px}
+  @keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
 </style>
 </head>
 <body class="bg-clay-50 text-clay-900 font-sans antialiased">
@@ -133,6 +145,11 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <h2 id="pageTitle" class="text-lg lg:text-xl font-bold flex-1">Dashboard</h2>
+      <button onclick="openBuscador()" title="Buscar (Ctrl K)" aria-label="Buscar clientes, pedidos o productos" class="flex items-center gap-2 text-sm text-clay-500 bg-white border border-clay-200 hover:border-clay-300 rounded-xl px-3 py-2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+        <span class="hidden sm:inline">Buscar</span>
+        <span class="hidden sm:inline text-[11px] bg-clay-100 rounded px-1.5 py-0.5">Ctrl K</span>
+      </button>
       <div id="headerActions" class="flex items-center gap-2"></div>
     </header>
     <div id="view" class="p-4 lg:p-8 flex-1"></div>
@@ -145,6 +162,18 @@
   <div id="modalBox" class="relative card w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-b-none sm:rounded-2xl fade"></div>
 </div>
 
+<!-- Buscador global (Ctrl + K): cruza clientes, pedidos y productos -->
+<div id="buscadorGlobal" class="hidden fixed inset-0 z-[60] bg-clay-900/40 flex items-start justify-center pt-20 sm:pt-24 px-4" onclick="if(event.target===this)cerrarBuscador()">
+  <div class="card w-full max-w-lg overflow-hidden fade">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-clay-100">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5d7860" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+      <input id="buscadorInput" oninput="buscarFiltrar()" class="flex-1 text-sm py-1 bg-transparent border-0" placeholder="Busca cliente, pedido o producto…" autocomplete="off">
+      <span class="text-[11px] text-clay-400 bg-clay-50 rounded px-1.5 py-0.5">Esc</span>
+    </div>
+    <div id="buscadorResultados" class="max-h-[60vh] overflow-y-auto p-2"></div>
+  </div>
+</div>
+
 <script>
 /* =========================================================
    VIET POTTERY · Plataforma de gestión
@@ -152,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.12-43';
+const APP_VERSION = '2026.06.16-45';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -755,6 +784,62 @@ function pill(text,kind){
   const c={green:'bg-sage-100 text-sage-700',red:'bg-red-100 text-red-700',amber:'bg-amber-100 text-amber-700',gray:'bg-clay-100 text-clay-600',blue:'bg-blue-100 text-blue-700'}[kind]||'bg-clay-100 text-clay-600';
   return `<span class="badge ${c}">${text}</span>`;
 }
+/* ---------- Estado vacío reutilizable (mensaje amable + acción cuando no hay datos) ---------- */
+function emptyState({icon='', titulo='Nada por aquí todavía', detalle='', accion=''}){
+  return `<div class="card p-8 flex flex-col items-center text-center justify-center fade">
+    <div class="w-14 h-14 rounded-2xl bg-sage-100 text-sage-600 flex items-center justify-center mb-3">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${icon||'M3 6h18M3 12h18M3 18h12'}"/></svg>
+    </div>
+    <div class="font-semibold">${titulo}</div>
+    ${detalle?`<p class="text-clay-500 text-sm mt-1 max-w-xs">${detalle}</p>`:''}
+    ${accion?`<div class="mt-4">${accion}</div>`:''}
+  </div>`;
+}
+
+/* ---------- Búsqueda global (Ctrl + K): cruza clientes, pedidos y productos ---------- */
+function openBuscador(){
+  const ov=document.getElementById('buscadorGlobal'); if(!ov) return;
+  ov.classList.remove('hidden');
+  const i=document.getElementById('buscadorInput'); if(i) i.value='';
+  buscarFiltrar();
+  setTimeout(()=>{ if(i) i.focus(); },30);
+}
+function cerrarBuscador(){ const ov=document.getElementById('buscadorGlobal'); if(ov) ov.classList.add('hidden'); }
+function buildSearchIndex(){
+  if(!DB) return [];
+  const out=[];
+  (DB.clients||[]).forEach(c=>{ out.push({t:'cliente', n:c.nombre||'Cliente', d:[c.telefono,c.email,c.ciudad].filter(Boolean).join(' · ')||'Cliente', go:()=>openClientDetail(c.id)}); });
+  (DB.sales||[]).forEach(s=>{ const c=clientById(s.clienteId); const nom=c?c.nombre:(s.clienteNombre||'Cliente'); const doc=s.docNumero?(' · '+(s.docTipo==='factura'?'Factura':'Boleta')+' '+s.docNumero):''; out.push({t:'pedido', n:nom+doc, d:fechaAmig(s.fecha)+' · '+fmt(saleTotal(s))+(s.perdido?' · perdido':''), go:()=>openSaleDetail(s.id)}); });
+  (DB.products||[]).forEach(p=>{ out.push({t:'producto', n:productName(p), d:'SKU '+(p.sku||'')+' · stock '+stockOf(p.id), go:()=>openProductDetail(p.id)}); });
+  return out;
+}
+function buscarFiltrar(){
+  const inp=document.getElementById('buscadorInput'); const box=document.getElementById('buscadorResultados'); if(!box) return;
+  const q=(inp&&inp.value||'').toLowerCase().trim();
+  const norm=s=>String(s||'').toLowerCase();
+  const idx=buildSearchIndex();
+  let res = q ? idx.filter(x=>norm(x.n).includes(q)||norm(x.d).includes(q)) : idx.slice(0,8);
+  res = res.slice(0,30);
+  window.__buscadorRes=res;
+  if(!res.length){ box.innerHTML='<div class="text-center text-clay-400 text-sm py-8">Sin resultados'+(q?' para “'+q+'”':'')+'</div>'; return; }
+  const tipoCol={cliente:'#7c9b69', pedido:'#496150', producto:'#a7bdaa'};
+  box.innerHTML=res.map((x,i)=>`
+    <button onclick="buscarIr(${i})" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-clay-50 text-left">
+      <span class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[10px] font-bold uppercase shrink-0" style="background:${tipoCol[x.t]}">${x.t[0]}</span>
+      <span class="flex-1 min-w-0"><span class="block text-sm font-medium truncate">${x.n}</span><span class="block text-xs text-clay-400 truncate">${x.t} · ${x.d}</span></span>
+    </button>`).join('');
+}
+function buscarIr(i){ const r=(window.__buscadorRes||[])[i]; cerrarBuscador(); if(r&&r.go){ try{ r.go(); }catch(e){ console.error(e); } } }
+// Atajo de teclado: Ctrl/Cmd + K abre la búsqueda; Esc la cierra.
+document.addEventListener('keydown', function(e){
+  if((e.ctrlKey||e.metaKey) && (e.key==='k'||e.key==='K')){
+    const app=document.getElementById('app');
+    if(app && !app.classList.contains('hidden')){ e.preventDefault(); openBuscador(); }
+  } else if(e.key==='Escape'){
+    const ov=document.getElementById('buscadorGlobal');
+    if(ov && !ov.classList.contains('hidden')) cerrarBuscador();
+  }
+});
 const payPill = s => s.pagado?pill('Pagado','green'):pill('Por cobrar','red');
 const dispPill = s => ({pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')})[s.estadoDespacho];
 function docLabel(s){
@@ -1845,7 +1930,14 @@ function saveSale(){
   if(esNueva) openConfirmacion(sid);
   else if(reciénEntregado) openEntrega(sid);
 }
-function deleteSale(id){if(!confirm('¿Eliminar esta venta?'))return;DB.sales=DB.sales.filter(s=>s.id!==id);save();closeModal();go('ventas');}
+function deleteSale(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  confirmModal({titulo:'¿Eliminar esta venta?', mensaje:'Se quitará de tus registros. Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
+    const idx=DB.sales.indexOf(s);
+    DB.sales=DB.sales.filter(x=>x.id!==id); save(); closeModal(); go('ventas');
+    toastUndo('Venta eliminada', ()=>{ DB.sales.splice(Math.min(idx,DB.sales.length),0,s); save(); if(CURRENT==='ventas') renderVentas(); else go(CURRENT); });
+  }});
+}
 
 /* ----- Asistente de emisión en el portal gratuito del SII (sin manejar credenciales) ----- */
 function openEmitirSII(id){
@@ -3505,7 +3597,14 @@ function saveProduct(){
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
 }
-function deleteProduct(id){if(!confirm('¿Eliminar producto?'))return;DB.products=DB.products.filter(p=>p.id!==id);save();closeModal();go('productos');}
+function deleteProduct(id){
+  const p=DB.products.find(x=>x.id===id); if(!p) return;
+  confirmModal({titulo:'¿Eliminar producto?', mensaje:'Se quitará del catálogo. Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
+    const idx=DB.products.indexOf(p);
+    DB.products=DB.products.filter(x=>x.id!==id); save(); closeModal(); go('productos');
+    toastUndo('Producto eliminado', ()=>{ DB.products.splice(Math.min(idx,DB.products.length),0,p); save(); if(CURRENT==='productos') renderProductos(); else go(CURRENT); });
+  }});
+}
 
 /* ----- Crear una OC seleccionando modelos y cantidades desde Productos ----- */
 let OCSEL=null;
@@ -3691,7 +3790,14 @@ function saveOrder(genPDF){
   save();closeModal();go('compras');
   if(genPDF) downloadOrderPDF(oid);
 }
-function deleteOrder(id){if(!confirm('¿Eliminar este pedido?'))return;DB.orders=DB.orders.filter(o=>o.id!==id);save();closeModal();go('compras');}
+function deleteOrder(id){
+  const o=DB.orders.find(x=>x.id===id); if(!o) return;
+  confirmModal({titulo:'¿Eliminar esta orden de compra?', mensaje:'Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
+    const idx=DB.orders.indexOf(o);
+    DB.orders=DB.orders.filter(x=>x.id!==id); save(); closeModal(); go('compras');
+    toastUndo('Orden de compra eliminada', ()=>{ DB.orders.splice(Math.min(idx,DB.orders.length),0,o); save(); if(CURRENT==='compras') renderCompras(); else go(CURRENT); });
+  }});
+}
 let RECV=null;
 function recibirOrder(id){
   const o=DB.orders.find(x=>x.id===id); if(!o) return;
@@ -3793,7 +3899,14 @@ function addPuItem(){syncPu();const p=DB.products[0];EDITPU.items.push({productI
 function removePuItem(ix){if(EDITPU.items.length<=1)return;syncPu();EDITPU.items.splice(ix,1);renderPurchaseModal();}
 function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');EDITPU.notas=val('pu_notas');}
 function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);}save();closeModal();go('compras');}
-function deletePurchase(id){if(!confirm('¿Eliminar compra?'))return;DB.purchases=DB.purchases.filter(p=>p.id!==id);save();closeModal();go('compras');}
+function deletePurchase(id){
+  const p=DB.purchases.find(x=>x.id===id); if(!p) return;
+  confirmModal({titulo:'¿Eliminar esta compra?', mensaje:'Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
+    const idx=DB.purchases.indexOf(p);
+    DB.purchases=DB.purchases.filter(x=>x.id!==id); save(); closeModal(); go('compras');
+    toastUndo('Compra eliminada', ()=>{ DB.purchases.splice(Math.min(idx,DB.purchases.length),0,p); save(); if(CURRENT==='compras') renderCompras(); else go(CURRENT); });
+  }});
+}
 
 /* ===================== FACTURAS DE COMPRA ===================== */
 let FINV=null; // factura en edición
