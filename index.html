@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.16-45';
+const APP_VERSION = '2026.06.16-48';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1338,7 +1338,9 @@ function downloadReportePDF(){
 
 /* ===================== PRESUPUESTOS (cotizaciones) ===================== */
 let CONVERT_QUOTE_ID=null;
-function quoteEstadoPill(e){ return e==='ganado'?pill('Ganado','green'):e==='perdido'?pill('Perdido','gray'):pill('Cotizando','amber'); }
+let PRES_FILTER='todos'; // todos | abierto | ganado | perdido
+function setPresFilter(f){ PRES_FILTER=(f===PRES_FILTER && f!=='todos') ? 'todos' : f; renderPresupuestos(); }
+function quoteEstadoPill(e){ return e==='ganado'?pill('Ganado','green'):e==='perdido'?pill('Perdido','red'):pill('Cotizando','amber'); }
 function renderPresupuestos(){
   if(!DB.quotes) DB.quotes=[];
   const v=document.getElementById('view');
@@ -1349,20 +1351,26 @@ function renderPresupuestos(){
   const montoAbierto=abiertos.reduce((a,q)=>a+saleTotal(q),0);
   const conv=(ganados+perdidos)>0?Math.round(ganados/(ganados+perdidos)*100):0;
   const puede=SESSION.rol!=='bodega';
+  // Lista que se muestra: filtrada por el estado elegido al apretar una tarjeta.
+  const shown = PRES_FILTER==='todos' ? quotes : quotes.filter(q=>q.estado===PRES_FILTER);
+  // Tarjeta-botón: igual que statCard pero clickeable y con anillo de color cuando está activa.
+  const fcard=(f,label,value,sub,color,ring)=>`<button onclick="setPresFilter('${f}')" class="card p-3 sm:p-5 text-left transition ${PRES_FILTER===f?'ring-2 '+ring:'hover:border-clay-300'}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${label}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${value}</div>${sub?`<div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div>`:''}</button>`;
+  const filtroLbl={abierto:'cotizando',ganado:'ganados',perdido:'perdidos'}[PRES_FILTER]||'';
   v.innerHTML=`
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Cotizando',abiertos.length,fmt(montoAbierto)+' en juego','text-amber-600')}
-    ${statCard('Ganados',ganados,'convertidos a venta','text-sage-600')}
-    ${statCard('Perdidos',perdidos,'','')}
-    ${statCard('Tasa de conversión',conv+'%','de los presupuestos cerrados','')}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 ${PRES_FILTER==='todos'?'mb-6':'mb-3'}">
+    ${fcard('abierto','Cotizando',abiertos.length,fmt(montoAbierto)+' en juego','text-amber-600','ring-amber-400')}
+    ${fcard('ganado','Ganados',ganados,'convertidos a venta','text-sage-600','ring-sage-500')}
+    ${fcard('perdido','Perdidos',perdidos,'',perdidos?'text-red-600':'text-clay-400','ring-red-400')}
+    ${fcard('todos','Tasa de conversión',conv+'%','de los presupuestos cerrados','','ring-clay-500')}
   </div>
+  <div class="mb-5 text-sm text-clay-500 ${PRES_FILTER==='todos'?'hidden':''}">Mostrando <b>${shown.length}</b> ${filtroLbl} de ${quotes.length}. <button onclick="setPresFilter('todos')" class="text-clay-700 font-medium underline">Ver todos</button></div>
   <div class="card overflow-hidden">
     <div class="px-5 py-4 border-b border-clay-100">
       <div class="font-semibold">Presupuestos / cotizaciones</div><div class="text-xs text-clay-400">No afectan el stock. Cuando el cliente confirma y paga, conviértelo en venta (ahí se descuenta stock).</div>
     </div>
-    ${quotes.length?`<div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+    ${shown.length?`<div class="hidden sm:block overflow-x-auto"><table class="w-full text-sm min-w-[820px]" id="prestbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
       <th class="text-left px-5 py-3">N°</th><th class="text-left px-3 py-3">Fecha</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-right px-3 py-3">Total</th><th class="text-left px-3 py-3">Estado</th><th class="px-5 py-3"></th></tr></thead><tbody>
-    ${quotes.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openQuoteDetail('${q.id}')">
+    ${shown.map(q=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${q.estado==='perdido'?'bg-red-50/50':q.estado==='ganado'?'bg-sage-50/40':''}" onclick="openQuoteDetail('${q.id}')">
       <td class="px-5 py-3 font-semibold whitespace-nowrap">${q.numero||'—'}</td>
       <td class="px-3 py-3 whitespace-nowrap text-clay-500">${q.fecha||''}</td>
       <td class="px-3 py-3 font-medium">${q.clienteNombre||'—'}</td>
@@ -1378,7 +1386,7 @@ function renderPresupuestos(){
     </tr>`).join('')}
     </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${quotes.map(q=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openQuoteDetail('${q.id}')">
+      ${shown.map(q=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300 ${q.estado==='perdido'?'border-l-4 border-l-red-400':q.estado==='ganado'?'border-l-4 border-l-sage-400':''}" onclick="openQuoteDetail('${q.id}')">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0"><div class="font-bold truncate">${q.clienteNombre||'—'}</div><div class="text-xs text-clay-400 mt-0.5">${q.numero?'N° '+q.numero+' · ':''}${q.fecha||''}</div></div>
           <div class="text-right shrink-0"><div class="font-bold whitespace-nowrap">${fmt(saleTotal(q))}</div><div class="mt-0.5">${quoteEstadoPill(q.estado)}</div></div>
@@ -1392,7 +1400,7 @@ function renderPresupuestos(){
         </div>
       </div>`).join('')}
     </div>
-    <div class="hidden sm:block">${pagControlsHTML('prestbl')}</div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`}
+    <div class="hidden sm:block">${pagControlsHTML('prestbl')}</div>`:(quotes.length?`<div class="p-10 text-center text-clay-400 text-sm">No hay presupuestos ${filtroLbl}. <button onclick="setPresFilter('todos')" class="text-clay-700 font-medium underline">Ver todos</button></div>`:`<div class="p-10 text-center text-clay-400 text-sm">Aún no tienes presupuestos. Crea el primero con "Nuevo presupuesto".</div>`)}
   </div>`;
   pagRender('prestbl');
 }
@@ -3174,12 +3182,13 @@ function copiarRecordatorio(){
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(ok).catch(()=>{ if(el){el.select();document.execCommand('copy');ok();} }); }
   else if(el){ el.select(); document.execCommand('copy'); ok(); }
 }
+let COB_FILTER='todas'; // todas | aldia | porvencer | vencido
+function setCobFilter(f){ COB_FILTER=(f===COB_FILTER && f!=='todas') ? 'todas' : f; renderCobranzas(); }
 function renderCobranzas(){
   const v=document.getElementById('view');
   const impagas=DB.sales.filter(s=>!s.pagado && !s.perdido).sort((a,b)=>a.fecha.localeCompare(b.fecha)); // más antiguas primero
   const totalCobrar=impagas.reduce((a,s)=>a+saleTotal(s),0);
   const clientesDeuda=new Set(impagas.map(s=>s.clienteId)).size;
-  const vencido30=impagas.filter(s=>diasDesde(s.fecha)>30).reduce((a,s)=>a+saleTotal(s),0);
 
   // Resumen por cliente
   const porCliente={};
@@ -3188,19 +3197,31 @@ function renderCobranzas(){
 
   const ageBadge=d=> d>30?pill(d+' días','red'):d>15?pill(d+' días','amber'):pill(d+' días','gray');
 
+  // Tramos por antigüedad de la deuda (la tarjeta de arriba filtra por estos)
+  const COB_BUCKETS={
+    aldia:    impagas.filter(s=>diasDesde(s.fecha)<=15),
+    porvencer:impagas.filter(s=>{const d=diasDesde(s.fecha);return d>15&&d<=30;}),
+    vencido:  impagas.filter(s=>diasDesde(s.fecha)>30)
+  };
+  const sum=arr=>arr.reduce((a,s)=>a+saleTotal(s),0);
+  const shown = COB_FILTER==='todas' ? impagas : (COB_BUCKETS[COB_FILTER]||impagas);
+  const totalShown = sum(shown);
+  const fcard=(f,label,value,sub,color,ring)=>`<button onclick="setCobFilter('${f}')" class="card p-3 sm:p-5 text-left transition ${COB_FILTER===f?'ring-2 '+ring:'hover:border-clay-300'}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${label}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${value}</div>${sub?`<div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div>`:''}</button>`;
+  const cnt=arr=>arr.length+(arr.length===1?' venta':' ventas');
+
   v.innerHTML=`
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Total por cobrar',fmt(totalCobrar),'','text-red-600')}
-    ${statCard('Ventas por cobrar',impagas.length,'','')}
-    ${statCard('Clientes con deuda',clientesDeuda,'','')}
-    ${statCard('Vencido +30 días',fmt(vencido30),'antigüedad alta','text-red-600')}
+    ${fcard('todas','Total por cobrar',fmt(totalCobrar),cnt(impagas),'text-red-600','ring-clay-500')}
+    ${fcard('aldia','Al día (≤15 días)',fmt(sum(COB_BUCKETS.aldia)),cnt(COB_BUCKETS.aldia),'text-sage-600','ring-sage-500')}
+    ${fcard('porvencer','Por vencer (16–30 días)',fmt(sum(COB_BUCKETS.porvencer)),cnt(COB_BUCKETS.porvencer),COB_BUCKETS.porvencer.length?'text-amber-600':'text-clay-400','ring-amber-400')}
+    ${fcard('vencido','Vencidas (+30 días)',fmt(sum(COB_BUCKETS.vencido)),cnt(COB_BUCKETS.vencido),COB_BUCKETS.vencido.length?'text-red-600':'text-clay-400','ring-red-400')}
   </div>
 
   ${impagas.length===0?`<div class="card p-12 text-center text-clay-500"><div class="text-4xl mb-3">✅</div><div class="font-medium text-clay-700">No tienes cuentas por cobrar</div><div class="text-sm">Todo al día.</div></div>`:`
-  <div class="card overflow-hidden mb-5">
+  ${shown.length?`<div class="card overflow-hidden mb-5">
     <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-3 flex-wrap">
-      <div class="font-semibold">Ventas por cobrar</div>
-      <div class="text-xs text-clay-400">${impagas.length} pendiente${impagas.length!==1?'s':''} · ordenadas de la más antigua</div>
+      <div class="font-semibold">Ventas por cobrar${COB_FILTER!=='todas'?' · '+({aldia:'al día',porvencer:'por vencer',vencido:'vencidas'}[COB_FILTER]):''}</div>
+      <div class="text-xs text-clay-400">${shown.length} pendiente${shown.length!==1?'s':''} · ordenadas de la más antigua</div>
     </div>
     <div class="hidden sm:block overflow-x-auto">
       <table class="w-full text-sm min-w-[680px]" id="cobtbl">
@@ -3216,7 +3237,7 @@ function renderCobranzas(){
           </tr>
         </thead>
         <tbody>
-        ${impagas.map(s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openSaleDetail('${s.id}')">
+        ${shown.map(s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openSaleDetail('${s.id}')">
           <td class="px-5 py-3"><div class="font-medium">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div></td>
           <td class="px-3 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-3 py-3 text-center whitespace-nowrap">${ageBadge(d)}</td>
@@ -3228,15 +3249,15 @@ function renderCobranzas(){
         </tbody>
         <tfoot>
           <tr class="border-t-2 border-clay-200 bg-clay-50/60">
-            <td class="px-5 py-3 font-semibold" colspan="3">Total por cobrar</td>
-            <td class="px-3 py-3 text-right font-bold text-red-600 whitespace-nowrap">${fmt(totalCobrar)}</td>
+            <td class="px-5 py-3 font-semibold" colspan="3">Total${COB_FILTER!=='todas'?' (filtrado)':' por cobrar'}</td>
+            <td class="px-3 py-3 text-right font-bold text-red-600 whitespace-nowrap">${fmt(totalShown)}</td>
             <td colspan="3"></td>
           </tr>
         </tfoot>
       </table>
     </div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${impagas.map(s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<div onclick="openSaleDetail('${s.id}')" class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300">
+      ${shown.map(s=>{const c=clientById(s.clienteId);const d=diasDesde(s.fecha);return `<div onclick="openSaleDetail('${s.id}')" class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0"><div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-500 mt-0.5">${s.fecha} · ${s.cuenta||'sin cuenta'}</div></div>
           <div class="text-right shrink-0"><div class="font-bold whitespace-nowrap">${fmt(saleTotal(s))}</div><div class="mt-0.5">${ageBadge(d)}</div></div>
@@ -3244,10 +3265,10 @@ function renderCobranzas(){
         <div class="text-xs text-clay-500 mt-1.5 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
         <div class="flex justify-between items-center mt-2.5 pt-2.5 border-t border-clay-100 gap-2">${docLabel(s)}<div class="flex gap-2"><button onclick="event.stopPropagation();recordatorioCobranza('${s.id}')" class="text-xs font-medium text-white px-2.5 py-1.5 rounded-lg" style="background:#25D366">📲 Recordar</button><button onclick="event.stopPropagation();markPaid('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-3 py-1.5 rounded-lg">Pagado ✓</button></div></div>
       </div>`;}).join('')}
-      <div class="bg-white border border-clay-200 rounded-2xl p-3.5 flex justify-between font-bold"><span>Total por cobrar</span><span class="text-red-600">${fmt(totalCobrar)}</span></div>
+      <div class="bg-white border border-clay-200 rounded-2xl p-3.5 flex justify-between font-bold"><span>Total${COB_FILTER!=='todas'?' (filtrado)':' por cobrar'}</span><span class="text-red-600">${fmt(totalShown)}</span></div>
     </div>
     <div class="hidden sm:block">${pagControlsHTML('cobtbl')}</div>
-  </div>
+  </div>`:`<div class="card p-10 text-center text-clay-400 text-sm mb-5">No hay cobranzas en este tramo. <button onclick="setCobFilter('todas')" class="text-clay-700 font-medium underline">Ver todas</button></div>`}
 
   <div class="card overflow-hidden">
     <div class="px-5 py-4 border-b border-clay-100 flex items-center justify-between gap-2 flex-wrap">
@@ -4554,7 +4575,8 @@ function openTaskDetail(id){
 }
 function taskCard(t){
   const done=t.estado==='completada';
-  return `<div class="card p-4 cursor-pointer hover:border-clay-300 ${done?'opacity-70':''}" onclick="openTaskDetail('${t.id}')">
+  const overdue = !done && t.fecha && t.fecha<todayISO();
+  return `<div class="card p-4 cursor-pointer hover:border-clay-300 ${done?'opacity-70':''} ${overdue?'border-l-4 border-l-red-500 bg-red-50/40':''}" onclick="openTaskDetail('${t.id}')">
     <div class="flex items-start justify-between gap-2">
       <div class="font-semibold leading-snug ${done?'line-through text-clay-400':''}">${t.titulo}</div>
       ${taskPrioPill(t.prioridad)}
@@ -5007,20 +5029,26 @@ function renderTareas(){
   let lista;
   if(TASK_FILTER==='completada') lista=all.filter(t=>t.estado==='completada').sort((a,b)=>(b.completadaAt||0)-(a.completadaAt||0));
   else if(TASK_FILTER==='todas') lista=[...all].sort((a,b)=>{const pa=a.estado==='completada'?1:0,pb=b.estado==='completada'?1:0;return pa-pb||sortAb(a,b);});
+  else if(TASK_FILTER==='en_progreso') lista=all.filter(t=>t.estado==='en_progreso').sort(sortAb);
+  else if(TASK_FILTER==='atrasadas') lista=abiertas.filter(t=>t.fecha&&t.fecha<todayISO()).sort(sortAb);
   else lista=abiertas.sort(sortAb);
-  const chip=(f,label,n)=>`<button onclick="setTaskFilter('${f}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${TASK_FILTER===f?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="text-xs ${TASK_FILTER===f?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${n}</span>`:''}</button>`;
+  // Tarjeta-botón que filtra, igual que en Presupuestos/Cobranzas. 'extra' agrega clases (ej: barra roja en Atrasadas).
+  const fcard=(f,label,value,sub,color,ring,extra)=>`<button onclick="setTaskFilter('${f}')" class="card p-3 sm:p-5 text-left transition ${TASK_FILTER===f?'ring-2 '+ring:'hover:border-clay-300'} ${extra||''}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${label}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${value}</div>${sub?`<div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div>`:''}</button>`;
+  const filtroLbl={abiertas:'pendientes',en_progreso:'en progreso',atrasadas:'atrasadas',completada:'completadas',todas:'todas'}[TASK_FILTER]||'';
   v.innerHTML=`
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    ${statCard('Pendientes',abiertas.length,'por hacer','text-amber-600')}
-    ${statCard('En progreso',enProg,'','text-blue-600')}
-    ${statCard('Atrasadas',atrasadas,'pasaron su fecha',atrasadas>0?'text-red-600':'')}
-    ${statCard('Completadas',completadas,'','text-sage-600')}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 ${TASK_FILTER==='abiertas'?'mb-6':'mb-4'}">
+    ${fcard('abiertas','Pendientes',abiertas.length,'por hacer','text-amber-600','ring-amber-400')}
+    ${fcard('en_progreso','En progreso',enProg,'',enProg?'text-blue-600':'text-clay-400','ring-blue-400')}
+    ${fcard('atrasadas','Atrasadas',atrasadas,'pasaron su fecha',atrasadas>0?'text-red-600':'text-clay-400','ring-red-400',atrasadas>0?'border-l-4 border-l-red-500':'')}
+    ${fcard('completada','Completadas',completadas,'',completadas?'text-sage-600':'text-clay-400','ring-sage-500')}
   </div>
-  <div class="flex flex-wrap items-center gap-2 mb-4">
-    ${chip('abiertas','Por hacer',abiertas.length)}${chip('completada','Completadas',completadas)}${chip('todas','Todas',all.length)}
+  <div class="mb-4 flex flex-wrap items-center gap-3 text-sm text-clay-500 ${TASK_FILTER==='abiertas'?'hidden':''}">
+    <span>Mostrando <b>${lista.length}</b> ${filtroLbl}</span>
+    <button onclick="setTaskFilter('abiertas')" class="text-clay-700 font-medium underline">Pendientes</button>
+    <button onclick="setTaskFilter('todas')" class="text-clay-700 font-medium underline">Todas</button>
   </div>
   ${lista.length===0
-    ? `<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">✅</div>${TASK_FILTER==='completada'?'Aún no hay tareas completadas.':'No tienes tareas pendientes. ¡Todo al día!'}<div class="text-xs text-clay-400 mt-2">Agrega una con "Nueva tarea".</div></div>`
+    ? `<div class="card p-12 text-center text-clay-500"><div class="text-3xl mb-2">✅</div>${({completada:'Aún no hay tareas completadas.',atrasadas:'No tienes tareas atrasadas. ¡Bien ahí!',en_progreso:'No hay tareas en progreso.'}[TASK_FILTER]||'No tienes tareas pendientes. ¡Todo al día!')}<div class="text-xs text-clay-400 mt-2">Agrega una con "Nueva tarea".</div></div>`
     : `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">${lista.map(taskCard).join('')}</div>`}
   `;
 }
