@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.16-48';
+const APP_VERSION = '2026.06.16-57';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -842,6 +842,17 @@ document.addEventListener('keydown', function(e){
 });
 const payPill = s => s.pagado?pill('Pagado','green'):pill('Por cobrar','red');
 const dispPill = s => ({pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')})[s.estadoDespacho];
+// ---- Entrega parcial: unidades entregadas / pendientes por producto ----
+function itemEntregadoQty(s,i){
+  if(typeof i.entregadoQty==='number') return Math.max(0, Math.min(i.cantidad||0, i.entregadoQty));
+  return s.estadoDespacho==='entregado' ? (i.cantidad||0) : 0;   // pedidos antiguos entregados = todo entregado
+}
+function itemPendienteQty(s,i){ return (i.cantidad||0) - itemEntregadoQty(s,i); }
+function salePendientes(s){ return s.items.filter(i=>itemPendienteQty(s,i)>0); }
+function saleUnidadesPendientes(s){ return s.items.reduce((a,i)=>a+itemPendienteQty(s,i),0); }
+function saleTodoEntregado(s){ return s.items.every(i=>itemPendienteQty(s,i)<=0); }
+function saleHayEntregaParcial(s){ const p=saleUnidadesPendientes(s); const t=s.items.reduce((a,i)=>a+(i.cantidad||0),0); return p>0 && p<t; }
+function pendientesTexto(s){ return salePendientes(s).map(i=>itemPendienteQty(s,i)+'× '+itemLabel(i)).join(', '); }
 function docLabel(s){
   if(s.docTipo==='no_aplica') return '<span class="text-clay-300">No aplica</span>';
   if(s.docTipo==='pendiente') return pill('Pendiente','amber');
@@ -1645,10 +1656,15 @@ function renderVentas(){
   const rows=[...DB.sales].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
   const ciudades=distinctCI(DB.sales.map(s=>s.ciudad));
   const comunas=distinctCI(DB.sales.map(s=>s.comuna));
-  const activosCount=DB.sales.filter(s=>!s.perdido).length;
+  const activas=DB.sales.filter(s=>!s.perdido);
+  const activosCount=activas.length;
   const perdidosCount=DB.sales.filter(s=>s.perdido).length;
+  const ingresoActivas=activas.reduce((a,s)=>a+saleTotal(s),0);
+  const ticketProm = activosCount ? ingresoActivas/activosCount : 0;
+  const unidadesTot = activas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
+  const prodProm = activosCount ? unidadesTot/activosCount : 0;
   v.innerHTML=`
-  <div class="grid grid-cols-2 gap-3 mb-4 sm:max-w-md">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
     <button onclick="setPedView('activos')" class="card p-3 sm:p-4 text-left transition ${PED_VIEW==='activos'?'ring-2 ring-clay-500':'hover:border-clay-300'}">
       <div class="text-xs text-clay-500">📦 Pedidos activos</div>
       <div class="text-xl sm:text-2xl font-bold text-clay-800 mt-0.5">${activosCount}</div>
@@ -1657,6 +1673,16 @@ function renderVentas(){
       <div class="text-xs text-clay-500">🚫 Perdidos</div>
       <div class="text-xl sm:text-2xl font-bold mt-0.5 ${perdidosCount?'text-red-600':'text-clay-400'}">${perdidosCount}</div>
     </button>
+    <div class="card p-3 sm:p-4 bg-sage-50/40 border-sage-100" title="Promedio que paga cada cliente por pedido (productos + envío), sin contar pedidos perdidos">
+      <div class="text-xs text-clay-500">🎟️ Ticket promedio</div>
+      <div class="text-xl sm:text-2xl font-bold text-sage-700 mt-0.5">${fmt(ticketProm)}</div>
+      <div class="text-[11px] text-clay-400 mt-0.5">sobre ${activosCount} pedido${activosCount===1?'':'s'}</div>
+    </div>
+    <div class="card p-3 sm:p-4 bg-sage-50/40 border-sage-100" title="Cantidad promedio de unidades (productos) por pedido, sin contar pedidos perdidos">
+      <div class="text-xs text-clay-500">🪴 Productos por pedido</div>
+      <div class="text-xl sm:text-2xl font-bold text-sage-700 mt-0.5">${prodProm.toFixed(1)}</div>
+      <div class="text-[11px] text-clay-400 mt-0.5">${unidadesTot} unidades en total</div>
+    </div>
   </div>
   <div class="card overflow-hidden">
     <div class="p-4 border-b border-clay-100">
@@ -1916,7 +1942,8 @@ function saveSale(){
   syncSaleFromForm();
   if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
   if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
-  if(EDIT.estadoDespacho==='entregado'&&!EDIT.entregadoAt) EDIT.entregadoAt=Date.now();
+  if(EDIT.estadoDespacho==='entregado'){ if(!EDIT.entregadoAt) EDIT.entregadoAt=Date.now(); (EDIT.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; }); }
+  else if(EDIT.estadoDespacho==='pendiente' && !saleHayEntregaParcial(EDIT)){ (EDIT.items||[]).forEach(i=>{ delete i.entregadoQty; }); }
   const esNueva=!EDIT.id;
   // ¿Pasó a "entregado" recién con esta edición? -> abrir el comprobante de entrega
   const prev = EDIT.id ? DB.sales.find(x=>x.id===EDIT.id) : null;
@@ -2144,8 +2171,8 @@ function comprobanteHTML(s){
       ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Confirmación de compra</div></div>`
       : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Confirmación de compra</div></div>`}
     <div style="padding:24px;">
-      <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
-        <svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg> ¡Compra confirmada!
+      <div style="text-align:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
+        <span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>¡Compra confirmada!</span></span>
       </div>
       ${row('Cliente',`<b>${nombre}</b>`)}
       ${row('Fecha',s.fecha)}
@@ -2234,9 +2261,103 @@ function subirFotoEntrega(saleId){
   };
   inp.click();
 }
+// ============ SELECTOR DE ENTREGA (permite entrega parcial) ============
+// back: '' (vuelve al detalle) o 'dia:YYYY-MM-DD' (vuelve al resumen del día del calendario)
+function openEntregaSelector(saleId, back){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  back=back||'';
+  // Auto-reparación: si el pedido NO está entregado pero quedaron unidades marcadas como entregadas
+  // (datos residuales de una entrega revertida), límpialas para poder elegir de nuevo.
+  if(s.estadoDespacho!=='entregado' && salePendientes(s).length===0){ s.items.forEach(i=>{ delete i.entregadoQty; }); save(); }
+  if(salePendientes(s).length===0){ openEntrega(saleId); return; } // ya está entregado completo
+  const c=clientById(s.clienteId); const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const filas=s.items.map((i,idx)=>{
+    const pq=itemPendienteQty(s,i);
+    const yaEnt=itemEntregadoQty(s,i);
+    if(pq<=0){
+      return `<div class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sage-50/60 border border-sage-100">
+        <div class="w-5 h-5 rounded-md bg-sage-500 text-white flex items-center justify-center text-xs shrink-0">✓</div>
+        <div class="flex-1 min-w-0"><div class="text-sm font-medium text-clay-700 truncate">${itemLabel(i)}</div><div class="text-[11px] text-sage-600">Ya entregado (${i.cantidad}×)</div></div>
+      </div>`;
+    }
+    const stepper = pq>1 ? `<div class="flex items-center gap-1.5 shrink-0" id="ent_stp_${idx}">
+        <button type="button" onclick="entQtyStep(${idx},-1,${pq})" class="w-7 h-7 rounded-lg border border-clay-200 text-clay-600 hover:bg-clay-50 font-bold leading-none">−</button>
+        <input id="ent_qty_${idx}" type="number" min="1" max="${pq}" value="${pq}" inputmode="numeric" onchange="entQtyClamp(${idx},${pq})" class="w-12 text-center border border-clay-200 rounded-lg py-1 text-sm tabular-nums">
+        <button type="button" onclick="entQtyStep(${idx},1,${pq})" class="w-7 h-7 rounded-lg border border-clay-200 text-clay-600 hover:bg-clay-50 font-bold leading-none">+</button>
+        <span class="text-[11px] text-clay-400 whitespace-nowrap">de ${pq}</span>
+      </div>` : `<input id="ent_qty_${idx}" type="hidden" value="1">`;
+    return `<label id="ent_row_${idx}" class="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-clay-200 hover:border-clay-300 cursor-pointer transition">
+        <input id="ent_chk_${idx}" type="checkbox" checked onchange="entRowToggle(${idx})" class="w-5 h-5 rounded accent-sage-600 shrink-0">
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-clay-800 truncate">${itemLabel(i)}</div>
+          <div class="text-[11px] text-clay-400">${pq}× por entregar${yaEnt>0?` · ${yaEnt}× ya entregado`:''}</div>
+        </div>
+        ${stepper}
+      </label>`;
+  }).join('');
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold leading-tight">¿Qué se entregó?</h3><div class="text-xs text-clay-500 mt-0.5">${nombre}${s.fechaEntrega?' · '+fechaAmig(s.fechaEntrega):''}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-3">
+      <div class="text-xs text-clay-500 bg-clay-50 rounded-lg px-3 py-2 leading-relaxed">Vienen <b>todos marcados</b>. Desmarca lo que <b>no</b> se entregó (o ajusta la cantidad). Lo que quede sin entregar seguirá <b>pendiente</b> en el pedido.</div>
+      <div class="space-y-2">${filas}</div>
+    </div>
+    <div class="p-4 sm:p-5 border-t border-clay-100 sticky bottom-0 bg-white flex flex-col-reverse sm:flex-row gap-2">
+      <button onclick="closeModal()" class="sm:w-auto px-4 py-2.5 rounded-xl border border-clay-200 text-clay-600 hover:bg-clay-50 text-sm font-medium">Cancelar</button>
+      <button onclick="confirmarEntregaSeleccion('${s.id}','${back}')" class="flex-1 bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl text-sm">✓ Confirmar entrega</button>
+    </div>
+  `);
+}
+function entRowToggle(idx){
+  const chk=document.getElementById('ent_chk_'+idx);
+  const stp=document.getElementById('ent_stp_'+idx);
+  const row=document.getElementById('ent_row_'+idx);
+  const on=!!(chk&&chk.checked);
+  if(stp){ stp.style.opacity=on?'1':'0.35'; stp.style.pointerEvents=on?'auto':'none'; }
+  if(row){ row.classList.toggle('opacity-50',!on); row.classList.toggle('bg-clay-50',!on); }
+}
+function entQtyStep(idx,d,max){
+  const q=document.getElementById('ent_qty_'+idx); if(!q) return;
+  let v=(parseInt(q.value,10)||0)+d; v=Math.max(1,Math.min(max,v)); q.value=v;
+  const chk=document.getElementById('ent_chk_'+idx); if(chk&&!chk.checked){ chk.checked=true; entRowToggle(idx); }
+}
+function entQtyClamp(idx,max){
+  const q=document.getElementById('ent_qty_'+idx); if(!q) return;
+  let v=parseInt(q.value,10); if(isNaN(v)||v<1) v=1; if(v>max) v=max; q.value=v;
+}
+function confirmarEntregaSeleccion(saleId, back){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  back=back||'';
+  s.items.forEach((i,idx)=>{
+    const chk=document.getElementById('ent_chk_'+idx);
+    if(!chk) return; // línea ya entregada (sin checkbox) → se mantiene tal cual
+    const pq=itemPendienteQty(s,i);
+    const qin=document.getElementById('ent_qty_'+idx);
+    const add = chk.checked ? (qin?Math.max(1,Math.min(pq,parseInt(qin.value,10)||pq)):pq) : 0;
+    i.entregadoQty = itemEntregadoQty(s,i) + add;   // fija el acumulado (también deja 0 explícito si se desmarcó)
+  });
+  const completo = saleTodoEntregado(s);
+  if(completo){
+    s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
+  } else {
+    s.estadoDespacho='pendiente'; delete s.entregadoAt; s.entregaParcialAt=Date.now();
+  }
+  save();
+  if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario();
+  if(completo){ toastInfo('✓ Pedido entregado completo'); openEntrega(saleId); }
+  else {
+    const np=saleUnidadesPendientes(s);
+    toastInfo('✓ Entrega parcial · '+np+' producto'+(np!==1?'s':'')+' aún pendiente'+(np!==1?'s':''));
+    if(back.indexOf('dia:')===0) openDiaEntregas(back.slice(4));
+    else openSaleDetail(saleId, '');
+  }
+}
 function confirmarEntrega(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
   s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now();
+  s.items.forEach(i=>{ i.entregadoQty=i.cantidad; });   // confirmar comprobante = entrega total
   if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
   save();
   if(CURRENT==='despachos') renderDespachos();
@@ -2247,24 +2368,34 @@ function confirmarEntrega(saleId){
 // Al pasar a ENTREGADO siempre abre el comprobante de entrega (para foto y/o enviar al cliente).
 function toggleEntregaEstado(saleId, backFecha){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
-  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openSaleDetail(saleId, backFecha||''); }
-  else { s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('✓ Pedido marcado como entregado'); openEntrega(saleId); }
+  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; delete s.entregaParcialAt; s.items.forEach(i=>{ delete i.entregadoQty; }); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openSaleDetail(saleId, backFecha||''); }
+  else { openEntregaSelector(saleId, backFecha?('dia:'+backFecha):''); }
 }
 // Desde el comprobante de entrega: volver el pedido a "pendiente" (mantiene la foto por si se re-entrega).
 function revertirAPendiente(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
   if(!confirm('¿Volver este pedido a "pendiente"? Dejará de figurar como entregado.')) return;
-  s.estadoDespacho='pendiente'; delete s.entregadoAt;
+  s.estadoDespacho='pendiente'; delete s.entregadoAt; delete s.entregaParcialAt; s.items.forEach(i=>{ delete i.entregadoQty; });
   save();
   if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario();
   toastInfo('Pedido vuelto a pendiente');
   closeModal();
 }
+// Deshace una entrega PARCIAL: limpia lo ya entregado y deja todos los productos pendientes de nuevo.
+function deshacerEntregaParcial(saleId, backFecha){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  if(!confirm('¿Deshacer la entrega parcial? Todos los productos volverán a quedar pendientes de entregar.')) return;
+  s.estadoDespacho='pendiente'; delete s.entregadoAt; delete s.entregaParcialAt; s.items.forEach(i=>{ delete i.entregadoQty; });
+  save();
+  if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario();
+  toastInfo('Entrega parcial deshecha · todo pendiente');
+  if(backFecha) openDiaEntregas(backFecha); else openSaleDetail(saleId, '');
+}
 // Igual, desde el resumen del día (calendario).
 function toggleEntregaDia(saleId, fecha){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
-  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openDiaEntregas(fecha); }
-  else { s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('✓ Pedido marcado como entregado'); openEntrega(saleId); }
+  if(s.estadoDespacho==='entregado'){ s.estadoDespacho='pendiente'; delete s.entregadoAt; delete s.entregaParcialAt; s.items.forEach(i=>{ delete i.entregadoQty; }); save(); if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); toastInfo('Pedido marcado como pendiente'); openDiaEntregas(fecha); }
+  else { openEntregaSelector(saleId, 'dia:'+fecha); }
 }
 function quitarFotoEntrega(saleId){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
@@ -2285,8 +2416,8 @@ function comprobanteEntregaHTML(s, fotoUrl){
       ? `<div style="background:#ffffff;padding:22px 24px 14px;text-align:center;border-bottom:1px solid #e6ece7;"><img src="${LOGO_DATAURL}" alt="Viet Pottery" style="height:74px;object-fit:contain;display:inline-block;"><div style="font-size:11px;color:#7d977f;letter-spacing:2px;text-transform:uppercase;margin-top:8px;">Comprobante de entrega</div></div>`
       : `<div style="background:#23332a;padding:26px 24px;text-align:center;color:#ffffff;"><div style="width:54px;height:54px;border-radius:15px;background:#3a4e40;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px;margin:0 auto 10px;color:#ffffff;">VP</div><div style="font-size:20px;font-weight:700;letter-spacing:.3px;">Viet Pottery</div><div style="font-size:11px;color:#a7bdaa;letter-spacing:2px;text-transform:uppercase;margin-top:3px;">Comprobante de entrega</div></div>`}
     <div style="padding:24px;">
-      <div style="display:flex;align-items:center;gap:8px;justify-content:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
-        <svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg> ¡Pedido entregado!
+      <div style="text-align:center;background:#f3f6f1;color:#3a5030;border-radius:10px;padding:11px;font-weight:600;font-size:14px;margin-bottom:18px;">
+        <span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 20 20" style="display:block;flex-shrink:0;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg><span>${saleHayEntregaParcial(s)?'Entrega parcial registrada':'¡Pedido entregado!'}</span></span>
       </div>
       ${row('Cliente',`<b>${nombre}</b>`)}
       ${row('Fecha de entrega',`<b>${s.fotoEntregaFecha||s.fechaEntrega||todayISO()}${s.entregadoAt?' · '+horaHM(s.entregadoAt):''}</b>`)}
@@ -2294,7 +2425,8 @@ function comprobanteEntregaHTML(s, fotoUrl){
       ${s.courier?row('Vía',s.courier):''}
       <div style="border-top:1px dashed #cbd8cd;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Productos entregados</div>
-      ${s.items.map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${i.cantidad} ×</span> ${itemLabel(i)}</span></div>`).join('')}
+      ${s.items.filter(i=>itemEntregadoQty(s,i)>0).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#5d7860;">${itemEntregadoQty(s,i)} ×</span> ${itemLabel(i)}</span></div>`).join('')||'<div style="font-size:13px;color:#9aa6a0;">—</div>'}
+      ${saleHayEntregaParcial(s)?`<div style="border-top:1px dashed #cbd8cd;margin:14px 0 10px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#b9763a;margin-bottom:10px;">Pendiente de entregar</div>${salePendientes(s).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;color:#9a6433;"><span><span>${itemPendienteQty(s,i)} ×</span> ${itemLabel(i)}</span></div>`).join('')}`:''}
       ${fotoUrl?`<div style="border-top:1px dashed #cbd8cd;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7d977f;margin-bottom:10px;">Respaldo de entrega</div><img src="${fotoUrl}" alt="Foto de entrega" style="width:100%;height:220px;object-fit:cover;border-radius:10px;display:block;border:1px solid #e6ece7;">`:''}
     </div>
     <div style="background:#f3f6f1;padding:16px 24px;text-align:center;border-top:1px solid #e6ece7;">
@@ -2316,30 +2448,30 @@ async function openEntrega(saleId, fotoUrlPreloaded){
   }
   const hasFoto=!!fotoUrl;
   const entregado=s.estadoDespacho==='entregado';
+  const parcial=saleHayEntregaParcial(s);
   const dlIcon='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
-      <h3 class="text-lg font-bold">Comprobante de entrega</h3>
+      <h3 class="text-lg font-bold">${parcial&&!entregado?'Comprobante de entrega parcial':'Comprobante de entrega'}</h3>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-4 sm:p-5 bg-clay-50 flex flex-col items-center gap-4">
-      ${(entregado||hasFoto)?`
-      ${entregado?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}${s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>`:''}
+      ${(entregado||hasFoto||parcial)?`
+      ${entregado?`<div class="w-full max-w-[420px] bg-sage-100 text-sage-800 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2">✓ Entrega confirmada${s.fotoEntregaFecha?' · '+s.fotoEntregaFecha:''}${s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>`:(parcial?`<div class="w-full max-w-[420px] bg-amber-50 text-amber-800 border border-amber-200 rounded-xl px-4 py-2.5 text-sm font-semibold flex items-start gap-2">⏳ <span>Entrega parcial · pendiente: ${pendientesTexto(s)}</span></div>`:'')}
       <div class="w-full flex justify-center">${comprobanteEntregaHTML(s, fotoUrl)}</div>
       <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
-        ${!entregado?`<button onclick="confirmarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ Confirmar entrega</button>`:''}
+        ${!entregado?`<button onclick="openEntregaSelector('${s.id}','')" class="flex-1 min-w-[140px] bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">✓ ${parcial?'Entregar lo pendiente':'Elegir y confirmar entrega'}</button>`:''}
         <button onclick="descargarEntrega('${s.id}')" class="flex-1 min-w-[140px] bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5">${dlIcon}Descargar / Compartir</button>
       </div>
       <div class="flex flex-wrap gap-2 w-full max-w-[420px]">
         <button onclick="subirFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-clay-200 bg-white hover:bg-clay-50 text-clay-700 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">${hasFoto?'🔄 Cambiar foto':'📷 Agregar foto de respaldo'}</button>
         ${hasFoto?`<button onclick="quitarFotoEntrega('${s.id}')" class="flex-1 min-w-[140px] border border-red-200 bg-white hover:bg-red-50 text-red-600 font-medium py-2 rounded-xl text-sm flex items-center justify-center gap-1.5">🗑️ Eliminar foto</button>`:''}
       </div>
-      <div class="text-xs text-clay-400 text-center max-w-[420px]">${!entregado?'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.':(hasFoto?'Pedido entregado ✓. Comparte el comprobante con el cliente por WhatsApp.':'Pedido entregado ✓. Puedes agregar una foto de respaldo y/o compartir este comprobante con el cliente por WhatsApp.')}</div>
-      ${entregado?`<button onclick="revertirAPendiente('${s.id}')" class="mt-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">↩️ Volver a pendiente</button>`:''}`
-      :`<div class="text-center text-clay-500 text-sm py-2 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Sube una foto de respaldo o marca la entrega sin foto. Al marcarlo entregado se genera el comprobante para enviar al cliente.</div>
+      <div class="text-xs text-clay-400 text-center max-w-[420px]">${entregado?(hasFoto?'Pedido entregado ✓. Comparte el comprobante con el cliente por WhatsApp.':'Pedido entregado ✓. Puedes agregar una foto de respaldo y/o compartir este comprobante con el cliente por WhatsApp.'):(parcial?'Entrega parcial. Puedes compartir este comprobante con lo entregado y lo pendiente, o entregar el resto cuando llegue.':'Confirma la entrega para marcar el pedido como entregado, y comparte el comprobante con el cliente por WhatsApp.')}</div>
+      ${parcial?`<button onclick="deshacerEntregaParcial('${s.id}','')" class="mt-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">↩️ Deshacer entrega parcial</button>`:(entregado?`<button onclick="revertirAPendiente('${s.id}')" class="mt-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg">↩️ Volver a pendiente</button>`:'')}`
+      :`<div class="text-center text-clay-500 text-sm py-2 max-w-[420px]"><div class="text-4xl mb-2">📦</div>Primero elige <b>qué productos se entregaron</b> (puede ser una entrega parcial). Después podrás agregar la foto de respaldo y compartir el comprobante con lo realmente entregado.</div>
         <div class="flex flex-wrap gap-2 w-full max-w-[420px] justify-center">
-          <button onclick="subirFotoEntrega('${s.id}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">📷 Subir / tomar foto</button>
-          <button onclick="confirmarEntrega('${s.id}')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">✓ Marcar entregado sin foto</button>
+          <button onclick="openEntregaSelector('${s.id}','')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 px-5 rounded-xl flex items-center gap-2">✓ Elegir productos y entregar</button>
         </div>`}
     </div>
   `);
@@ -2413,16 +2545,20 @@ function openSaleDetail(id, backFecha){
         </div>
         <div class="bg-clay-50 rounded-xl p-3.5">
           <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
-          <div class="flex flex-wrap gap-1.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
+          <div class="flex flex-wrap gap-1.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${saleHayEntregaParcial(s)?pill('Entrega parcial','blue'):''}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
           ${s.perdido?`<div class="text-xs text-red-600 mt-2 bg-red-50 rounded-lg px-2.5 py-1.5">Pedido perdido${s.perdidoAt?' el '+new Date(s.perdidoAt).toLocaleDateString('es-CL'):''}${s.perdidoMotivo?' · '+s.perdidoMotivo:''}</div>`:''}
+          ${saleHayEntregaParcial(s)?`<div class="text-xs text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⏳ <b>Pendiente de entregar:</b> ${pendientesTexto(s)}</div>`:''}
           <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
-          <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':'✓ Marcar como entregado'}</button>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':(saleHayEntregaParcial(s)?'✓ Entregar lo pendiente':'✓ Marcar como entregado')}</button>
+            ${saleHayEntregaParcial(s)?`<button onclick="deshacerEntregaParcial('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-clay-100 text-clay-700 hover:bg-clay-200">↩️ Deshacer entrega parcial</button>`:''}
+          </div>
         </div>
       </div>
       <div class="border border-clay-100 rounded-xl overflow-hidden">
         <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
         <div class="divide-y divide-clay-100">
-          ${s.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+          ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}${estado?'<br>'+estado:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
         </div>
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
           <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
@@ -2446,7 +2582,7 @@ function openSaleDetail(id, backFecha){
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
         <div class="flex flex-wrap gap-2">
           ${actBtn(`openConfirmacion('${s.id}')`,'🧾 Comprobante de venta',true)}
-          ${actBtn(`openEntrega('${s.id}')`,'📦 Comprobante de entrega')}
+          ${actBtn(`openEntrega('${s.id}')`, s.estadoDespacho==='entregado'?'📦 Comprobante de entrega':(saleHayEntregaParcial(s)?'📦 Comprobante parcial':'📦 Entregar'))}
           ${!esBodega&&!s.perdido&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
           ${!esBodega&&!s.perdido?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
           ${!esBodega&&!s.perdido&&!s.pagado?actBtn(`recordatorioCobranza('${s.id}')`,'📲 Recordar cobro'):''}
@@ -2505,27 +2641,30 @@ function renderDespachos(){
           <div class="mt-1 flex flex-wrap gap-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}${autoBadge(s.auto)}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
+          ${saleHayEntregaParcial(s)?`<div class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1.5 flex items-start gap-1">⏳<span>Entrega parcial — pendiente: ${pendientesTexto(s)}</span></div>`:''}
           <div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>
           ${tieneFotoEntrega(s)?`<div class="mt-2 text-[11px] text-sage-700 font-medium flex items-center gap-1">📷 Con foto de respaldo</div>`:''}
-          <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key==='pendiente'?`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">Marcar en camino →</button>`:key==='en_camino'?`<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Marcar entregado ✓</button>`:pill('OK','green')}</div>
+          <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key==='pendiente'?(saleHayEntregaParcial(s)?`<span class="flex items-center gap-1.5"><button onclick="event.stopPropagation();deshacerEntregaParcial('${s.id}','')" class="text-xs font-medium text-clay-600 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">↩️</button><button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Entregar resto ✓</button></span>`:`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">Marcar en camino →</button>`):key==='en_camino'?`<button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Marcar entregado ✓</button>`:pill('OK','green')}</div>
           <div class="mt-2">
             ${tieneFotoEntrega(s)
               ? `<button onclick="event.stopPropagation();openEntrega('${s.id}')" class="w-full text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">🧾 Ver / compartir comprobante</button>`
-              : `<button onclick="event.stopPropagation();subirFotoEntrega('${s.id}')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📷 ${key==='entregado'?'Agregar foto de entrega':'Entregar con foto'}</button>`}
+              : (key==='entregado'
+                  ? `<button onclick="event.stopPropagation();subirFotoEntrega('${s.id}')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📷 Agregar foto de entrega</button>`
+                  : `<button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="w-full text-xs font-medium text-clay-700 bg-white hover:bg-clay-50 border border-clay-200 px-2 py-1.5 rounded-lg flex items-center justify-center gap-1.5">📦 Elegir productos y entregar</button>`)}
           </div>
         </div>`;}).join('')+(list.length>LIMIT?`<button onclick="toggleDespShow('${key}')" class="w-full text-sm font-medium text-clay-600 hover:text-clay-900 py-2 rounded-xl border border-dashed border-clay-200 hover:bg-clay-50">${expanded?'Ver menos ▲':'+ '+(list.length-LIMIT)+' más ▼'}</button>`:''):'<div class="text-sm text-clay-400 text-center py-6">Sin despachos</div>'}
         </div>
       </div>`;}).join('')}
   </div>`;
 }
-function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);const next=s.estadoDespacho==='pendiente'?'en_camino':'entregado';s.estadoDespacho=next;if(next==='entregado'){if(!s.entregadoAt)s.entregadoAt=Date.now();save();if(CURRENT==='despachos')renderDespachos();openEntrega(id);return;}save();go('despachos');}
+function advanceDispatch(id){const s=DB.sales.find(x=>x.id===id);if(!s)return;const next=s.estadoDespacho==='pendiente'?'en_camino':'entregado';if(next==='entregado'){openEntregaSelector(id,'');return;}s.estadoDespacho=next;save();go('despachos');}
 function goVentasPendientes(){ go('ventas'); const d=document.getElementById('fDoc'); if(d){ d.value='pendiente'; filterVentas(); } }
 /* ===================== MODO REPARTO (terreno) ===================== */
 let REPARTO_FECHA=null;
 function openModoReparto(fecha){ REPARTO_FECHA=fecha||todayISO(); renderModoReparto(); }
 function setRepartoFecha(v){ REPARTO_FECHA=v||todayISO(); renderModoReparto(); }
 function repartoEnCamino(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='en_camino'; save(); renderModoReparto(); }
-function repartoEntregar(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); renderModoReparto(); toastInfo('✓ Entregado'); }
+function repartoEntregar(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); s.items.forEach(i=>{ i.entregadoQty=i.cantidad; }); save(); renderModoReparto(); toastInfo('✓ Entregado'); }
 function repartoPendiente(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='pendiente'; save(); renderModoReparto(); }
 function repartoAvisar(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
@@ -2582,7 +2721,7 @@ function renderModoReparto(){
 }
 
 /* ===================== MI DÍA (tablero operativo) ===================== */
-function miDiaEntregar(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); save(); renderMiDia(); toastInfo('✓ Entregado'); }
+function miDiaEntregar(id){ const s=DB.sales.find(x=>x.id===id); if(!s) return; s.estadoDespacho='entregado'; if(!s.entregadoAt) s.entregadoAt=Date.now(); s.items.forEach(i=>{ i.entregadoQty=i.cantidad; }); save(); renderMiDia(); toastInfo('✓ Entregado'); }
 function miDiaToggleTask(id){ const t=(DB.tasks||[]).find(x=>x.id===id); if(!t) return; t.estado='completada'; t.completadaAt=Date.now(); save(); renderMiDia(); toastInfo('✓ Tarea completada'); }
 function renderMiDia(){
   const v=document.getElementById('view');
@@ -2867,9 +3006,13 @@ function openDiaEntregas(fecha){
       <div class="flex items-center justify-between gap-2"><div class="font-medium text-sm">${c?c.nombre:(s.clienteNombre||'—')}</div>${estPill[s.estadoDespacho]||''}</div>
       <div class="text-xs text-clay-500 mt-0.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).map(titleCase).join(' · ')||'sin dirección'}</div>
       <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>i.cantidad+'× '+itemLabel(i)).join(', ')}</div>
+      ${saleHayEntregaParcial(s)?`<div class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1.5 flex items-start gap-1">⏳<span>Pendiente: ${pendientesTexto(s)}</span></div>`:''}
       <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
         ${done?'<span></span>':`<div class="flex items-center gap-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelect(s)}</div>`}
-        <button onclick="event.stopPropagation();toggleEntregaDia('${s.id}','${fecha}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${done?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${done?'↩️ Marcar pendiente':'✓ Marcar entregado'}</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          ${saleHayEntregaParcial(s)?`<button onclick="event.stopPropagation();deshacerEntregaParcial('${s.id}','${fecha}')" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-clay-100 text-clay-700 hover:bg-clay-200">↩️ Deshacer parcial</button>`:''}
+          <button onclick="event.stopPropagation();toggleEntregaDia('${s.id}','${fecha}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${done?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${done?'↩️ Marcar pendiente':(saleHayEntregaParcial(s)?'✓ Entregar resto':'✓ Marcar entregado')}</button>
+        </div>
       </div>
     </div>`;};
   const grupoUnidades=g=>g.sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
