@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.16-57';
+const APP_VERSION = '2026.06.16-58';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2386,10 +2386,46 @@ function deshacerEntregaParcial(saleId, backFecha){
   const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
   if(!confirm('¿Deshacer la entrega parcial? Todos los productos volverán a quedar pendientes de entregar.')) return;
   s.estadoDespacho='pendiente'; delete s.entregadoAt; delete s.entregaParcialAt; s.items.forEach(i=>{ delete i.entregadoQty; });
+  if(s.fechaEntregaReagendada){ if(s.fechaEntregaOriginal) s.fechaEntrega=s.fechaEntregaOriginal; delete s.fechaEntregaReagendada; delete s.fechaEntregaOriginal; }
   save();
   if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario();
   toastInfo('Entrega parcial deshecha · todo pendiente');
   if(backFecha) openDiaEntregas(backFecha); else openSaleDetail(saleId, '');
+}
+// Reagenda la entrega de lo que quedó PENDIENTE tras una entrega parcial.
+// La nueva fecha reemplaza la fecha de entrega del pedido (Despachos, Calendario y Pedidos la usan).
+function reagendarPendiente(saleId, back){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  back=back||'';
+  const actual=s.fechaEntrega||todayISO();
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <div><h3 class="text-lg font-bold leading-tight">Agendar entrega del resto</h3><div class="text-xs text-clay-500 mt-0.5">Pendiente: ${pendientesTexto(s)}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-4 sm:p-5 space-y-3">
+      <div class="text-xs text-clay-500 bg-clay-50 rounded-lg px-3 py-2 leading-relaxed">Elige la nueva fecha para entregar los productos pendientes. Esta fecha reemplazará la fecha de entrega del pedido en <b>Despachos</b>, <b>Calendario</b> y <b>Pedidos</b>.</div>
+      <label class="block text-sm font-medium text-clay-700">Nueva fecha de entrega
+        <input id="reagFecha" type="date" value="${actual}" class="mt-1 w-full border border-clay-200 rounded-lg px-3 py-2 text-sm">
+      </label>
+    </div>
+    <div class="p-4 sm:p-5 border-t border-clay-100 sticky bottom-0 bg-white flex flex-col-reverse sm:flex-row gap-2">
+      <button onclick="closeModal()" class="sm:w-auto px-4 py-2.5 rounded-xl border border-clay-200 text-clay-600 hover:bg-clay-50 text-sm font-medium">Cancelar</button>
+      <button onclick="confirmarReagendarPendiente('${s.id}','${back}')" class="flex-1 bg-sage-600 hover:bg-sage-700 text-white font-semibold py-2.5 rounded-xl text-sm">✓ Guardar fecha</button>
+    </div>
+  `);
+}
+function confirmarReagendarPendiente(saleId, back){
+  const s=DB.sales.find(x=>x.id===saleId); if(!s) return;
+  back=back||'';
+  const inp=document.getElementById('reagFecha'); const nueva=inp&&inp.value;
+  if(!nueva){ alert('Elige una fecha válida.'); return; }
+  if(!s.fechaEntregaOriginal) s.fechaEntregaOriginal=s.fechaEntrega||'';
+  s.fechaEntrega=nueva; s.fechaEntregaReagendada=true;
+  save();
+  if(CURRENT==='despachos') renderDespachos(); else if(CURRENT==='calendario') renderCalendario(); else if(CURRENT==='ventas') renderVentas();
+  toastInfo('📅 Entrega del resto agendada para '+fechaAmig(nueva));
+  if(back.indexOf('dia:')===0) openDiaEntregas(back.slice(4)); else openSaleDetail(saleId, '');
 }
 // Igual, desde el resumen del día (calendario).
 function toggleEntregaDia(saleId, fecha){
@@ -2547,10 +2583,11 @@ function openSaleDetail(id, backFecha){
           <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado actual</div>
           <div class="flex flex-wrap gap-1.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${saleHayEntregaParcial(s)?pill('Entrega parcial','blue'):''}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
           ${s.perdido?`<div class="text-xs text-red-600 mt-2 bg-red-50 rounded-lg px-2.5 py-1.5">Pedido perdido${s.perdidoAt?' el '+new Date(s.perdidoAt).toLocaleDateString('es-CL'):''}${s.perdidoMotivo?' · '+s.perdidoMotivo:''}</div>`:''}
-          ${saleHayEntregaParcial(s)?`<div class="text-xs text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⏳ <b>Pendiente de entregar:</b> ${pendientesTexto(s)}</div>`:''}
+          ${saleHayEntregaParcial(s)?`<div class="text-xs text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⏳ <b>Pendiente de entregar:</b> ${pendientesTexto(s)}${s.fechaEntregaReagendada?`<br>📅 Nueva entrega agendada para <b>${fechaAmig(s.fechaEntrega)}</b>`:''}</div>`:''}
           <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
           <div class="flex flex-wrap gap-2 mt-2">
             <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':(saleHayEntregaParcial(s)?'✓ Entregar lo pendiente':'✓ Marcar como entregado')}</button>
+            ${saleHayEntregaParcial(s)?`<button onclick="reagendarPendiente('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">📅 Agendar entrega del resto</button>`:''}
             ${saleHayEntregaParcial(s)?`<button onclick="deshacerEntregaParcial('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-clay-100 text-clay-700 hover:bg-clay-200">↩️ Deshacer entrega parcial</button>`:''}
           </div>
         </div>
