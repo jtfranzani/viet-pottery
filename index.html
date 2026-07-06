@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.16-58';
+const APP_VERSION = '2026.06.16-59';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1872,6 +1872,7 @@ function saleItemRow(it,ix,prodOpt){
       <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
     </div>
     <div id="s_sub_${ix}" class="text-xs text-right mt-1.5">${lineSubHtml(it)}</div>
+    <div id="s_warn_${ix}">${itemStockWarn(it)}</div>
   </div>`;
 }
 function lineSubHtml(it){
@@ -1880,6 +1881,21 @@ function lineSubHtml(it){
     ? `<span class="text-sage-700">Subtotal línea: <span class="line-through text-clay-300">${fmt(it.cantidad*it.precio)}</span> → <b>${fmt(sub)}</b> · ${desc}% dcto</span>`
     : `<span class="text-clay-400">Subtotal línea: <b class="text-clay-600">${fmt(sub)}</b></span>`;
 }
+// Stock disponible SIN contar el pedido que se está editando (para no restarse a sí mismo).
+function stockBaseVenta(productId){
+  let base=stockOf(productId);
+  if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id); if(orig&&!orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); }); }
+  return base;
+}
+// Advertencia por línea: compara lo pedido (sumando todas las líneas del mismo producto) contra el stock base.
+function itemStockWarn(it){
+  if(!it||!EDIT) return '';
+  const base=stockBaseVenta(it.productId);
+  const req=EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
+  if(req>base) return `<div class="text-[11px] text-red-600 font-medium mt-1 flex items-start gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ <span>Sin stock suficiente · disponible <b>${base}</b>, pedido <b>${req}</b> (faltan ${req-base}). Puedes generar el pedido igualmente.</span></div>`;
+  return '';
+}
+function refreshStockWarns(){ if(!EDIT) return; EDIT.items.forEach((it,ix)=>{ const el=document.getElementById('s_warn_'+ix); if(el) el.innerHTML=itemStockWarn(it); }); }
 function syncSaleFromForm(){
   const g=id=>document.getElementById(id);
   if(g('s_cli')) EDIT.clienteNombre=g('s_cli').value.trim();
@@ -1917,7 +1933,7 @@ function resolveClient(nombre, ciudad, comuna, direccion, telefono, email){
 }
 function onSaleProd(ix,pid){const p=productById(pid);EDIT.items[ix].productId=pid;EDIT.items[ix].descripcion=productName(p);EDIT.items[ix].precio=p.precioRef;refreshSaleItems();}
 function updateLineSub(ix){const el=document.getElementById('s_sub_'+ix);if(el)el.innerHTML=lineSubHtml(EDIT.items[ix]);}
-function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub(ix);updateSaleTotal();}
+function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub(ix);updateSaleTotal();refreshStockWarns();}
 function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateLineSub(ix);updateSaleTotal();}
 function onSaleDesc(ix,v){let d=+v||0;d=Math.max(0,Math.min(100,d));EDIT.items[ix].descuento=d;updateLineSub(ix);updateSaleTotal();}
 function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef,descuento:0});refreshSaleItems();}
@@ -1942,6 +1958,17 @@ function saveSale(){
   syncSaleFromForm();
   if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
   if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
+  // Aviso de stock insuficiente (no bloquea: permite generar igualmente).
+  const faltantes=[]; const vistos={};
+  (EDIT.items||[]).forEach(it=>{ if(vistos[it.productId]) return; vistos[it.productId]=true;
+    const base=stockBaseVenta(it.productId);
+    const req=EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
+    if(req>base) faltantes.push({nombre:productName(productById(it.productId)),base,req,falta:req-base});
+  });
+  if(faltantes.length){
+    const msg='⚠️ Estos productos no tienen stock suficiente:\n\n'+faltantes.map(f=>`• ${f.nombre}: disponible ${f.base}, pedido ${f.req} (faltan ${f.falta})`).join('\n')+'\n\n¿Deseas generar el pedido de todas formas?';
+    if(!confirm(msg)) return;
+  }
   if(EDIT.estadoDespacho==='entregado'){ if(!EDIT.entregadoAt) EDIT.entregadoAt=Date.now(); (EDIT.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else if(EDIT.estadoDespacho==='pendiente' && !saleHayEntregaParcial(EDIT)){ (EDIT.items||[]).forEach(i=>{ delete i.entregadoQty; }); }
   const esNueva=!EDIT.id;
