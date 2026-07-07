@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.06.16-60';
+const APP_VERSION = '2026.07.07-74';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -501,6 +501,10 @@ async function bootData(){
   if(!DB.metaUnidades) DB.metaUnidades={};
   if(!DB.tasks) DB.tasks=[];
   if(!DB.campaigns) DB.campaigns=[];
+  if(!DB.cuentas || !DB.cuentas.length) DB.cuentas=seedCuentas();
+  if(!DB.egresos) DB.egresos=[];
+  migrarCuentas();
+  if(cargarGastosJunio() && window.FB){ try{ await FB.setData(DB); }catch(e){ console.error('carga gastos junio', e); } }
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
@@ -565,7 +569,7 @@ function clientBalance(clientId){
 }
 
 /* ---------- Auth & layout ---------- */
-const NAV_GRUPOS = ['Principal','Ventas','Operaciones','Inventario','Finanzas','Administración'];
+const NAV_GRUPOS = ['Principal','Ventas','Operaciones','Inventario','Finanzas','Contabilidad','Administración'];
 const NAV = [
   {id:'dashboard', label:'Dashboard', grupo:'Principal', roles:['admin','vendedor','bodega'], icon:'M3 12l9-9 9 9M5 10v10h14V10'},
   {id:'midia',     label:'Mi día',    grupo:'Principal', roles:['admin','vendedor','bodega'], icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3L4.9 4.9M17.7 6.3l1.4-1.4M6.3 17.7l-1.4 1.4M17.7 17.7l1.4 1.4M12 8a4 4 0 100 8 4 4 0 000-8z'},
@@ -583,6 +587,9 @@ const NAV = [
   {id:'compras',   label:'Órdenes de compra', grupo:'Inventario', roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
   {id:'cobranzas', label:'Cobranzas', grupo:'Finanzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
   {id:'facturas',  label:'Facturas de compra', grupo:'Finanzas', roles:['admin'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h4'},
+  {id:'egresos',   label:'Egresos', grupo:'Contabilidad', roles:['admin'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
+  {id:'resultado', label:'Resultado operacional', grupo:'Contabilidad', roles:['admin'], icon:'M3 3v18h18M18 9l-5 5-3-3-4 4'},
+  {id:'plancuentas', label:'Plan de cuentas', grupo:'Contabilidad', roles:['admin'], icon:'M4 6h16M4 6a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2M4 6V4a2 2 0 012-2h12a2 2 0 012 2v2M8 12h.01M8 16h.01M12 12h4M12 16h4'},
   {id:'usuarios',  label:'Usuarios',  grupo:'Administración', roles:['admin'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75'}
 ];
 
@@ -606,7 +613,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; migrarCuentas(); rerender(); });
     showApp();
   });
 }
@@ -754,11 +761,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',usuarios:'Usuarios'};
+  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,usuarios:renderUsuarios})[view]();
+  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
@@ -768,6 +775,8 @@ function headerAction(view){
   if(view==='clientes' && SESSION.rol!=='bodega') return btn('openClient()','Nuevo cliente');
   if(view==='usuarios' && SESSION.rol==='admin') return btn('openUsuario()','Nuevo usuario');
   if(view==='facturas' && SESSION.rol==='admin') return btn('openFactura()','Nueva factura');
+  if(view==='egresos' && SESSION.rol==='admin') return btn('openEgreso()','Nuevo gasto');
+  if(view==='plancuentas' && SESSION.rol==='admin') return btn('openCuenta()','Nueva cuenta');
   if(view==='tareas') return btn('openTask()','Nueva tarea');
   return '';
 }
@@ -2556,7 +2565,7 @@ function saleDocText(s){
   if(s.docTipo==='no_aplica') return 'Sin documento tributario';
   return 'Documento pendiente de emitir';
 }
-function openSaleDetail(id, backFecha){
+function openSaleDetail(id, backFecha, backRes){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
   const c=clientById(s.clienteId);
   const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
@@ -2566,6 +2575,11 @@ function openSaleDetail(id, backFecha){
   const subtotal=saleSubtotal(s), envio=s.costoEnvio||0, total=subtotal+envio;
   const tp=tipoDespachoOf(s);
   const esBodega=SESSION.rol==='bodega';
+  // Al abrir desde el detalle de "Margen bruto" mostramos costo y margen por producto (oculto para bodega por ser dato sensible)
+  const verMargen=backRes==='margen'&&!esBodega;
+  const costoPedido=saleCost(s);
+  const margenPedido=subtotal-costoPedido;
+  const margenPct=subtotal>0?Math.round(margenPedido/subtotal*100):0;
   // un paso del historial: estado = 'done' | 'pending' | 'info' segun color
   const COL={done:'#5f7f4d',blue:'#2563eb',amber:'#b45309',gray:'#c2cdc3'};
   const step=(color,title,sub,last)=>`
@@ -2591,7 +2605,7 @@ function openSaleDetail(id, backFecha){
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
-      ${backFecha?`<button onclick="openDiaEntregas('${backFecha}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al resumen del día</button>`:''}
+      ${backFecha?`<button onclick="openDiaEntregas('${backFecha}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al resumen del día</button>`:(backRes?`<button onclick="resBack('${backRes}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al detalle</button>`:'')}
       <div class="flex items-center justify-between">
         <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Detalle del pedido · ${s.fecha}</div></div>
         <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
@@ -2622,13 +2636,18 @@ function openSaleDetail(id, backFecha){
       <div class="border border-clay-100 rounded-xl overflow-hidden">
         <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
         <div class="divide-y divide-clay-100">
-          ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}${estado?'<br>'+estado:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+          ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');const pr=productById(i.productId);const costoLinea=(pr?pr.costo:0)*i.cantidad;const ventaLinea=lineTotal(i);return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}${estado?'<br>'+estado:''}</span><span class="text-right whitespace-nowrap"><span class="font-medium">${fmt(ventaLinea)}</span>${verMargen?`<br><span class="text-[11px] text-clay-400">costo ${fmt(costoLinea)}</span><br><span class="text-[11px] text-sage-600 font-medium">margen ${fmt(ventaLinea-costoLinea)}</span>`:''}</span></div>`;}).join('')}
         </div>
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
           <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
           ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
           <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
         </div>
+        ${verMargen?`<div class="px-4 py-3 bg-sage-50 border-t border-sage-100 text-sm space-y-1">
+          <div class="flex justify-between text-clay-600"><span>Valor venta (productos)</span><span>${fmt(subtotal)}</span></div>
+          <div class="flex justify-between text-clay-600"><span>Costo de productos</span><span>${fmt(costoPedido)}</span></div>
+          <div class="flex justify-between font-bold text-sage-700 pt-1"><span>Margen del pedido</span><span>${fmt(margenPedido)} <span class="text-xs font-normal">(${margenPct}%)</span></span></div>
+        </div>`:''}
       </div>
       <div>
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-3">Historial del pedido</div>
@@ -4274,7 +4293,7 @@ function convertirOCaFactura(ocId){
   renderFacturaModal();
 }
 function plazoLabel(p){ if(p===''||p==null) return ''; if(String(p)==='0') return 'contado'; return p+' días'; }
-function openFacturaDetail(id){
+function openFacturaDetail(id, backRes){
   const f=DB.invoices.find(x=>x.id===id); if(!f) return;
   const est=facturaEstadoCalc(f);
   const COL={done:'#5f7f4d',blue:'#2563eb',amber:'#b45309',red:'#dc2626',gray:'#c2cdc3'};
@@ -4299,7 +4318,7 @@ function openFacturaDetail(id){
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
-      <button onclick="go('facturas');closeModal()" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver a facturas</button>
+      ${backRes?`<button onclick="resBack('${backRes}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al detalle</button>`:`<button onclick="go('facturas');closeModal()" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver a facturas</button>`}
       <div class="flex items-center justify-between">
         <div><h3 class="text-lg font-bold leading-tight">${f.proveedor||'—'}</h3><div class="text-xs text-clay-500 mt-0.5">Factura N° ${f.numero||'—'}${f.rut?' · '+formatRut(f.rut):''}</div></div>
         <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
@@ -4515,6 +4534,606 @@ function deleteFactura(id){
   save(); closeModal();
   if(CURRENT==='facturas') renderFacturas(); else if(CURRENT==='compras') renderCompras();
 }
+/* ==================== CONTABILIDAD ====================
+   Módulo de contabilidad estilo Chipax, en 3 partes:
+   · Plan de cuentas: catálogo de cuentas donde se clasifica cada egreso.
+   · Egresos: unifica los gastos manuales + las facturas de compra, y permite
+     clasificar cada uno a una cuenta (sin volver a digitarlos).
+   · Resultado operacional (Parte 2): cruzará ventas y costos automáticamente.
+   ===================================================== */
+const CUENTA_GRUPOS = ['Costos Directos','Gastos de Operación','Marketing y Ventas','Remuneraciones','Administración','Impuestos','Otros'];
+// Naturaleza de cada cuenta y cómo se comporta en el Resultado Operacional (que va NETO de IVA):
+//  · mercaderia → compra de stock. NO afecta el resultado (su costo entra por el margen de la venta).
+//  · costo      → costo directo operacional (ej: flete de despacho). Resta en el resultado, en monto neto.
+//  · gasto      → gasto operacional fijo (sueldos, arriendo, publicidad). Resta en el resultado, en monto neto.
+//  · impuesto   → IVA / SII. NO afecta el resultado (es un impuesto que se recauda/paga por cuenta del SII).
+const TIPO_CUENTA = {
+  mercaderia:{label:'Compra de mercadería (inventario)', corto:'Mercadería', pill:'blue',  afecta:false, hint:'Es inventario. No afecta el resultado: el costo del macetero ya entra por el margen cuando se vende.'},
+  costo:     {label:'Costo directo',                    corto:'Costo directo', pill:'amber', afecta:true,  hint:'Costo que escala con las ventas (ej: flete de despacho). Resta en el resultado, en monto neto.'},
+  gasto:     {label:'Gasto operacional',                corto:'Gasto',         pill:'gray',  afecta:true,  hint:'Gasto fijo del negocio (sueldos, arriendo, publicidad). Resta en el resultado, en monto neto.'},
+  impuesto:  {label:'Impuesto (IVA / SII)',             corto:'Impuesto',      pill:'red',   afecta:false, hint:'El IVA es un impuesto que recaudas/pagas por cuenta del SII. No afecta el resultado (que va neto de IVA); es solo flujo de caja.'}
+};
+const tipoCuenta = t => TIPO_CUENTA[t] || TIPO_CUENTA.gasto;
+// Plan de cuentas sugerido para un negocio de maceteros (el usuario lo puede editar).
+function seedCuentas(){
+  const g=(codigo,nombre,grupo,tipo)=>({id:'cta-'+codigo, codigo, nombre, grupo, tipo, archivada:false});
+  return [
+    g('4100','Compra de productos','Costos Directos','mercaderia'),
+    g('4200','Fletes y despachos','Costos Directos','costo'),
+    g('5100','Comisiones medios de pago','Gastos de Operación','gasto'),
+    g('5200','Mantención y equipos','Gastos de Operación','gasto'),
+    g('5300','Combustible y reparto','Gastos de Operación','gasto'),
+    g('5400','Insumos y packaging','Gastos de Operación','gasto'),
+    g('6100','Publicidad y redes','Marketing y Ventas','gasto'),
+    g('6200','Ferias y eventos','Marketing y Ventas','gasto'),
+    g('7100','Sueldos','Remuneraciones','gasto'),
+    g('7200','Honorarios (contador)','Remuneraciones','gasto'),
+    g('8100','Arriendo','Administración','gasto'),
+    g('8200','Gastos generales','Administración','gasto'),
+    g('9100','IVA y otros impuestos','Impuestos','impuesto')
+  ];
+}
+// Ajusta planes ya guardados de versiones anteriores a la nueva naturaleza de cuentas.
+function migrarCuentas(){
+  let ch=false;
+  (DB.cuentas||[]).forEach(c=>{
+    if(c.id==='cta-4100' && c.tipo==='costo'){ c.tipo='mercaderia'; ch=true; }
+    if(c.id==='cta-9100' && (c.tipo==='gasto'||c.tipo==='costo')){ c.tipo='impuesto'; ch=true; }
+    if(!TIPO_CUENTA[c.tipo]){ c.tipo='gasto'; ch=true; }
+  });
+  return ch;
+}
+// Carga por única vez los gastos reales de junio 2026 (desde el Excel "COSTOS JUNIO").
+// Cada gasto ya viene clasificado a su cuenta y marcado con/sin factura (IVA).
+function cargarGastosJunio(){
+  if(DB._gastosJunio2026v1) return false;
+  DB.egresos = DB.egresos || [];
+  const G = [
+    {fecha:'2026-06-06', monto:4999,    proveedor:'Jumbo',            descripcion:'Silicona (insumo)',              cuentaId:'cta-5400', conFactura:false},
+    {fecha:'2026-06-10', monto:80000,   proveedor:'Bencina reparto',  descripcion:'Bencina reparto',                cuentaId:'cta-5300', conFactura:false},
+    {fecha:'2026-06-11', monto:11870,   proveedor:'Almuerzo',         descripcion:'Almuerzo',                       cuentaId:'cta-8200', conFactura:false},
+    {fecha:'2026-06-15', monto:12367,   proveedor:'Publicidad',       descripcion:'Publicidad',                     cuentaId:'cta-6100', conFactura:false},
+    {fecha:'2026-06-16', monto:1297426, proveedor:'SII',              descripcion:'IVA mayo (pago de impuesto)',    cuentaId:'cta-9100', conFactura:false},
+    {fecha:'2026-06-16', monto:50000,   proveedor:'Contador',         descripcion:'Honorarios contador junio',      cuentaId:'cta-7200', conFactura:true},
+    {fecha:'2026-06-16', monto:14355,   proveedor:'Café',             descripcion:'Café',                           cuentaId:'cta-8200', conFactura:false},
+    {fecha:'2026-06-18', monto:169865,  proveedor:'Feria Los Lirios', descripcion:'Pago feria Los Lirios',          cuentaId:'cta-6200', conFactura:true},
+    {fecha:'2026-06-25', monto:40171,   proveedor:'GetNet',           descripcion:'Mantención GetNet',              cuentaId:'cta-5200', conFactura:true},
+    {fecha:'2026-06-30', monto:115273,  proveedor:'GetNet',           descripcion:'Comisión GetNet',                cuentaId:'cta-5100', conFactura:true},
+    {fecha:'2026-06-12', monto:1200000, proveedor:'Vale',             descripcion:'Sueldo Vale',                    cuentaId:'cta-7100', conFactura:false},
+    {fecha:'2026-06-12', monto:1200000, proveedor:'Camila',           descripcion:'Sueldo Camila',                  cuentaId:'cta-7100', conFactura:false},
+    {fecha:'2026-06-17', monto:150000,  proveedor:'Proveedor Braulio',descripcion:'Abono proveedor Braulio (mitad)',cuentaId:'cta-4100', conFactura:false},
+    {fecha:'2026-06-22', monto:100000,  proveedor:'Proveedor Braulio',descripcion:'Abono proveedor Braulio (mitad)',cuentaId:'cta-4100', conFactura:false},
+    {fecha:'2026-06-24', monto:1121885, proveedor:'Proveedor Sigma',  descripcion:'Pago proveedor Sigma',           cuentaId:'cta-4100', conFactura:true},
+    {fecha:'2026-06-15', monto:200069,  proveedor:'Transporte Fran',  descripcion:'Transporte mayo (Fran)',         cuentaId:'cta-4200', conFactura:true},
+    {fecha:'2026-06-22', monto:154700,  proveedor:'José Baile',       descripcion:'Flete Santiago-Rancagua',        cuentaId:'cta-4200', conFactura:true},
+    {fecha:'2026-06-30', monto:60000,   proveedor:'Ibarbure',         descripcion:'Flete Santiago Ibarbure (repartos)',cuentaId:'cta-4200', conFactura:false}
+  ];
+  G.forEach((g,i)=>{ DB.egresos.push({id:'egr-jun26-'+(i+1), fecha:g.fecha, monto:g.monto, proveedor:g.proveedor, numDoc:'', descripcion:g.descripcion, responsable:'', cuentaId:g.cuentaId, conFactura:g.conFactura, creadoAt:Date.now()}); });
+  DB._gastosJunio2026v1 = true;
+  return true;
+}
+const cuentaById = id => (DB.cuentas||[]).find(c=>c.id===id);
+// Monto NETO (sin IVA) de un egreso, para el Resultado Operacional. Los documentos con IVA
+// (facturas de compra o gastos con factura) se llevan a neto dividiendo por 1,19; los sin factura van completos.
+function netoEgreso(e){
+  const conIva = e.tipo==='factura' || (e.ref && e.ref.conFactura);
+  return conIva ? Math.round((e.monto||0)/1.19) : (e.monto||0);
+}
+const mesLabel = p => { if(!p) return 'Todos los meses'; const m=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; const [y,mm]=p.split('-'); return (m[parseInt(mm,10)-1]||mm)+' '+y; };
+const egresoPeriodo = f => (f||'').slice(0,7);
+// Lista unificada de egresos: gastos manuales (DB.egresos) + facturas de compra (DB.invoices).
+function unifiedEgresos(){
+  const out=[];
+  (DB.egresos||[]).forEach(e=>out.push({tipo:'gasto', id:e.id, fecha:e.fecha, monto:e.monto||0, proveedor:e.proveedor||'', doc:e.numDoc||'', desc:e.descripcion||'', cuentaId:e.cuentaId||'', conFactura:!!e.conFactura, ref:e}));
+  (DB.invoices||[]).forEach(f=>out.push({tipo:'factura', id:f.id, fecha:f.emision, monto:f.monto||0, proveedor:f.proveedor||'', doc:f.numero||'', desc:(f.notas||''), cuentaId:f.cuentaId||'', estado:f.estado, ref:f}));
+  return out;
+}
+// <select> de cuentas agrupadas para clasificar (con opción "sin clasificar").
+function cuentaOptions(sel){
+  const act=(DB.cuentas||[]).filter(c=>!c.archivada);
+  const grupos=CUENTA_GRUPOS.filter(gr=>act.some(c=>c.grupo===gr));
+  return '<option value="">— Sin clasificar —</option>'+grupos.map(gr=>`<optgroup label="${gr}">`+act.filter(c=>c.grupo===gr).map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${c.nombre}</option>`).join('')+'</optgroup>').join('');
+}
+function clasificarEgreso(tipo,id,cuentaId){
+  if(tipo==='gasto'){ const e=(DB.egresos||[]).find(x=>x.id===id); if(e) e.cuentaId=cuentaId||''; }
+  else { const f=(DB.invoices||[]).find(x=>x.id===id); if(f) f.cuentaId=cuentaId||''; }
+  save(); renderEgresos();
+}
+
+/* ---------- EGRESOS ---------- */
+let EGR_MES=null;   // 'YYYY-MM' o '' para todos
+let EGR_IVA='';     // '' todos | 'con' con IVA (factura) | 'sin' sin IVA
+let EGR_EXCL=new Set(); // ids de egresos DESmarcados (excluidos de la selección)
+let EGR_VISIBLE=[]; // [{id, monto}] de la lista visible actual, para recalcular la selección
+let EGRE=null;      // egreso en edición
+function setEgrMes(p){ EGR_MES=p; renderEgresos(); }
+function setEgrIva(v){ EGR_IVA=v; renderEgresos(); }
+const egresoConIva = e => e.tipo==='factura' || (e.ref && e.ref.conFactura);
+// Selección de egresos: marcar/desmarcar y recalcular el monto seleccionado sin re-renderizar todo.
+function toggleEgrSel(id){
+  if(EGR_EXCL.has(id)) EGR_EXCL.delete(id); else EGR_EXCL.add(id);
+  const r=document.getElementById('egr-row-'+id); if(r) r.classList.toggle('opacity-40', EGR_EXCL.has(id));
+  actualizarTotalSel();
+}
+function actualizarTotalSel(){
+  const sel=EGR_VISIBLE.filter(x=>!EGR_EXCL.has(x.id));
+  const suma=sel.reduce((a,x)=>a+(x.monto||0),0);
+  const mEl=document.getElementById('egr_sel_monto'); if(mEl) mEl.textContent=fmt(suma);
+  const cEl=document.getElementById('egr_sel_count'); if(cEl) cEl.textContent=sel.length+' de '+EGR_VISIBLE.length+' egresos seleccionados';
+}
+function egrSelTodos(){ EGR_EXCL.clear(); renderEgresos(); }
+function egrSelNinguno(){ EGR_VISIBLE.forEach(x=>EGR_EXCL.add(x.id)); renderEgresos(); }
+function renderEgresos(){
+  const v=document.getElementById('view');
+  if(!DB.egresos) DB.egresos=[];
+  if(!DB.cuentas||!DB.cuentas.length) DB.cuentas=seedCuentas();
+  const all=unifiedEgresos();
+  const periodos=[...new Set(all.map(e=>egresoPeriodo(e.fecha)).filter(Boolean))].sort().reverse();
+  if(EGR_MES===null) EGR_MES = periodos[0]||todayISO().slice(0,7);
+  const listMes=all.filter(e=> !EGR_MES || egresoPeriodo(e.fecha)===EGR_MES).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const list=listMes.filter(e=> !EGR_IVA || (EGR_IVA==='con'?egresoConIva(e):!egresoConIva(e))); // filtro con/sin IVA solo para la lista
+  EGR_VISIBLE=list.map(e=>({id:e.id, monto:e.monto||0}));
+  const selList=list.filter(e=>!EGR_EXCL.has(e.id));
+  const selSuma=selList.reduce((a,e)=>a+(e.monto||0),0);
+  const total=listMes.reduce((a,e)=>a+(e.monto||0),0);
+  const clasif=listMes.filter(e=>e.cuentaId), sinClasif=listMes.filter(e=>!e.cuentaId);
+  // Lo que efectivamente entra al Resultado Operacional va NETO de IVA y solo si la cuenta afecta el resultado.
+  const afectaList=clasif.filter(e=>{const c=cuentaById(e.cuentaId);return c&&tipoCuenta(c.tipo).afecta;});
+  const noAfectaList=clasif.filter(e=>{const c=cuentaById(e.cuentaId);return c&&!tipoCuenta(c.tipo).afecta;});
+  const gastoNeto=afectaList.reduce((a,e)=>a+netoEgreso(e),0);
+  const flujoNoAfecta=noAfectaList.reduce((a,e)=>a+(e.monto||0),0);
+  const row=e=>{
+    const c=cuentaById(e.cuentaId);
+    const tc=c?tipoCuenta(c.tipo):null;
+    const afecta=tc?tc.afecta:true;
+    const conIva=e.tipo==='factura'||(e.ref&&e.ref.conFactura);
+    const accent=!e.cuentaId?'#d97706':(afecta?'#5f7f4d':'#94a3b8');
+    const sel=!EGR_EXCL.has(e.id);
+    return `<div id="egr-row-${e.id}" class="card p-0 overflow-hidden ${sel?'':'opacity-40'}">
+      <div class="flex items-stretch">
+        <div class="shrink-0" style="width:5px;background:${accent};"></div>
+        <label class="flex items-center pl-3 pr-1 shrink-0 cursor-pointer" title="Incluir en el monto seleccionado"><input type="checkbox" ${sel?'checked':''} onchange="toggleEgrSel('${e.id}')" class="rounded w-4 h-4 accent-sage-600"></label>
+        <div class="flex-1 min-w-0 p-3.5 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold truncate">${e.proveedor||e.desc||'Gasto'}</span>
+              ${e.tipo==='factura'?pill('Factura','blue'):pill('Gasto','gray')}
+              ${e.tipo==='factura'&&e.estado!=='pagado'?pill('Por pagar','amber'):''}
+              ${e.tipo==='gasto'&&e.conFactura?'<span title="Con factura">📄</span>':''}
+              ${c&&!afecta?'<span class="text-[10px] text-clay-500 border border-clay-200 rounded px-1.5 py-0.5" title="No entra al resultado operacional; es solo flujo de caja">no afecta resultado</span>':''}
+            </div>
+            <div class="text-xs text-clay-500 mt-0.5">${fechaAmig(e.fecha)}${e.doc?' · Doc '+e.doc:''}${e.desc&&e.desc!==e.proveedor?' · '+e.desc:''}</div>
+          </div>
+          <div class="sm:w-56 shrink-0">
+            <div class="text-[10px] text-clay-400 uppercase tracking-wide mb-0.5">Cuenta</div>
+            <select onchange="clasificarEgreso('${e.tipo}','${e.id}',this.value)" class="w-full border ${e.cuentaId?'border-sage-300 bg-sage-50':'border-amber-300 bg-amber-50'} rounded-xl px-2 py-1.5 text-xs">${cuentaOptions(e.cuentaId)}</select>
+          </div>
+          <div class="sm:text-right shrink-0">
+            <div class="font-bold text-lg whitespace-nowrap">${fmt(e.monto)}</div>
+            <div class="text-[10px] text-clay-400">${conIva?'IVA incl · neto '+fmt(netoEgreso(e)):'sin IVA'}</div>
+            ${e.tipo==='gasto'
+              ? `<div class="flex gap-1.5 mt-1 sm:justify-end"><button onclick="openEgreso('${e.id}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg">Editar</button><button onclick="deleteEgreso('${e.id}')" class="text-xs text-red-600 border border-red-200 hover:bg-red-50 px-2 py-1 rounded-lg">Eliminar</button></div>`
+              : `<button onclick="openFacturaDetail('${e.id}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-1 rounded-lg mt-1">Ver factura</button>`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  };
+  const mesSel=`<select onchange="setEgrMes(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+    ${periodos.map(p=>`<option value="${p}" ${p===EGR_MES?'selected':''}>${mesLabel(p)}</option>`).join('')}
+    <option value="" ${EGR_MES===''?'selected':''}>Todos los meses</option>
+  </select>`;
+  const ivaSel=`<select onchange="setEgrIva(this.value)" class="border ${EGR_IVA?'border-sage-300 bg-sage-50':'border-clay-200'} rounded-xl px-3 py-2 text-sm bg-white">
+    <option value="" ${EGR_IVA===''?'selected':''}>Con y sin IVA</option>
+    <option value="con" ${EGR_IVA==='con'?'selected':''}>Solo con IVA (factura)</option>
+    <option value="sin" ${EGR_IVA==='sin'?'selected':''}>Solo sin IVA</option>
+  </select>`;
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+    ${statCard('Total del mes (flujo)', fmt(total), list.length+' movimiento'+(list.length!==1?'s':'')+' · con IVA','text-clay-800','Todo lo que salió de caja en el mes, con IVA incluido.')}
+    ${statCard('Sin clasificar', fmt(sinClasif.reduce((a,e)=>a+(e.monto||0),0)), sinClasif.length+' pendiente'+(sinClasif.length!==1?'s':''), sinClasif.length?'text-amber-600':'text-clay-400')}
+    ${statCard('Gastos y costos (neto)', fmt(gastoNeto), afectaList.length+' movimiento'+(afectaList.length!==1?'s':'')+' · afecta resultado','text-sage-600','Suma neta (sin IVA) de gastos y costos directos. Esto es lo que resta en el Resultado Operacional.')}
+    ${statCard('Mercadería + IVA', fmt(flujoNoAfecta), 'no afecta resultado', 'text-clay-500','Compra de stock y pago de IVA: son flujo de caja, no entran al resultado (el costo del stock ya va por el margen).')}
+  </div>
+  <div class="card p-3 mb-4 bg-clay-50 border-clay-200 text-xs text-clay-600 leading-relaxed">
+    Los montos se muestran <b>con IVA</b>, como en tus documentos. El <b>Resultado Operacional</b> (Parte 2) irá en <b>montos netos</b> (sin IVA). Además, la <b>compra de mercadería</b> y el <b>pago de IVA</b> no afectan el resultado: son flujo de caja. El costo de los maceteros entra al resultado por el <b>margen de cada venta</b>, no por la factura de compra.
+  </div>
+  <div class="flex items-center justify-between gap-2 mb-4 flex-wrap">
+    <div class="flex items-center gap-2 flex-wrap"><span class="text-sm text-clay-500">Período:</span>${mesSel}<span class="text-sm text-clay-500 ml-1">IVA:</span>${ivaSel}</div>
+    <div class="text-xs text-clay-400">Las facturas de compra aparecen aquí automáticamente. Clasifica cada egreso a una cuenta.</div>
+  </div>
+  ${EGR_IVA?`<div class="text-xs text-clay-500 mb-2.5">Mostrando <b>${list.length}</b> de ${listMes.length} egresos · ${EGR_IVA==='con'?'solo <b>con IVA</b> (factura)':'solo <b>sin IVA</b>'} · suma ${fmt(list.reduce((a,e)=>a+(e.monto||0),0))} <button onclick="setEgrIva('')" class="ml-1 text-clay-600 underline hover:text-clay-900">quitar filtro</button></div>`:''}
+  ${list.length?`<div class="card p-4 mb-4 bg-sage-50 border-sage-200 flex flex-wrap items-center justify-between gap-3 sticky top-2 z-10">
+    <div>
+      <div class="text-xs text-clay-500 uppercase tracking-wide">Monto seleccionado</div>
+      <div id="egr_sel_monto" class="text-3xl font-bold text-sage-700 leading-tight">${fmt(selSuma)}</div>
+      <div id="egr_sel_count" class="text-xs text-clay-500 mt-0.5">${selList.length} de ${list.length} egresos seleccionados</div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-clay-400 mr-1 hidden sm:inline">Destilda los que no quieras contar (SII, sueldos, etc.)</span>
+      <button onclick="egrSelTodos()" class="text-xs font-medium border border-clay-300 bg-white hover:bg-clay-50 px-3 py-1.5 rounded-lg">Seleccionar todos</button>
+      <button onclick="egrSelNinguno()" class="text-xs font-medium border border-clay-300 bg-white hover:bg-clay-50 px-3 py-1.5 rounded-lg">Ninguno</button>
+    </div>
+  </div>`:''}
+  ${list.length===0
+    ? emptyState({icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6', titulo:EGR_IVA?'Sin egresos con este filtro':'Sin egresos en este período', detalle:EGR_IVA?'Ningún egreso de este mes coincide con el filtro de IVA seleccionado.':'Agrega un gasto con "Nuevo gasto" o crea facturas de compra; aparecerán aquí para clasificarlas.', accion:`<button onclick="openEgreso()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">+ Nuevo gasto</button>`})
+    : `<div class="space-y-2.5">${list.map(row).join('')}</div>`}
+  `;
+}
+function openEgreso(id, backRes){
+  const e=id?(DB.egresos||[]).find(x=>x.id===id):null;
+  EGRE = e ? {...e} : {id:uid('egr'), fecha:todayISO(), monto:0, proveedor:'', numDoc:'', descripcion:'', responsable:(SESSION&&SESSION.nombre)||'', cuentaId:'', conFactura:false};
+  const nuevo=!e;
+  modal(`
+    <div class="p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
+      ${backRes?`<button onclick="resBack('${backRes}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al detalle</button>`:''}
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-bold">${nuevo?'Nuevo gasto':'Editar gasto'}</h3>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+      </div>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-clay-500">Fecha</label><input id="eg_fecha" type="date" value="${EGRE.fecha||todayISO()}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-xs text-clay-500">Monto (lo que pagaste)</label><input id="eg_monto" type="text" inputmode="numeric" value="${milesIn(EGRE.monto)}" oninput="moneyInput(this);egNetoHint()" placeholder="0" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 text-right"></div>
+      </div>
+      <div><label class="text-xs text-clay-500">Proveedor / a quién se pagó</label><input id="eg_prov" value="${(EGRE.proveedor||'').replace(/"/g,'&quot;')}" placeholder="Ej: Bencinera, Contador, Feria..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-xs text-clay-500">Descripción</label><input id="eg_desc" value="${(EGRE.descripcion||'').replace(/"/g,'&quot;')}" placeholder="Ej: Bencina reparto Santiago" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-clay-500">N° documento (opcional)</label><input id="eg_doc" value="${(EGRE.numDoc||'').replace(/"/g,'&quot;')}" placeholder="Boleta / factura N°" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-xs text-clay-500">Responsable</label><input id="eg_resp" value="${(EGRE.responsable||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div><label class="text-xs text-clay-500">Cuenta contable</label><select id="eg_cuenta" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${cuentaOptions(EGRE.cuentaId)}</select></div>
+      <div class="bg-clay-50 border border-clay-200 rounded-xl p-3">
+        <label class="flex items-center gap-2 text-sm text-clay-700 font-medium"><input id="eg_conf" type="checkbox" onchange="egNetoHint()" ${EGRE.conFactura?'checked':''} class="rounded"> Tiene factura con IVA</label>
+        <div id="eg_hint" class="text-xs text-clay-500 mt-1.5">${EGRE.monto?(EGRE.conFactura?'Con factura: se descuenta el IVA. Al resultado entra el neto <b>'+fmt(Math.round(EGRE.monto/1.19))+'</b>.':'Sin factura (boleta o sin documento): entra el <b>monto completo ('+fmt(EGRE.monto)+')</b>, sin descontar IVA.'):'Marca esta casilla solo si tienes factura afecta (con IVA recuperable). Si es boleta o no te dan documento, déjala en blanco y entra el monto completo.'}</div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm font-medium">Cancelar</button>
+      <button onclick="saveEgreso()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2 rounded-xl text-sm">Guardar gasto</button>
+    </div>`);
+}
+function egNetoHint(){
+  const mEl=document.getElementById('eg_monto'), cEl=document.getElementById('eg_conf'), el=document.getElementById('eg_hint');
+  if(!el) return;
+  const m=milesParse((mEl&&mEl.value)||'');
+  if(!m){ el.innerHTML='Marca <b>Tiene factura con IVA</b> solo si tienes factura afecta. Si es boleta o no te dan documento, déjala en blanco y entra el monto completo.'; return; }
+  el.innerHTML = (cEl&&cEl.checked)
+    ? 'Con factura: se descuenta el IVA. Al resultado entra el neto <b>'+fmt(Math.round(m/1.19))+'</b>.'
+    : 'Sin factura (boleta o sin documento): entra el <b>monto completo ('+fmt(m)+')</b>, sin descontar IVA.';
+}
+function saveEgreso(){
+  const g=id=>document.getElementById(id);
+  EGRE.fecha=g('eg_fecha').value||todayISO();
+  EGRE.monto=milesParse(g('eg_monto').value);
+  EGRE.proveedor=g('eg_prov').value.trim();
+  EGRE.descripcion=g('eg_desc').value.trim();
+  EGRE.numDoc=g('eg_doc').value.trim();
+  EGRE.responsable=g('eg_resp').value.trim();
+  EGRE.cuentaId=g('eg_cuenta').value;
+  EGRE.conFactura=g('eg_conf').checked;
+  if(!EGRE.monto){ alert('Ingresa el monto del gasto.'); return; }
+  if(!EGRE.descripcion && !EGRE.proveedor){ alert('Ingresa una descripción o el proveedor.'); return; }
+  const ix=(DB.egresos||[]).findIndex(x=>x.id===EGRE.id);
+  if(ix>=0) DB.egresos[ix]=EGRE; else { EGRE.creadoAt=Date.now(); DB.egresos.push(EGRE); }
+  save(); closeModal(); EGR_MES=egresoPeriodo(EGRE.fecha); if(CURRENT==='egresos') renderEgresos();
+}
+function deleteEgreso(id){
+  const e=(DB.egresos||[]).find(x=>x.id===id); if(!e) return;
+  if(!confirm('¿Eliminar este gasto ('+fmt(e.monto)+')?')) return;
+  DB.egresos=DB.egresos.filter(x=>x.id!==id);
+  save(); if(CURRENT==='egresos') renderEgresos();
+  toastInfo('Gasto eliminado');
+}
+
+/* ---------- PLAN DE CUENTAS ---------- */
+let CTAE=null; // cuenta en edición
+function renderPlanCuentas(){
+  const v=document.getElementById('view');
+  if(!DB.cuentas||!DB.cuentas.length) DB.cuentas=seedCuentas();
+  const all=unifiedEgresos();
+  const usoDe=cid=>all.filter(e=>e.cuentaId===cid);
+  const grupos=CUENTA_GRUPOS.filter(gr=>(DB.cuentas||[]).some(c=>c.grupo===gr));
+  const otros=(DB.cuentas||[]).filter(c=>!CUENTA_GRUPOS.includes(c.grupo));
+  const gruposFull=[...grupos, ...(otros.length?['(otros)']:[])];
+  const seccion=gr=>{
+    const cuentas=(DB.cuentas||[]).filter(c=> gr==='(otros)' ? !CUENTA_GRUPOS.includes(c.grupo) : c.grupo===gr).filter(c=>!c.archivada);
+    if(!cuentas.length) return '';
+    const totGr=cuentas.reduce((a,c)=>a+usoDe(c.id).reduce((s,e)=>s+(e.monto||0),0),0);
+    return `<div class="mb-5">
+      <div class="flex items-center justify-between px-1 mb-2">
+        <div class="text-xs font-semibold uppercase tracking-wider text-clay-500">${gr==='(otros)'?'Otros':gr}</div>
+        <div class="text-xs text-clay-400">${fmt(totGr)}</div>
+      </div>
+      <div class="space-y-2">${cuentas.map(c=>{
+        const n=usoDe(c.id).length, mt=usoDe(c.id).reduce((s,e)=>s+(e.monto||0),0);
+        const tc=tipoCuenta(c.tipo);
+        return `<div class="card p-3.5 flex items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold truncate">${c.nombre}</span>
+              ${pill(tc.corto, tc.pill)}
+              ${!tc.afecta?'<span class="text-[10px] text-clay-400 border border-clay-200 rounded px-1.5 py-0.5">no afecta resultado</span>':''}
+            </div>
+            <div class="text-xs text-clay-400 mt-0.5">Código ${c.codigo||'—'} · ${n} movimiento${n!==1?'s':''}${n?' · '+fmt(mt):''}</div>
+          </div>
+          <button onclick="openCuenta('${c.id}')" class="text-xs text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button>
+          <button onclick="deleteCuenta('${c.id}')" class="text-xs text-red-600 border border-red-200 hover:bg-red-50 px-2.5 py-1.5 rounded-lg">${n?'Archivar':'Eliminar'}</button>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  };
+  v.innerHTML=`
+    <div class="card p-4 mb-5 bg-sage-50 border-sage-200">
+      <div class="text-sm text-clay-700">Este es el <b>plan de cuentas sugerido</b> para tu negocio de maceteros. Cada egreso y cada factura de compra se clasifica a una de estas cuentas para poder ver en qué se va la plata. Puedes editar, crear o archivar cuentas según tu realidad.</div>
+    </div>
+    ${gruposFull.map(seccion).join('')}
+  `;
+}
+function openCuenta(id){
+  const c=id?(DB.cuentas||[]).find(x=>x.id===id):null;
+  CTAE = c ? {...c} : {id:uid('cta'), codigo:'', nombre:'', grupo:'Gastos de Operación', tipo:'gasto', archivada:false};
+  const nuevo=!c;
+  const grupoOpts=CUENTA_GRUPOS.map(gr=>`<option value="${gr}" ${gr===CTAE.grupo?'selected':''}>${gr}</option>`).join('');
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${nuevo?'Nueva cuenta':'Editar cuenta'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div><label class="text-xs text-clay-500">Nombre de la cuenta</label><input id="ct_nombre" value="${(CTAE.nombre||'').replace(/"/g,'&quot;')}" placeholder="Ej: Publicidad y redes" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs text-clay-500">Código (opcional)</label><input id="ct_codigo" value="${(CTAE.codigo||'').replace(/"/g,'&quot;')}" placeholder="Ej: 6100" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-xs text-clay-500">Tipo</label><select id="ct_tipo" onchange="document.getElementById('ct_tipo_hint').textContent=({mercaderia:'${TIPO_CUENTA.mercaderia.hint}',costo:'${TIPO_CUENTA.costo.hint}',gasto:'${TIPO_CUENTA.gasto.hint}',impuesto:'${TIPO_CUENTA.impuesto.hint}'})[this.value]||''" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${Object.keys(TIPO_CUENTA).map(k=>`<option value="${k}" ${CTAE.tipo===k?'selected':''}>${TIPO_CUENTA[k].label}</option>`).join('')}</select></div>
+      </div>
+      <div><label class="text-xs text-clay-500">Grupo</label><select id="ct_grupo" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${grupoOpts}</select></div>
+      <p id="ct_tipo_hint" class="text-xs text-clay-400">${tipoCuenta(CTAE.tipo).hint}</p>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm font-medium">Cancelar</button>
+      <button onclick="saveCuenta()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2 rounded-xl text-sm">Guardar cuenta</button>
+    </div>`);
+}
+function saveCuenta(){
+  const g=id=>document.getElementById(id);
+  CTAE.nombre=g('ct_nombre').value.trim();
+  CTAE.codigo=g('ct_codigo').value.trim();
+  CTAE.tipo=g('ct_tipo').value;
+  CTAE.grupo=g('ct_grupo').value;
+  if(!CTAE.nombre){ alert('Ingresa el nombre de la cuenta.'); return; }
+  const ix=(DB.cuentas||[]).findIndex(x=>x.id===CTAE.id);
+  if(ix>=0) DB.cuentas[ix]=CTAE; else DB.cuentas.push(CTAE);
+  save(); closeModal(); if(CURRENT==='plancuentas') renderPlanCuentas();
+}
+function deleteCuenta(id){
+  const c=(DB.cuentas||[]).find(x=>x.id===id); if(!c) return;
+  const usados=unifiedEgresos().filter(e=>e.cuentaId===id).length;
+  if(usados){
+    if(!confirm('La cuenta "'+c.nombre+'" tiene '+usados+' movimiento'+(usados!==1?'s':'')+' clasificado'+(usados!==1?'s':'')+'. No se puede eliminar, pero se puede archivar para que deje de aparecer al clasificar. ¿Archivarla?')) return;
+    c.archivada=true;
+  } else {
+    if(!confirm('¿Eliminar la cuenta "'+c.nombre+'"?')) return;
+    DB.cuentas=DB.cuentas.filter(x=>x.id!==id);
+  }
+  save(); if(CURRENT==='plancuentas') renderPlanCuentas();
+}
+
+/* ---------- RESULTADO OPERACIONAL ----------
+   Estado de resultados NETO de IVA, por mes (según fecha del pedido, devengado):
+     Ventas netas (÷1,19)  −  Costo de venta (del margen)  =  Margen bruto
+     −  Costos directos y gastos operacionales clasificados (neto)  =  Resultado operacional
+   La compra de mercadería y el pago de IVA no entran (son flujo de caja). */
+let RES_MES=null;
+function setResMes(p){ RES_MES=p; renderResultado(); }
+function renderResultado(){
+  const v=document.getElementById('view');
+  if(!DB.cuentas||!DB.cuentas.length) DB.cuentas=seedCuentas();
+  const ventasAll=(DB.sales||[]).filter(s=>!s.perdido);
+  const egr=unifiedEgresos();
+  const periodos=[...new Set([...ventasAll.map(s=>egresoPeriodo(s.fecha)), ...egr.map(e=>egresoPeriodo(e.fecha))].filter(Boolean))].sort().reverse();
+  if(RES_MES===null) RES_MES = periodos[0]||todayISO().slice(0,7);
+  const mes=RES_MES;
+  // --- Ventas y costo de venta (del margen) ---
+  const ventasMes=ventasAll.filter(s=>egresoPeriodo(s.fecha)===mes);
+  const ventasBrutas=ventasMes.reduce((a,s)=>a+saleTotal(s),0);   // con IVA (incluye envío)
+  const ventasNetas=Math.round(ventasBrutas/1.19);
+  const envioBruto=ventasMes.reduce((a,s)=>a+(s.costoEnvio||0),0);   // lo que se cobra al cliente por despacho (con IVA)
+  const envioNeto=Math.round(envioBruto/1.19);
+  const ventasProdNeto=ventasNetas-envioNeto;                        // ventas de productos = ventas netas − ingreso por despacho
+  const costoVentaBruto=ventasMes.reduce((a,s)=>a+saleCost(s),0); // costo con IVA (como se ingresa en el producto)
+  const costoVenta=Math.round(costoVentaBruto/1.19);              // neteado ÷1,19 para comparar con ventas netas
+  const margenBruto=ventasNetas-costoVenta;
+  // --- Egresos clasificados del mes (neto) ---
+  const egrMes=egr.filter(e=>egresoPeriodo(e.fecha)===mes);
+  const afecta=egrMes.filter(e=>{const c=cuentaById(e.cuentaId);return c&&tipoCuenta(c.tipo).afecta;});
+  const sinClasif=egrMes.filter(e=>!e.cuentaId);
+  const noAfecta=egrMes.filter(e=>{const c=cuentaById(e.cuentaId);return c&&!tipoCuenta(c.tipo).afecta;});
+  const sinClasifMonto=sinClasif.reduce((a,e)=>a+(e.monto||0),0);
+  const noAfectaMonto=noAfecta.reduce((a,e)=>a+(e.monto||0),0);
+  // Neto por cuenta (solo cuentas que afectan resultado)
+  const netoCuenta={};
+  afecta.forEach(e=>{ netoCuenta[e.cuentaId]=(netoCuenta[e.cuentaId]||0)+netoEgreso(e); });
+  const costosDir=(DB.cuentas||[]).filter(c=>c.tipo==='costo' && netoCuenta[c.id]);
+  const totCostosDir=costosDir.reduce((a,c)=>a+netoCuenta[c.id],0);
+  const gruposGasto=CUENTA_GRUPOS.filter(gr=>(DB.cuentas||[]).some(c=>c.grupo===gr && c.tipo==='gasto' && netoCuenta[c.id]));
+  const totGastos=(DB.cuentas||[]).filter(c=>c.tipo==='gasto').reduce((a,c)=>a+(netoCuenta[c.id]||0),0);
+  const resultado=margenBruto-totCostosDir-totGastos;
+  const pct=(x)=> ventasNetas? Math.round(x/ventasNetas*100):0;
+  const line=(label,val,o={})=>`<div ${o.click?`onclick="${o.click}" title="Ver detalle"`:''} class="flex justify-between items-baseline py-1.5 ${o.border?'border-t border-clay-200 mt-1 pt-2':''} ${o.click?'cursor-pointer hover:bg-clay-50 -mx-2 px-2 rounded-lg transition':''}">
+      <span class="${o.indent?'pl-4 text-sm text-clay-500':(o.bold?'font-bold':o.strong?'font-semibold':'')}">${label}${o.click?' <span class="text-clay-300">›</span>':''}</span>
+      <span class="tabular-nums whitespace-nowrap ${o.bold?'font-bold text-base':o.strong?'font-semibold':''} ${o.color||''}">${o.neg&&val>0?'('+fmt(val)+')':fmt(val)}</span>
+    </div>`;
+  const cuentaLine=c=>line(c.nombre, netoCuenta[c.id], {indent:true, click:`openCuentaDetalle('${c.id}')`});
+  const mesSel=`<select onchange="setResMes(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white">
+    ${periodos.map(p=>`<option value="${p}" ${p===mes?'selected':''}>${mesLabel(p)}</option>`).join('')}
+    ${periodos.length?'':`<option value="${mes}" selected>${mesLabel(mes)}</option>`}
+  </select>`;
+  const resColor=resultado>=0?'text-sage-700':'text-red-600';
+  v.innerHTML=`
+  <div class="flex items-center justify-between gap-2 mb-4 flex-wrap">
+    <div class="flex items-center gap-2"><span class="text-sm text-clay-500">Mes:</span>${mesSel}</div>
+    <div class="text-xs text-clay-400">Neto de IVA · según fecha del pedido · <span class="text-clay-500">toca una tarjeta o una línea para ver su detalle ›</span></div>
+  </div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    ${resCard('Ventas netas', fmt(ventasNetas), ventasMes.length+' pedido'+(ventasMes.length!==1?'s':''),'text-clay-800','ventas')}
+    ${resCard('Margen bruto', fmt(margenBruto), pct(margenBruto)+'% de ventas','text-sage-600','margen')}
+    ${resCard('Costos + gastos', fmt(totCostosDir+totGastos), afecta.length+' egreso'+(afecta.length!==1?'s':'')+' (neto)','text-clay-700','costos')}
+    ${resCard('Resultado operacional', fmt(resultado), pct(resultado)+'% de ventas', resColor,'resultado')}
+  </div>
+  <div class="card p-5 max-w-2xl">
+    <div class="text-xs font-semibold uppercase tracking-wider text-clay-500 mb-2">Estado de resultados · ${mesLabel(mes)}</div>
+    ${line('Ventas de productos', ventasProdNeto, {click:`resDetalle('ventas')`})}
+    ${envioNeto?line('Ingreso por despachos', envioNeto, {click:`resDetalle('despachos')`}):''}
+    ${line('Ventas netas', ventasNetas, {strong:true, border:true, click:`resDetalle('ventas')`})}
+    ${line('Costo de venta (productos vendidos)', costoVenta, {neg:true, color:'text-clay-600', click:`resDetalle('margen')`})}
+    ${line('Margen bruto', margenBruto, {border:true, strong:true, color:'text-sage-700', click:`resDetalle('margen')`})}
+    ${costosDir.length?`<div class="text-[11px] uppercase tracking-wide text-clay-400 mt-3 mb-0.5">Costos directos</div>${costosDir.map(cuentaLine).join('')}${line('Total costos directos', totCostosDir, {neg:true, strong:true, color:'text-clay-600', click:`resDetalle('costos')`})}`:''}
+    ${gruposGasto.map(gr=>{
+      const cuentas=(DB.cuentas||[]).filter(c=>c.grupo===gr && c.tipo==='gasto' && netoCuenta[c.id]);
+      return `<div class="text-[11px] uppercase tracking-wide text-clay-400 mt-3 mb-0.5">${gr}</div>${cuentas.map(cuentaLine).join('')}`;
+    }).join('')}
+    ${totGastos?line('Total gastos operacionales', totGastos, {neg:true, strong:true, color:'text-clay-600', click:`resDetalle('costos')`}):''}
+    ${line('Resultado operacional', resultado, {border:true, bold:true, color:resColor, click:`resDetalle('resultado')`})}
+    <div class="text-right text-xs text-clay-400 mt-0.5">${pct(resultado)}% sobre ventas netas</div>
+  </div>
+  ${sinClasif.length?`<div class="card p-3.5 mt-4 bg-amber-50 border-amber-200 flex items-center justify-between gap-3 max-w-2xl">
+    <div class="text-sm text-amber-800">Tienes <b>${sinClasif.length}</b> egreso${sinClasif.length!==1?'s':''} sin clasificar este mes (${fmt(sinClasifMonto)}) que aún no entran al resultado.</div>
+    <button onclick="go('egresos')" class="shrink-0 text-xs font-semibold text-amber-800 bg-white border border-amber-300 hover:bg-amber-100 px-3 py-1.5 rounded-lg">Clasificar</button>
+  </div>`:''}
+  <div class="text-xs text-clay-400 mt-4 max-w-2xl leading-relaxed space-y-1">
+    <div>• <b>No incluidos (flujo de caja):</b> compra de mercadería y pago de IVA${noAfectaMonto?' ('+fmt(noAfectaMonto)+' este mes)':''}. No afectan el resultado; el costo de los productos ya entra por el margen.</div>
+    <div>• <b>Supuestos:</b> ventas con IVA neteadas ÷1,19 (incluye envío); costo de venta tomado del costo de cada producto (con IVA) y también neteado ÷1,19; gastos y costos <b>con factura</b> llevados a neto ÷1,19; gastos <b>sin factura</b> (boleta o sin documento) entran por su <b>monto completo</b>. Todo queda comparable.</div>
+  </div>
+  `;
+}
+// Tarjeta clickeable del Resultado: abre el detalle de esa cifra.
+const resCard=(label,value,sub,color,which)=>`<div onclick="resDetalle('${which}')" class="cursor-pointer transition hover:-translate-y-0.5 hover:ring-2 hover:ring-clay-300 rounded-2xl" title="Clic para ver el detalle">${statCard(label,value,sub,color)}</div>`;
+const TITULO_RES={ventas:'Detalle de ventas netas', margen:'Detalle de margen bruto', costos:'Detalle de costos y gastos', resultado:'Detalle del resultado operacional', despachos:'Ingreso y margen por despachos'};
+// Botón "volver" de los detalles: si el destino es una cuenta (cta-*) reabre esa cuenta; si no, la tarjeta del Resultado.
+function resBack(k){ if(!k) return; if(String(k).indexOf('cta-')===0){ openCuentaDetalle(k); } else { resDetalle(k); } }
+// Detalle de una línea/cuenta del Estado de Resultados: lista los egresos de esa cuenta en el mes (RES_MES), cada uno clickeable.
+function openCuentaDetalle(cuentaId){
+  const mes=RES_MES||todayISO().slice(0,7);
+  const c=cuentaById(cuentaId);
+  const items=unifiedEgresos().filter(e=>e.cuentaId===cuentaId && egresoPeriodo(e.fecha)===mes).slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  const totNeto=items.reduce((a,e)=>a+netoEgreso(e),0);
+  const totBruto=items.reduce((a,e)=>a+(e.monto||0),0);
+  const head=`<div class="p-5 border-b border-clay-100 sticky top-0 bg-white z-10"><div class="flex items-center justify-between"><div><h3 class="text-lg font-bold">${c?c.nombre:'Cuenta'}</h3><div class="text-xs text-clay-400 mt-0.5">${mesLabel(mes)} · ${items.length} egreso${items.length!==1?'s':''}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div></div>`;
+  const foot=`<div class="p-4 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm font-medium">Cerrar</button></div>`;
+  let body;
+  if(!items.length){ body='<div class="p-6 text-sm text-clay-500">No hay egresos en esta cuenta este mes.</div>'; }
+  else{
+    const rows=items.map(e=>{
+      const conIva=e.tipo==='factura'||(e.ref&&e.ref.conFactura);
+      const onc=e.tipo==='gasto'?`openEgreso('${e.id}','${cuentaId}')`:`openFacturaDetail('${e.id}','${cuentaId}')`;
+      return `<tr onclick="${onc}" class="border-t border-clay-100 cursor-pointer hover:bg-clay-50"><td class="px-4 py-2">${fechaAmig(e.fecha)}</td><td class="px-4 py-2 text-clay-700">${e.proveedor||e.desc||'Gasto'} <span class="text-clay-300">›</span></td><td class="px-4 py-2 text-center text-[11px] text-clay-500">${conIva?'con factura':'sin factura'}</td><td class="px-4 py-2 text-right text-clay-400">${fmt(e.monto)}</td><td class="px-4 py-2 text-right font-medium">${fmt(netoEgreso(e))}</td></tr>`;
+    }).join('');
+    body=`<div class="p-5 overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-clay-400 text-left"><th class="px-4 py-2 font-medium">Fecha</th><th class="px-4 py-2 font-medium">Proveedor</th><th class="px-4 py-2 text-center font-medium">Doc</th><th class="px-4 py-2 text-right font-medium">Pagado</th><th class="px-4 py-2 text-right font-medium">Neto</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="border-t-2 border-clay-200 font-bold"><td class="px-4 py-2" colspan="3">Total (${items.length})</td><td class="px-4 py-2 text-right text-clay-400">${fmt(totBruto)}</td><td class="px-4 py-2 text-right text-clay-800">${fmt(totNeto)}</td></tr></tfoot></table><div class="text-xs text-clay-400 mt-3">Lo <b>con factura</b> entra neto (÷1,19); lo <b>sin factura</b> entra completo.</div></div>`;
+  }
+  modal(head+body+foot);
+}
+// Modal con el desglose de cada tarjeta del Resultado Operacional, para el mes seleccionado (RES_MES).
+function resDetalle(which){
+  const mes=RES_MES||todayISO().slice(0,7);
+  const ventasMes=(DB.sales||[]).filter(s=>!s.perdido && egresoPeriodo(s.fecha)===mes);
+  const egr=unifiedEgresos().filter(e=>egresoPeriodo(e.fecha)===mes);
+  const afecta=egr.filter(e=>{const c=cuentaById(e.cuentaId);return c&&tipoCuenta(c.tipo).afecta;});
+  const noAfecta=egr.filter(e=>{const c=cuentaById(e.cuentaId);return c&&!tipoCuenta(c.tipo).afecta;});
+  const nombreCli=s=>{const c=clientById(s.clienteId);return c?c.nombre:(s.clienteNombre||'Cliente');};
+  const head=`<div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10"><div><h3 class="text-lg font-bold">${TITULO_RES[which]||'Detalle'}</h3><div class="text-xs text-clay-400 mt-0.5">${mesLabel(mes)}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>`;
+  const foot=`<div class="p-4 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm font-medium">Cerrar</button></div>`;
+  let body='';
+  if(which==='ventas'){
+    if(!ventasMes.length) body='<div class="p-6 text-sm text-clay-500">No hay ventas este mes.</div>';
+    else{
+      const rows=ventasMes.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(s=>{
+        const t=saleTotal(s), n=Math.round(t/1.19);
+        return `<tr onclick="openSaleDetail('${s.id}',null,'ventas')" class="border-t border-clay-100 cursor-pointer hover:bg-clay-50"><td class="px-4 py-2">${fechaAmig(s.fecha)}</td><td class="px-4 py-2 text-clay-700">${nombreCli(s)} <span class="text-clay-300">›</span></td><td class="px-4 py-2 text-right text-clay-400">${fmt(t)}</td><td class="px-4 py-2 text-right font-semibold">${fmt(n)}</td></tr>`;
+      }).join('');
+      const totT=ventasMes.reduce((a,s)=>a+saleTotal(s),0), totN=Math.round(totT/1.19);
+      body=`<div class="p-5 overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-clay-400 text-left"><th class="px-4 py-2 font-medium">Fecha</th><th class="px-4 py-2 font-medium">Cliente</th><th class="px-4 py-2 text-right font-medium">Con IVA</th><th class="px-4 py-2 text-right font-medium">Neto</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="border-t-2 border-clay-200 font-bold"><td class="px-4 py-2" colspan="2">Total (${ventasMes.length})</td><td class="px-4 py-2 text-right text-clay-400">${fmt(totT)}</td><td class="px-4 py-2 text-right text-clay-800">${fmt(totN)}</td></tr></tfoot></table><div class="text-xs text-clay-400 mt-3">Las ventas entran al resultado <b>netas de IVA</b> (÷1,19) e incluyen el envío.</div></div>`;
+    }
+  }
+  else if(which==='margen'){
+    const vn=Math.round(ventasMes.reduce((a,s)=>a+saleTotal(s),0)/1.19);
+    const cv=Math.round(ventasMes.reduce((a,s)=>a+saleCost(s),0)/1.19);
+    const rows=ventasMes.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(s=>{
+      const n=Math.round(saleTotal(s)/1.19), c=Math.round(saleCost(s)/1.19), m=n-c;
+      return `<tr onclick="openSaleDetail('${s.id}',null,'margen')" class="border-t border-clay-100 cursor-pointer hover:bg-clay-50"><td class="px-4 py-2">${fechaAmig(s.fecha)}</td><td class="px-4 py-2 text-clay-700">${nombreCli(s)} <span class="text-clay-300">›</span></td><td class="px-4 py-2 text-right">${fmt(n)}</td><td class="px-4 py-2 text-right text-clay-400">${fmt(c)}</td><td class="px-4 py-2 text-right font-semibold text-sage-600">${fmt(m)}</td></tr>`;
+    }).join('');
+    body=`<div class="p-5 overflow-x-auto">
+      <div class="grid grid-cols-3 gap-3 mb-4 text-center">
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-[11px] text-clay-500">Ventas netas</div><div class="font-bold">${fmt(vn)}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-[11px] text-clay-500">− Costo venta (neto)</div><div class="font-bold text-clay-600">${fmt(cv)}</div></div>
+        <div class="bg-sage-50 rounded-xl p-3"><div class="text-[11px] text-clay-500">= Margen bruto</div><div class="font-bold text-sage-600">${fmt(vn-cv)}</div></div>
+      </div>
+      ${ventasMes.length?`<table class="w-full text-sm"><thead><tr class="text-xs text-clay-400 text-left"><th class="px-4 py-2 font-medium">Fecha</th><th class="px-4 py-2 font-medium">Cliente</th><th class="px-4 py-2 text-right font-medium">Venta neta</th><th class="px-4 py-2 text-right font-medium">Costo neto</th><th class="px-4 py-2 text-right font-medium">Margen</th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="text-sm text-clay-500">No hay ventas este mes.</div>'}
+      <div class="text-xs text-clay-400 mt-3">Margen bruto = ventas netas − costo de los productos vendidos (ambos sin IVA).</div>
+    </div>`;
+  }
+  else if(which==='despachos'){
+    const conEnvio=ventasMes.filter(s=>(s.costoEnvio||0)>0).slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const envBrutoTot=ventasMes.reduce((a,s)=>a+(s.costoEnvio||0),0);
+    const envNetoTot=Math.round(envBrutoTot/1.19);
+    // Fletes pagados del mes: egresos afectos cuya cuenta es de fletes/despachos/reparto.
+    const fleteNeto=afecta.filter(e=>{const c=cuentaById(e.cuentaId);return c && /flete|despacho|repart/i.test(c.nombre);}).reduce((a,e)=>a+netoEgreso(e),0);
+    const margenDesp=envNetoTot-fleteNeto;
+    const rows=conEnvio.map(s=>{
+      const eb=s.costoEnvio||0, en=Math.round(eb/1.19);
+      return `<tr onclick="openSaleDetail('${s.id}',null,'despachos')" class="border-t border-clay-100 cursor-pointer hover:bg-clay-50"><td class="px-4 py-2">${fechaAmig(s.fecha)}</td><td class="px-4 py-2 text-clay-700">${nombreCli(s)} <span class="text-clay-300">›</span></td><td class="px-4 py-2 text-right text-clay-400">${fmt(eb)}</td><td class="px-4 py-2 text-right font-semibold">${fmt(en)}</td></tr>`;
+    }).join('');
+    body=`<div class="p-5 overflow-x-auto">
+      <div class="grid grid-cols-3 gap-3 mb-4 text-center">
+        <div class="bg-sage-50 rounded-xl p-3"><div class="text-[11px] text-clay-500">Ingreso despachos (neto)</div><div class="font-bold text-sage-600">${fmt(envNetoTot)}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-[11px] text-clay-500">− Fletes pagados (neto)</div><div class="font-bold text-clay-600">${fmt(fleteNeto)}</div></div>
+        <div class="${margenDesp>=0?'bg-sage-50':'bg-red-50'} rounded-xl p-3"><div class="text-[11px] text-clay-500">= Margen del despacho</div><div class="font-bold ${margenDesp>=0?'text-sage-700':'text-red-600'}">${fmt(margenDesp)}</div></div>
+      </div>
+      ${conEnvio.length?`<table class="w-full text-sm"><thead><tr class="text-xs text-clay-400 text-left"><th class="px-4 py-2 font-medium">Fecha</th><th class="px-4 py-2 font-medium">Cliente</th><th class="px-4 py-2 text-right font-medium">Cobrado (con IVA)</th><th class="px-4 py-2 text-right font-medium">Neto</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="border-t-2 border-clay-200 font-bold"><td class="px-4 py-2" colspan="2">Total (${conEnvio.length})</td><td class="px-4 py-2 text-right text-clay-400">${fmt(envBrutoTot)}</td><td class="px-4 py-2 text-right text-sage-700">${fmt(envNetoTot)}</td></tr></tfoot></table>`:'<div class="text-sm text-clay-500">No hay pedidos con cobro de envío este mes.</div>'}
+      <div class="text-xs text-clay-400 mt-3">El <b>ingreso por despacho</b> es lo que le cobras al cliente por el envío (entra en Ventas netas, sin IVA). Los <b>fletes pagados</b> son lo que te cobra el transportista, en la cuenta "Fletes y despachos". La diferencia es tu <b>margen del despacho</b>.</div>
+    </div>`;
+  }
+  else if(which==='costos'){
+    if(!afecta.length) body='<div class="p-6 text-sm text-clay-500">No hay gastos ni costos clasificados este mes.</div>';
+    else{
+      const byCuenta={}; afecta.forEach(e=>{ (byCuenta[e.cuentaId]=byCuenta[e.cuentaId]||[]).push(e); });
+      const bloques=Object.keys(byCuenta).map(cid=>{
+        const c=cuentaById(cid); const items=byCuenta[cid].slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+        const tot=items.reduce((a,e)=>a+netoEgreso(e),0);
+        const rows=items.map(e=>{
+          const conIva=e.tipo==='factura'||(e.ref&&e.ref.conFactura);
+          const onc=e.tipo==='gasto'?`openEgreso('${e.id}','costos')`:`openFacturaDetail('${e.id}','costos')`;
+          return `<tr onclick="${onc}" class="border-t border-clay-100 cursor-pointer hover:bg-clay-50"><td class="px-4 py-2">${fechaAmig(e.fecha)}</td><td class="px-4 py-2 text-clay-700">${e.proveedor||e.desc||'Gasto'} <span class="text-clay-300">›</span></td><td class="px-4 py-2 text-center text-[11px] text-clay-500">${conIva?'con factura':'sin factura'}</td><td class="px-4 py-2 text-right text-clay-400">${fmt(e.monto)}</td><td class="px-4 py-2 text-right font-medium">${fmt(netoEgreso(e))}</td></tr>`;
+        }).join('');
+        return `<div class="mb-4"><div class="flex justify-between items-baseline mb-1"><div class="font-semibold text-sm">${c?c.nombre:'(cuenta)'}</div><div class="font-bold text-sm">${fmt(tot)}</div></div><table class="w-full text-sm"><thead><tr class="text-[11px] text-clay-400 text-left"><th class="px-4 py-1 font-medium">Fecha</th><th class="px-4 py-1 font-medium">Proveedor</th><th class="px-4 py-1 text-center font-medium">Doc</th><th class="px-4 py-1 text-right font-medium">Pagado</th><th class="px-4 py-1 text-right font-medium">Neto</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      }).join('');
+      const totNeto=afecta.reduce((a,e)=>a+netoEgreso(e),0);
+      body=`<div class="p-5 overflow-x-auto">${bloques}<div class="border-t-2 border-clay-200 pt-2 flex justify-between font-bold"><span>Total costos + gastos (neto)</span><span>${fmt(totNeto)}</span></div><div class="text-xs text-clay-400 mt-3">Lo <b>con factura</b> entra neto (÷1,19); lo <b>sin factura</b> entra completo. Solo se muestran las cuentas que afectan el resultado.</div></div>`;
+    }
+  }
+  else{
+    const vn=Math.round(ventasMes.reduce((a,s)=>a+saleTotal(s),0)/1.19);
+    const cv=Math.round(ventasMes.reduce((a,s)=>a+saleCost(s),0)/1.19);
+    const mb=vn-cv;
+    const netoCuenta={}; afecta.forEach(e=>{netoCuenta[e.cuentaId]=(netoCuenta[e.cuentaId]||0)+netoEgreso(e);});
+    const totCostosDir=(DB.cuentas||[]).filter(c=>c.tipo==='costo').reduce((a,c)=>a+(netoCuenta[c.id]||0),0);
+    const totGastos=(DB.cuentas||[]).filter(c=>c.tipo==='gasto').reduce((a,c)=>a+(netoCuenta[c.id]||0),0);
+    const res=mb-totCostosDir-totGastos;
+    const noAfectaMonto=noAfecta.reduce((a,e)=>a+(e.monto||0),0);
+    const rr=(l,val,o={})=>`<div class="flex justify-between py-1.5 ${o.strong?'border-t border-clay-200 mt-1 pt-2':''}"><span class="${o.strong?'font-semibold':''}">${l}</span><span class="tabular-nums ${o.strong?'font-semibold':''} ${o.color||''}">${o.neg&&val>0?'('+fmt(val)+')':fmt(val)}</span></div>`;
+    body=`<div class="p-5">
+      ${rr('Ventas netas',vn)}
+      ${rr('Costo de venta',cv,{neg:true,color:'text-clay-600'})}
+      ${rr('Margen bruto',mb,{strong:true,color:'text-sage-700'})}
+      ${totCostosDir?rr('Costos directos',totCostosDir,{neg:true,color:'text-clay-600'}):''}
+      ${totGastos?rr('Gastos operacionales',totGastos,{neg:true,color:'text-clay-600'}):''}
+      ${rr('Resultado operacional',res,{strong:true,color:res>=0?'text-sage-700':'text-red-600'})}
+      <div class="text-xs text-clay-400 mt-3">No incluye compra de mercadería ni pago de IVA${noAfectaMonto?' ('+fmt(noAfectaMonto)+' este mes)':''}: son flujo de caja, no afectan el resultado.</div>
+    </div>`;
+  }
+  modal(head+body+foot);
+}
+
 /* ---- Pago de varias facturas en una sola transferencia ---- */
 let PAGO=null; // {sel:{}, pdfPago}
 function openPagoMultiple(){ PAGO={sel:{}, pdfPago:null}; renderPagoMultiple(); }
