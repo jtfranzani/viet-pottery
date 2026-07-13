@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-79';
+const APP_VERSION = '2026.07.09-81';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -546,13 +546,40 @@ const PROV_SKU={
 /* ---------- Helpers de negocio ---------- */
 const productById = id => DB.products.find(p=>p.id===id);
 const clientById = id => DB.clients.find(c=>c.id===id);
-const productName = p => `${p.modelo} ${p.tamano!=='Único'?p.tamano:''} ${p.color!=='Natural'?'· '+p.color:''}`.replace(/\s+/g,' ').trim();
+// ===== Renombre de modelos =====
+// El nombre ANTIGUO se conserva SIEMPRE en p.modelo (se usa para el proveedor: OC y facturas).
+// El nombre NUEVO se calcula al vuelo y es el que ve el cliente. Internamente mostramos "Nuevo (Antiguo)".
+const MODELO_RENAME = [
+  ['Rustic Round','Vietnam'],
+  ['European bowl','Lotus'],
+  ['Essential','Hanoi'],
+  ['Elipse','Nara'],
+  ['Cask','Angkor'],
+  ['Bios','Bali'],
+  ['Garland','Pagoda'],
+  ['Flute','Imperial'],
+  ['Firenze','Yunnan'],
+  ['Harmony','Ubud']
+];
+function modeloNuevo(m){ m=m||''; for(const [ant,nue] of MODELO_RENAME){ if(m===ant) return nue; if(m.startsWith(ant+' ')) return nue+m.slice(ant.length); } return m; }
+// Solo el nombre de modelo para columnas que ya separan tamaño/color: "Nuevo (Antiguo)" si cambió
+function modeloShow(m){ const nue=modeloNuevo(m); return nue!==m?`${nue} (${m})`:nue; }
+const _pnBase = (p, modelo) => `${modelo} ${p.tamano!=='Único'?p.tamano:''} ${p.color!=='Natural'?'· '+p.color:''}`.replace(/\s+/g,' ').trim();
+// Interno (por defecto): nombre nuevo y, entre paréntesis, el antiguo (solo si cambió)
+function productName(p){ const nue=modeloNuevo(p.modelo); const base=_pnBase(p,nue); return nue!==p.modelo?`${base} (${p.modelo})`:base; }
+// Cliente: SOLO el nombre nuevo
+const productNameCliente = p => _pnBase(p, modeloNuevo(p.modelo));
+// Proveedor (OC / facturas): SOLO el nombre antiguo original
+const productNameProveedor = p => _pnBase(p, p.modelo);
 const lineTotal = i => i.cantidad*i.precio*(1-(i.descuento||0)/100);
 const saleSubtotal = s => s.items.reduce((a,i)=>a+lineTotal(i),0);   // solo productos (con descuentos)
 const saleTotal = s => saleSubtotal(s) + (s.costoEnvio||0);          // total que paga el cliente: productos + envío
 const saleCost  = s => s.items.reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
 // Nombre limpio de un item: usa el catálogo y, si no, limpia la descripción (quita "xN" duplicado).
-const itemLabel = i => { const p=productById(i.productId); return p?productName(p):String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim(); };
+const _cleanDesc = i => String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim();
+const itemLabel = i => { const p=productById(i.productId); return p?productName(p):_cleanDesc(i); };            // interno: Nuevo (Antiguo)
+const itemLabelCliente = i => { const p=productById(i.productId); return p?productNameCliente(p):_cleanDesc(i); }; // cliente: solo Nuevo
+const itemLabelProveedor = i => { const p=productById(i.productId); return p?productNameProveedor(p):_cleanDesc(i); };// proveedor: solo Antiguo
 // Lista de productos de una venta en líneas alineadas (cantidad × nombre).
 const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabel(i)}</span></div>`).join('');
 
@@ -1104,7 +1131,7 @@ function repData(){
   sales.forEach(s=>s.items.forEach(i=>{
     const p=productById(i.productId);
     const k=i.productId||i.descripcion;
-    const cat=p?p.modelo:'Otros';
+    const cat=p?modeloShow(p.modelo):'Otros';
     const lt=lineTotal(i);
     const ct=(p?p.costo:0)*i.cantidad;
     if(!byProd[k])byProd[k]={pid:i.productId,desc:i.descripcion,cat:cat,cant:0,monto:0,costo:0};
@@ -1625,7 +1652,7 @@ function downloadQuotePDF(id){
   doc.autoTable({
     startY:yp+4,
     head:[['Producto','Cant.','P. unit.','Dcto','Subtotal']],
-    body:q.items.map(i=>{const p=productById(i.productId); return [p?productName(p):(i.descripcion||'-'), String(i.cantidad), fmt(i.precio), (i.descuento||0)+'%', fmt(lineTotal(i))];}),
+    body:q.items.map(i=>{const p=productById(i.productId); return [p?productNameCliente(p):(i.descripcion||'-'), String(i.cantidad), fmt(i.precio), (i.descuento||0)+'%', fmt(lineTotal(i))];}),
     styles:{fontSize:9.5,cellPadding:3.5,lineColor:[245,233,225],lineWidth:0.1,textColor:[74,44,35]},
     headStyles:{fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold'},
     alternateRowStyles:{fillColor:[247,250,247]},
@@ -2215,7 +2242,7 @@ function comprobanteHTML(s){
       ${s.fechaEntrega?row('Entrega estimada',`<b>${s.fechaEntrega}</b>`):''}
       <div style="border-top:1px dashed #eed2c5;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#c9876c;margin-bottom:10px;">Detalle de tu compra</div>
-      ${s.items.map(i=>{const dt=i.descuento||0;return `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#a3654e;">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span style="color:#5f7f4d;font-size:11px;">(-${dt}%)</span>`:''}</span><span style="font-weight:600;white-space:nowrap;">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+      ${s.items.map(i=>{const dt=i.descuento||0;return `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#a3654e;">${i.cantidad} ×</span> ${itemLabelCliente(i)}${dt>0?` <span style="color:#5f7f4d;font-size:11px;">(-${dt}%)</span>`:''}</span><span style="font-weight:600;white-space:nowrap;">${fmt(lineTotal(i))}</span></div>`;}).join('')}
       <div style="border-top:1px dashed #eed2c5;margin:14px 0;"></div>
       ${row('Subtotal',fmt(subtotal))}
       ${envio>0?row('Envío',fmt(envio)):''}
@@ -2497,8 +2524,8 @@ function comprobanteEntregaHTML(s, fotoUrl){
       ${s.courier?row('Vía',s.courier):''}
       <div style="border-top:1px dashed #eed2c5;margin:16px 0;"></div>
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#c9876c;margin-bottom:10px;">Productos entregados</div>
-      ${s.items.filter(i=>itemEntregadoQty(s,i)>0).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#a3654e;">${itemEntregadoQty(s,i)} ×</span> ${itemLabel(i)}</span></div>`).join('')||'<div style="font-size:13px;color:#9aa6a0;">—</div>'}
-      ${saleHayEntregaParcial(s)?`<div style="border-top:1px dashed #eed2c5;margin:14px 0 10px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#b9763a;margin-bottom:10px;">Pendiente de entregar</div>${salePendientes(s).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;color:#9a6433;"><span><span>${itemPendienteQty(s,i)} ×</span> ${itemLabel(i)}</span></div>`).join('')}`:''}
+      ${s.items.filter(i=>itemEntregadoQty(s,i)>0).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;"><span><span style="color:#a3654e;">${itemEntregadoQty(s,i)} ×</span> ${itemLabelCliente(i)}</span></div>`).join('')||'<div style="font-size:13px;color:#9aa6a0;">—</div>'}
+      ${saleHayEntregaParcial(s)?`<div style="border-top:1px dashed #eed2c5;margin:14px 0 10px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#b9763a;margin-bottom:10px;">Pendiente de entregar</div>${salePendientes(s).map(i=>`<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:9px;color:#9a6433;"><span><span>${itemPendienteQty(s,i)} ×</span> ${itemLabelCliente(i)}</span></div>`).join('')}`:''}
       ${fotoUrl?`<div style="border-top:1px dashed #eed2c5;margin:16px 0 12px;"></div><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#c9876c;margin-bottom:10px;">Respaldo de entrega</div><img src="${fotoUrl}" alt="Foto de entrega" style="width:100%;height:220px;object-fit:cover;border-radius:10px;display:block;border:1px solid #f7e9e2;">`:''}
     </div>
     <div style="background:#fdf8f5;padding:16px 24px;text-align:center;border-top:1px solid #f7e9e2;">
@@ -3364,7 +3391,7 @@ function recordatorioCobranza(saleId){
   const nombre=c?c.nombre:(s.clienteNombre||'');
   const total=saleTotal(s);
   const d=diasDesde(s.fecha);
-  const prods=s.items.map(i=>'• '+i.cantidad+'× '+itemLabel(i)).join('\n');
+  const prods=s.items.map(i=>'• '+i.cantidad+'× '+itemLabelCliente(i)).join('\n');
   let msg=`Hola ${nombre}! 🌿\n\nTe escribimos de Viet Pottery para recordarte el pago pendiente de tu pedido del ${s.fecha}`;
   if(d>0) msg+=` (hace ${d} día${d!==1?'s':''})`;
   msg+=`.\n\nDetalle:\n${prods}\n\nMonto pendiente: *${fmt(total)}*`;
@@ -3759,7 +3786,7 @@ function renderProductos(){
       ${sortTh('sku','SKU','text-left','w-24')}${sortTh('modelo','Modelo','text-left')}${sortTh('tamano','Tamaño','text-center','w-20')}${sortTh('color','Color','text-left')}${sortTh('costo','Costo','text-right')}${sortTh('precio','Precio ref.','text-right')}${sortTh('margen','Margen %','text-center','w-20')}${sortTh('margendinero','Margen $','text-right','w-24')}${sortTh('stock','Stock','text-center','w-20')}${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
     ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=agrupar&&p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
       <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
-      <td class="px-4 py-2.5 font-medium text-clay-800">${p.modelo}</td>
+      <td class="px-4 py-2.5 font-medium text-clay-800">${modeloShow(p.modelo)}</td>
       <td class="px-3 py-2.5 text-center"><span class="inline-block bg-clay-100 text-clay-700 text-xs font-medium px-2 py-0.5 rounded-md">${p.tamano}</span></td>
       <td class="px-4 py-2.5 text-clay-600">${p.color}</td>
       <td class="px-4 py-2.5 text-right text-clay-500">${fmt(p.costo)}</td>
@@ -3771,9 +3798,9 @@ function renderProductos(){
     </tr>`;}).join('')}
     </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<div class="pcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openProductDetail('${p.id}')" data-text="${(p.sku+' '+p.modelo+' '+p.tamano+' '+p.color).toLowerCase().replace(/"/g,'')}">
+      ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<div class="pcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openProductDetail('${p.id}')" data-text="${(p.sku+' '+modeloNuevo(p.modelo)+' '+p.modelo+' '+p.tamano+' '+p.color).toLowerCase().replace(/"/g,'')}">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0"><div class="font-bold truncate">${p.modelo} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span></div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
+          <div class="min-w-0"><div class="font-bold truncate">${modeloShow(p.modelo)} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span></div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
           <div class="text-right shrink-0"><div class="font-bold">${fmt(p.precioRef)}</div><div class="mt-0.5">${pill(mgArrow(mg/100)+' '+mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</div></div>
         </div>
         <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Costo ${fmt(p.costo)} · Margen ${fmt(prodMargenDinero(p))}</span><span class="${stCls}">Stock: ${st}</span></div>
@@ -4109,7 +4136,7 @@ function downloadOrderPDF(id){
   doc.autoTable({
     startY:yp+4,
     head:[['Cód. proveedor','Producto','Cant.','Costo unit.','Subtotal']],
-    body:o.items.map(i=>{const p=productById(i.productId);return [p?(p.skuProveedor||p.sku):'-', p?productName(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
+    body:o.items.map(i=>{const p=productById(i.productId);return [p?(p.skuProveedor||p.sku):'-', p?productNameProveedor(p):'(producto)', String(i.cantidad), fmt(i.costo), fmt(i.cantidad*i.costo)];}),
     styles:{fontSize:9.5,cellPadding:3.5,lineColor:[245,233,225],lineWidth:0.1,textColor:[74,44,35]},
     headStyles:{fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold'},
     alternateRowStyles:{fillColor:[247,250,247]},
