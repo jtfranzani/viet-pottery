@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-86';
+const APP_VERSION = '2026.07.09-87';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -3644,7 +3644,10 @@ function renderStock(){
   const puede=SESSION.rol!=='vendedor';
   const sortVal=p=>{const k=STOCK_SORT.key, st=stockOf(p.id); if(k==='sku')return (p.sku||'').toLowerCase(); if(k==='producto')return productName(p).toLowerCase(); if(k==='stock')return st; if(k==='min')return p.stockMin||0; if(k==='estado')return st<=0?0:st<=p.stockMin?1:2; if(k==='valorcosto')return st*(p.costo||0); if(k==='valorventa')return st*(p.precioRef||0); return 0;};
   const dir=STOCK_SORT.dir==='asc'?1:-1;
-  const prodsSorted=[...prods].sort((a,b)=>{const va=sortVal(a),vb=sortVal(b); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;});
+  let prodsSorted=[...prods].sort((a,b)=>{const va=sortVal(a),vb=sortVal(b); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;});
+  // Los productos "solo cotización" (no son stock habitual) van siempre al final, separados del catálogo.
+  prodsSorted=[...prodsSorted.filter(p=>!p.soloCotizacion), ...prodsSorted.filter(p=>p.soloCotizacion)];
+  const primerCotizId=(prodsSorted.find(p=>p.soloCotizacion)||{}).id||null;
   const sortTh=(key,label,align)=>{const act=STOCK_SORT.key===key;const arr=act?(STOCK_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-3 py-3"><button onclick="setStockSort('${key}')" class="uppercase font-semibold ${act?'text-clay-800':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
   const chip=(val,label,n,col)=>`<button onclick="setStockEstadoChip('${val}')" class="text-xs font-medium px-3 py-1.5 rounded-full border ${STOCK_EST===val?'bg-clay-700 text-white border-clay-700':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="${STOCK_EST===val?'opacity-80':col||''}">${n}</span>`:''}</button>`;
   v.innerHTML=`
@@ -3676,9 +3679,9 @@ function renderStock(){
         ${sortTh('sku','SKU')}${sortTh('producto','Producto')}${sortTh('stock','Stock','text-right')}${sortTh('min','Mínimo','text-right')}${sortTh('estado','Estado')}${sortTh('valorcosto','Valor costo','text-right')}${sortTh('valorventa','Valor venta','text-right')}
         <th class="px-5 py-3"></th>
       </tr></thead><tbody>
-      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
+      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
         <td class="px-3 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
-        <td class="px-3 py-3"><div class="font-medium">${productName(p)}</div></td>
+        <td class="px-3 py-3"><div class="font-medium">${productName(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</div></td>
         <td class="px-3 py-3 text-right font-semibold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st}</td>
         <td class="px-3 py-3 text-right text-clay-400">${p.stockMin}</td>
         <td class="px-3 py-3">${estado}</td>
@@ -3690,9 +3693,9 @@ function renderStock(){
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50" id="stcards">
-      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');return `<div class="stcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
+      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');const sep=p.id===primerCotizId?`<div class="stcard text-xs font-semibold text-clay-500 uppercase tracking-wide px-1 pt-3 pb-1" data-estado="ok" data-text="">Solo para cotización · no es stock habitual</div>`:'';return `${sep}<div class="stcard ${p.soloCotizacion?'bg-amber-50/60 border-amber-100':'bg-white border-clay-100'} border rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0"><div class="font-bold truncate">${productName(p)}</div><div class="text-xs text-clay-400 mt-0.5">${p.sku}</div></div>
+          <div class="min-w-0"><div class="font-bold truncate">${productName(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 align-middle">Cotización</span>':''}</div><div class="text-xs text-clay-400 mt-0.5">${p.sku}</div></div>
           <div class="text-right shrink-0"><div class="text-lg font-bold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st} <span class="text-xs text-clay-400 font-normal">u</span></div>${estado}</div>
         </div>
         <div class="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-clay-100 text-xs">
@@ -6014,7 +6017,10 @@ let CA_STOCK_ONLY=false; // filtro de la tarjeta "Unidades": solo productos con 
 /* --------- STOCK CASA AUGUSTA --------- */
 function renderCAStock(){
   const v=document.getElementById('view');
-  const prods=[...DB.products].sort((a,b)=>stockCA(b.id)-stockCA(a.id));
+  let prods=[...DB.products].sort((a,b)=>stockCA(b.id)-stockCA(a.id));
+  // Los productos "solo cotización" (no son stock habitual) van siempre al final, separados del catálogo.
+  prods=[...prods.filter(p=>!p.soloCotizacion), ...prods.filter(p=>p.soloCotizacion)];
+  const primerCotizId=(prods.find(p=>p.soloCotizacion)||{}).id||null;
   const unidades=prods.reduce((a,p)=>a+Math.max(0,stockCA(p.id)),0);
   const conStock=prods.filter(p=>stockCA(p.id)>0).length;
   const valorVenta=prods.reduce((a,p)=>a+Math.max(0,stockCA(p.id))*(p.precioRef||0),0);
@@ -6051,9 +6057,9 @@ function renderCAStock(){
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3">SKU</th><th class="text-left px-3 py-3">Producto</th><th class="text-right px-3 py-3">En Casa Augusta</th><th class="text-right px-4 py-3">Valor venta</th>
       </tr></thead><tbody>
-      ${prods.map(p=>{const st=stockCA(p.id);const col=st<=0?'text-red-600':st<=2?'text-amber-600':'';const estado=st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-stock="${st>0?1:0}" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}" onclick="openCATrazabilidad('${p.id}')">
+      ${prods.map(p=>{const st=stockCA(p.id);const col=st<=0?'text-red-600':st<=2?'text-amber-600':'';const estado=st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green');const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-stock="${st>0?1:0}" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}" onclick="openCATrazabilidad('${p.id}')">
         <td class="px-4 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
-        <td class="px-3 py-3 font-medium">${productNameCliente(p)}</td>
+        <td class="px-3 py-3 font-medium">${productNameCliente(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</td>
         <td class="px-3 py-3 text-right font-semibold ${col}">${st} <span class="ml-1">${estado}</span></td>
         <td class="px-4 py-3 text-right text-sage-700 whitespace-nowrap">${fmt(Math.max(0,st)*(p.precioRef||0))}</td>
       </tr>`;}).join('')}
