@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-82';
+const APP_VERSION = '2026.07.09-86';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -627,7 +627,7 @@ const NAV = [
   {id:'despachos', label:'Despachos', grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'calendario', label:'Calendario', grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
   {id:'tareas',    label:'Tareas',    grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'},
-  {id:'stock',     label:'Stock',     grupo:'Inventario', roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
+  {id:'stock',     label:'Bodega Requinoa', grupo:'Inventario', roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'productos', label:'Productos', grupo:'Inventario', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
   {id:'compras',   label:'Órdenes de compra', grupo:'Inventario', roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
   {id:'cobranzas', label:'Cobranzas', grupo:'Finanzas', roles:['admin','vendedor'], icon:'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6'},
@@ -806,7 +806,7 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Casa Augusta · Devoluciones'};
+  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Casa Augusta · Devoluciones'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
@@ -1826,7 +1826,7 @@ function renderVentas(){
 
 function openSale(id){
   CONVERT_QUOTE_ID=null;
-  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:ACCOUNTS[0],pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,notas:''};
+  const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:ACCOUNTS[0],pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,bodega:'',notas:''};
   EDIT = JSON.parse(JSON.stringify(s));
   renderSaleModal();
 }
@@ -1857,6 +1857,19 @@ function renderSaleModal(){
       <div class="grid sm:grid-cols-2 gap-3">
         <div><label class="text-sm font-medium">Fecha de venta</label><input id="s_fecha" type="date" value="${s.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
         <div><label class="text-sm font-medium">Fecha de entrega</label><input id="s_entrega" type="date" value="${s.fechaEntrega||''}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+
+      <div class="bg-sage-50 border border-sage-100 rounded-xl p-4">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <div class="text-sm font-semibold">Bodega que despacha</div>
+            <div id="bod_hint" class="text-xs text-clay-400 mt-0.5">${s.bodega==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).'}</div>
+          </div>
+          <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5 shrink-0">
+            <button type="button" onclick="setSaleBodega('REQ')" id="bod_req" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega!=='CA'?'bg-sage-500 text-white':'text-clay-600'}">Bodega Requinoa</button>
+            <button type="button" onclick="setSaleBodega('CA')" id="bod_ca" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600'}">Bodega Casa Augusta</button>
+          </div>
+        </div>
       </div>
 
       <div>
@@ -1939,10 +1952,15 @@ function lineSubHtml(it){
     ? `<span class="text-sage-700">Subtotal línea: <span class="line-through text-clay-300">${fmt(it.cantidad*it.precio)}</span> → <b>${fmt(sub)}</b> · ${desc}% dcto</span>`
     : `<span class="text-clay-400">Subtotal línea: <b class="text-clay-600">${fmt(sub)}</b></span>`;
 }
-// Stock disponible SIN contar el pedido que se está editando (para no restarse a sí mismo).
+// Stock disponible en la bodega elegida (Requinoa central o Casa Augusta),
+// SIN contar el pedido que se está editando (para no restarse a sí mismo).
 function stockBaseVenta(productId){
-  let base=stockOf(productId);
-  if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id); if(orig&&!orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); }); }
+  const esCA = !!(EDIT && EDIT.bodega==='CA');
+  let base = esCA ? stockCA(productId) : stockOf(productId);
+  if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id);
+    if(orig && !orig.perdido && ((orig.bodega==='CA')===esCA))
+      orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); });
+  }
   return base;
 }
 // Advertencia por línea: compara lo pedido (sumando todas las líneas del mismo producto) contra el stock base.
@@ -2001,6 +2019,16 @@ function setSaleTipoDesp(t){
   if(viet) viet.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Viet'?'bg-sage-500 text-white':'text-clay-600');
   if(fran) fran.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Fran'?'bg-blue-500 text-white':'text-clay-600');
 }
+function setSaleBodega(t){
+  if(!EDIT) return; EDIT.bodega = t==='CA' ? 'CA' : '';
+  const base='px-3 py-1 rounded-md text-xs font-medium ';
+  const req=document.getElementById('bod_req'), ca=document.getElementById('bod_ca');
+  if(req) req.className=base+(EDIT.bodega!=='CA'?'bg-sage-500 text-white':'text-clay-600');
+  if(ca) ca.className=base+(EDIT.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600');
+  const hint=document.getElementById('bod_hint');
+  if(hint) hint.innerHTML = EDIT.bodega==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).';
+  refreshStockWarns();
+}
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
 function refreshSaleItems(){const prodOpt=(sel)=>DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
 function onSaleEnvio(v){ EDIT.costoEnvio=+v||0; updateSaleTotal(); }
@@ -2029,6 +2057,10 @@ function saveSale(){
   }
   if(EDIT.estadoDespacho==='entregado'){ if(!EDIT.entregadoAt) EDIT.entregadoAt=Date.now(); (EDIT.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else if(EDIT.estadoDespacho==='pendiente' && !saleHayEntregaParcial(EDIT)){ (EDIT.items||[]).forEach(i=>{ delete i.entregadoQty; }); }
+  // Si la venta sale de la bodega Casa Augusta, sincroniza los campos del módulo CA
+  // para que aparezca correctamente en sus vistas (stock, ventas y entregas).
+  if(EDIT.bodega==='CA'){ EDIT.caEstado = EDIT.estadoDespacho==='entregado'?'entregado':'pendiente'; if(!EDIT.caMetodo) EDIT.caMetodo='currier'; }
+  else { delete EDIT.caEstado; delete EDIT.caMetodo; delete EDIT.caCurrier; }
   const esNueva=!EDIT.id;
   // ¿Pasó a "entregado" recién con esta edición? -> abrir el comprobante de entrega
   const prev = EDIT.id ? DB.sales.find(x=>x.id===EDIT.id) : null;
@@ -3616,6 +3648,10 @@ function renderStock(){
   const sortTh=(key,label,align)=>{const act=STOCK_SORT.key===key;const arr=act?(STOCK_SORT.dir==='asc'?' ↑':' ↓'):'';return `<th class="${align||'text-left'} px-3 py-3"><button onclick="setStockSort('${key}')" class="uppercase font-semibold ${act?'text-clay-800':'text-clay-500 hover:text-clay-700'} whitespace-nowrap">${label}${arr}</button></th>`;};
   const chip=(val,label,n,col)=>`<button onclick="setStockEstadoChip('${val}')" class="text-xs font-medium px-3 py-1.5 rounded-full border ${STOCK_EST===val?'bg-clay-700 text-white border-clay-700':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="${STOCK_EST===val?'opacity-80':col||''}">${n}</span>`:''}</button>`;
   v.innerHTML=`
+  <div class="flex items-center gap-2 mb-3">
+    <span class="badge bg-sage-100 text-sage-700">Bodega Requinoa</span>
+    <span class="text-xs text-clay-400">Stock de la bodega central. Casa Augusta (Santiago) tiene su propio stock en su módulo.</span>
+  </div>
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Unidades en stock',unidades,prods.length+' productos','')}
     ${statCard('Valor a costo',fmt(valorCosto),'lo que te costó','text-clay-800')}
@@ -3783,15 +3819,22 @@ function renderProductos(){
   const dir=PROD_SORT.dir==='asc'?1:-1;
   let prods;
   if(PROD_SORT.key==='modelo'){
-    prods=[...DB.products].sort((a,b)=> dir*((a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'}) || sizeRank(a.tamano)-sizeRank(b.tamano) || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'})));
+    // Ordenamos por el nombre VISIBLE (el nuevo: Angkor, Hanoi, Vietnam...), no por el interno/antiguo,
+    // para que el orden alfabético coincida con lo que se ve en pantalla.
+    prods=[...DB.products].sort((a,b)=> dir*(modeloNuevo(a.modelo).localeCompare(modeloNuevo(b.modelo),undefined,{sensitivity:'base',numeric:true}) || sizeRank(a.tamano)-sizeRank(b.tamano) || (a.color||'').localeCompare(b.color||'',undefined,{sensitivity:'base'})));
   } else {
     const val=p=>{const k=PROD_SORT.key; if(k==='sku')return p.sku; if(k==='tamano')return sizeRank(p.tamano); if(k==='color')return p.color; if(k==='costo')return p.costo; if(k==='precio')return p.precioRef; if(k==='margen')return prodMargenPct(p); if(k==='margendinero')return prodMargenDinero(p); if(k==='stock')return stockOf(p.id); return 0;};
     prods=[...DB.products].sort((a,b)=>{const va=val(a),vb=val(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb),undefined,{sensitivity:'base'}) : dir*(va-vb);});
   }
+  // Los productos "solo cotización" no son stock habitual: van SIEMPRE al final,
+  // separados del catálogo, sin importar el criterio de orden elegido.
+  const _gen=prods.filter(p=>!p.soloCotizacion), _cot=prods.filter(p=>p.soloCotizacion);
+  prods=_gen.concat(_cot);
+  const primerCotizId=_cot.length?_cot[0].id:null;
   const agrupar = PROD_SORT.key==='modelo' && PROD_SORT.dir==='asc';
   let lastModelo=null;
-  // Tarjetas de rentabilidad: mayor/menor margen en % y en $ (solo productos con costo ingresado)
-  const conMg=DB.products.filter(p=>p.precioRef && p.costo>0);
+  // Tarjetas de rentabilidad: mayor/menor margen en % y en $ (solo catálogo habitual con costo ingresado)
+  const conMg=DB.products.filter(p=>p.precioRef && p.costo>0 && !p.soloCotizacion);
   const byPct=[...conMg].sort((a,b)=>prodMargenPct(b)-prodMargenPct(a));
   const byDin=[...conMg].sort((a,b)=>prodMargenDinero(b)-prodMargenDinero(a));
   const mgCard=(t,p,valTxt,col,emoji)=>`<button onclick="${p?`openProductDetail('${p.id}')`:''}" class="card p-4 text-left w-full ${p?'hover:border-clay-300':''}"><div class="text-xs text-clay-500">${emoji} ${t}</div>${p?`<div class="text-sm font-bold mt-1 leading-tight truncate">${productName(p)}</div><div class="text-base font-bold ${col} mt-0.5">${valTxt(p)}</div>`:'<div class="text-sm text-clay-400 mt-2">—</div>'}</button>`;
@@ -3807,9 +3850,9 @@ function renderProductos(){
     <div class="p-4 border-b border-clay-100 flex flex-wrap items-center gap-2"><input oninput="pagSearch('ptbl',this.value);filterPCards(this.value)" placeholder="🔍  Buscar SKU, modelo o color..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px] sm:max-w-xs">${SESSION.rol!=='vendedor'?`<button onclick="crearOCDesdeProductos()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap">🧾 Crear orden de compra</button>`:''}</div>
     <div class="hidden sm:block overflow-auto max-h-[70vh]"><table class="w-full text-sm min-w-[840px]" id="ptbl"><thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
       ${sortTh('sku','SKU','text-left','w-24')}${sortTh('modelo','Modelo','text-left')}${sortTh('tamano','Tamaño','text-center','w-20')}${sortTh('color','Color','text-left')}${sortTh('costo','Costo','text-right')}${sortTh('precio','Precio ref.','text-right')}${sortTh('margen','Margen %','text-center','w-20')}${sortTh('margendinero','Margen $','text-right','w-24')}${sortTh('stock','Stock','text-center','w-20')}${SESSION.rol!=='vendedor'?'<th class="px-4 py-3 w-20"></th>':''}</tr></thead><tbody>
-    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const newGroup=agrupar&&p.modelo!==lastModelo;lastModelo=p.modelo;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<tr class="border-t ${newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer" onclick="openProductDetail('${p.id}')">
+    ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const _mnew=modeloNuevo(p.modelo);const newGroup=agrupar&&_mnew!==lastModelo;lastModelo=_mnew;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':newGroup?'border-clay-200':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" onclick="openProductDetail('${p.id}')">
       <td class="px-4 py-2.5 text-clay-400 text-xs">${p.sku}</td>
-      <td class="px-4 py-2.5 font-medium text-clay-800">${modeloShow(p.modelo)}</td>
+      <td class="px-4 py-2.5 font-medium text-clay-800">${modeloShow(p.modelo)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</td>
       <td class="px-3 py-2.5 text-center"><span class="inline-block bg-clay-100 text-clay-700 text-xs font-medium px-2 py-0.5 rounded-md">${p.tamano}</span></td>
       <td class="px-4 py-2.5 text-clay-600">${p.color}</td>
       <td class="px-4 py-2.5 text-right text-clay-500">${fmt(p.costo)}</td>
@@ -3821,9 +3864,9 @@ function renderProductos(){
     </tr>`;}).join('')}
     </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';return `<div class="pcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openProductDetail('${p.id}')" data-text="${(p.sku+' '+modeloNuevo(p.modelo)+' '+p.modelo+' '+p.tamano+' '+p.color).toLowerCase().replace(/"/g,'')}">
+      ${prods.map(p=>{const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;const st=stockOf(p.id);const stCls=st<=0?'text-red-600 font-semibold':st<=(p.stockMin||0)?'text-amber-600 font-semibold':'text-clay-700';const sep=p.id===primerCotizId?`<div class="pcard text-xs font-semibold text-clay-500 uppercase tracking-wide px-1 pt-3 pb-1" data-text="">Solo para cotización · no es stock habitual</div>`:'';return `${sep}<div class="pcard ${p.soloCotizacion?'bg-amber-50/60 border-amber-100':'bg-white border-clay-100'} border rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" onclick="openProductDetail('${p.id}')" data-text="${(p.sku+' '+modeloNuevo(p.modelo)+' '+p.modelo+' '+p.tamano+' '+p.color).toLowerCase().replace(/"/g,'')}">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0"><div class="font-bold truncate">${modeloShow(p.modelo)} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span></div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
+          <div class="min-w-0"><div class="font-bold truncate">${modeloShow(p.modelo)} <span class="text-clay-400 font-normal text-sm">${p.tamano}</span>${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 align-middle">Cotización</span>':''}</div><div class="text-xs text-clay-500 mt-0.5">${p.color} · ${p.sku}</div></div>
           <div class="text-right shrink-0"><div class="font-bold">${fmt(p.precioRef)}</div><div class="mt-0.5">${pill(mgArrow(mg/100)+' '+mg+'%',mg>=50?'green':mg>=35?'amber':'red')}</div></div>
         </div>
         <div class="flex items-center justify-between mt-2 text-xs"><span class="text-clay-500">Costo ${fmt(p.costo)} · Margen ${fmt(prodMargenDinero(p))}</span><span class="${stCls}">Stock: ${st}</span></div>
@@ -3846,7 +3889,7 @@ function openProductDetail(id){
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <div><h3 class="text-lg font-bold leading-tight">${productName(p)}</h3><div class="text-xs text-clay-500 mt-0.5">SKU ${p.sku} · ${p.modelo} ${p.tamano} · ${p.color}${p.skuProveedor?` · <span class="text-clay-400">Cód. prov. ${p.skuProveedor}</span>`:''}</div></div>
+      <div><h3 class="text-lg font-bold leading-tight">${productName(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 align-middle">Solo cotización</span>':''}</h3><div class="text-xs text-clay-500 mt-0.5">SKU ${p.sku} · ${p.modelo} ${p.tamano} · ${p.color}${p.skuProveedor?` · <span class="text-clay-400">Cód. prov. ${p.skuProveedor}</span>`:''}</div></div>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-4 sm:p-5 space-y-4">
@@ -3884,12 +3927,16 @@ function openProduct(id){
     <div><label class="text-sm font-medium">Precio referencia</label><input id="p_precio" type="text" inputmode="numeric" value="${milesIn(p.precioRef)}" oninput="moneyInput(this)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">${p.id?'Stock inicial (base)':'Stock inicial'}</label><input id="p_stock" type="number" value="${p.stockInicial}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     <div><label class="text-sm font-medium">Stock mínimo (alerta)</label><input id="p_min" type="number" value="${p.stockMin}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <label class="sm:col-span-2 flex items-start gap-2.5 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2.5 mt-1 cursor-pointer">
+      <input id="p_cotiz" type="checkbox" ${p.soloCotizacion?'checked':''} class="mt-0.5 w-4 h-4 accent-clay-700">
+      <span><span class="text-sm font-medium">Producto solo para cotizaciones</span><span class="block text-[11px] text-clay-400 mt-0.5">No es stock habitual (se usa puntualmente para una cotización). Aparecerá separado y al final de la lista de Productos, sin mezclarse con tu catálogo.</span></span>
+    </label>
   </div>
   <div class="p-5 border-t border-clay-100 flex justify-between"><div>${p.id&&SESSION.rol==='admin'?`<button onclick="deleteProduct('${p.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div><div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveProduct()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div></div>`);
 }
 let EDITP=null;
 function saveProduct(){
-  Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0});
+  Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0,soloCotizacion:!!(document.getElementById('p_cotiz')&&document.getElementById('p_cotiz').checked)});
   if(!EDITP.modelo){alert('Ingresa el modelo');return;}
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
@@ -3917,7 +3964,7 @@ function actualizarOCTotal(){
 function filterOCList(q){ q=(q||'').toLowerCase(); document.querySelectorAll('.oc-row').forEach(el=>{ el.style.display=(!q||(el.dataset.text||'').includes(q))?'':'none'; }); }
 function syncOCSelector(){ const g=id=>document.getElementById(id); if(g('oc_prov'))OCSEL.prov=g('oc_prov').value.trim(); if(g('oc_fecha'))OCSEL.fecha=g('oc_fecha').value; if(g('oc_entrega'))OCSEL.entrega=g('oc_entrega').value; if(g('oc_notas'))OCSEL.notas=g('oc_notas').value; }
 function renderOCSelector(){
-  const prods=[...DB.products].sort((a,b)=>(a.modelo||'').localeCompare(b.modelo||'',undefined,{sensitivity:'base'})||sizeRank(a.tamano)-sizeRank(b.tamano)||(a.color||'').localeCompare(b.color||''));
+  const prods=[...DB.products].sort((a,b)=>modeloNuevo(a.modelo).localeCompare(modeloNuevo(b.modelo),undefined,{sensitivity:'base',numeric:true})||sizeRank(a.tamano)-sizeRank(b.tamano)||(a.color||'').localeCompare(b.color||''));
   const provs=[...new Set([...(DB.suppliers||[]).map(s=>s.nombre),...(DB.purchases||[]).map(p=>p.proveedor),...(DB.orders||[]).map(o=>o.proveedor)].filter(Boolean))];
   const total=Object.entries(OCSEL.qty).reduce((a,[pid,q])=>{const p=productById(pid);return a+(p?p.costo:0)*(q||0);},0);
   const n=Object.values(OCSEL.qty).filter(q=>q>0).length;
@@ -5962,6 +6009,7 @@ const caSales = () => DB.sales.filter(s=>s.bodega==='CA' && !s.perdido);
 const caMetodoLabel = m => m==='currier' ? 'Retiro por currier' : 'Retiro por cliente';
 const caEstadoPill = s => (s.caEstado==='entregado') ? pill('Entregado','green') : pill('Pendiente','amber');
 const caPagoPill = s => s.pagado ? pill('Pagado','green') : pill('Por cobrar','red');
+let CA_STOCK_ONLY=false; // filtro de la tarjeta "Unidades": solo productos con stock
 
 /* --------- STOCK CASA AUGUSTA --------- */
 function renderCAStock(){
@@ -5973,10 +6021,26 @@ function renderCAStock(){
   const transf=(DB.transfers||[]).filter(t=>t.estado!=='anulada').length;
   v.innerHTML=`
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
-    ${statCard('Unidades en Casa Augusta',unidades,conStock+' productos con stock','')}
-    ${statCard('Valor a precio de venta',fmt(valorVenta),'si vendes todo','text-sage-600')}
-    ${statCard('Transferencias recibidas',transf,'desde bodega central','')}
-    ${statCard('Ventas registradas',caSales().length,'en Casa Augusta','text-clay-800')}
+    <div id="caCardStock" onclick="caToggleConStock()" title="Ver solo los productos con stock" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition ${CA_STOCK_ONLY?'ring-2 ring-sage-500':''}">
+      <div class="text-[11px] sm:text-sm text-clay-500 leading-tight">Unidades en Casa Augusta</div>
+      <div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1">${unidades}</div>
+      <div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${conStock} productos con stock${CA_STOCK_ONLY?' · filtrando':''}</div>
+    </div>
+    <div onclick="caToggleConStock()" title="Ver solo los productos con stock" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition">
+      <div class="text-[11px] sm:text-sm text-clay-500 leading-tight">Valor a precio de venta</div>
+      <div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 text-sage-600">${fmt(valorVenta)}</div>
+      <div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">si vendes todo</div>
+    </div>
+    <div onclick="openCATransfersHist()" title="Ver historial de transferencias recibidas" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition">
+      <div class="text-[11px] sm:text-sm text-clay-500 leading-tight">Transferencias recibidas</div>
+      <div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1">${transf}</div>
+      <div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">desde bodega central</div>
+    </div>
+    <div onclick="go('ca_ventas')" title="Ir a las ventas de Casa Augusta" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition">
+      <div class="text-[11px] sm:text-sm text-clay-500 leading-tight">Ventas registradas</div>
+      <div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 text-clay-800">${caSales().length}</div>
+      <div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">en Casa Augusta</div>
+    </div>
   </div>
   <div class="card overflow-hidden">
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
@@ -5987,7 +6051,7 @@ function renderCAStock(){
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3">SKU</th><th class="text-left px-3 py-3">Producto</th><th class="text-right px-3 py-3">En Casa Augusta</th><th class="text-right px-4 py-3">Valor venta</th>
       </tr></thead><tbody>
-      ${prods.map(p=>{const st=stockCA(p.id);const col=st<=0?'text-red-600':st<=2?'text-amber-600':'';const estado=st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}">
+      ${prods.map(p=>{const st=stockCA(p.id);const col=st<=0?'text-red-600':st<=2?'text-amber-600':'';const estado=st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green');return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" data-stock="${st>0?1:0}" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}" onclick="openCATrazabilidad('${p.id}')">
         <td class="px-4 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
         <td class="px-3 py-3 font-medium">${productNameCliente(p)}</td>
         <td class="px-3 py-3 text-right font-semibold ${col}">${st} <span class="ml-1">${estado}</span></td>
@@ -6000,8 +6064,99 @@ function renderCAStock(){
 }
 function filterCAStock(){
   const q=((document.getElementById('fCAStock')||{}).value||'').toLowerCase();
-  let n=0; document.querySelectorAll('#castbl tbody tr').forEach(tr=>{ const ok=(tr.dataset.text||'').includes(q); tr.style.display=ok?'':'none'; if(ok)n++; });
+  let n=0; document.querySelectorAll('#castbl tbody tr').forEach(tr=>{
+    const okQ=(tr.dataset.text||'').includes(q);
+    const okS=!CA_STOCK_ONLY || tr.dataset.stock==='1';
+    const ok=okQ&&okS; tr.style.display=ok?'':'none'; if(ok)n++;
+  });
   const c=document.getElementById('caStCount'); if(c) c.textContent=n+' producto'+(n!==1?'s':'');
+}
+// Tarjeta "Unidades": alterna mostrar solo los productos con stock disponible.
+function caToggleConStock(){
+  CA_STOCK_ONLY=!CA_STOCK_ONLY;
+  const c=document.getElementById('caCardStock');
+  if(c) c.className='card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition '+(CA_STOCK_ONLY?'ring-2 ring-sage-500':'');
+  filterCAStock();
+}
+// Historial de transferencias recibidas desde la bodega central (sin costos).
+function openCATransfersHist(){
+  const ts=[...(DB.transfers||[]).filter(t=>t.estado!=='anulada')].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const rows = ts.length ? ts.map(t=>{
+    const tot=(t.items||[]).reduce((a,i)=>a+(+i.cantidad||0),0);
+    const det=(t.items||[]).map(i=>{const p=productById(i.productId); return `${p?productNameCliente(p):'Producto'} ×${i.cantidad}`;}).join(', ');
+    return `<tr class="border-t border-clay-100"><td class="px-4 py-2.5 whitespace-nowrap text-clay-500">${t.fecha||''}</td><td class="px-3 py-2.5 text-clay-600">${det}${t.notas?` · <span class="text-clay-400">${t.notas}</span>`:''}</td><td class="px-4 py-2.5 text-right font-semibold text-sage-600">+${tot}</td></tr>`;
+  }).join('') : `<tr><td colspan="3" class="px-4 py-10 text-center text-clay-400">Aún no hay transferencias recibidas desde la bodega central.</td></tr>`;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <div><h3 class="text-lg font-bold">Transferencias recibidas</h3><div class="text-xs text-clay-400">Envíos desde la bodega central a Casa Augusta</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5">
+      <div class="overflow-x-auto border border-clay-100 rounded-xl">
+        <table class="w-full text-sm min-w-[440px]">
+          <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+            <th class="text-left font-semibold px-4 py-2.5">Fecha</th>
+            <th class="text-left font-semibold px-3 py-2.5">Productos</th>
+            <th class="text-right font-semibold px-4 py-2.5">Unidades</th>
+          </tr></thead><tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button></div>
+  `);
+}
+// Movimientos de un producto en la bodega Casa Augusta: transferencias (+), ventas (−) y devoluciones (+).
+function caStockMovements(productId){
+  const moves=[];
+  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); }); });
+  DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
+  (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Devolución', detalle:r.clienteNombre||r.motivo||'Devolución', cantidad:i.cantidad}); }); });
+  moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
+  let bal=0; moves.forEach(m=>{ bal+=m.cantidad; m.saldo=bal; });
+  return moves;
+}
+// Trazabilidad de un producto en Casa Augusta (sin costos ni márgenes: pensada para la persona externa).
+function openCATrazabilidad(productId){
+  const p=productById(productId); if(!p) return;
+  const moves=caStockMovements(productId).reverse();
+  const st=stockCA(productId);
+  const entradas=moves.filter(m=>m.cantidad>0).reduce((a,m)=>a+m.cantidad,0);
+  const salidas=moves.filter(m=>m.cantidad<0).reduce((a,m)=>a+Math.abs(m.cantidad),0);
+  const tcolor={'Transferencia':'green','Venta':'blue','Devolución':'amber'};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
+      <div><h3 class="text-lg font-bold">${productNameCliente(p)}</h3><div class="text-xs text-clay-400">${p.sku} · Trazabilidad en Casa Augusta</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">En Casa Augusta</div><div class="text-xl font-bold">${st}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Entradas</div><div class="text-xl font-bold text-sage-600">+${entradas}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Salidas</div><div class="text-xl font-bold text-red-600">−${salidas}</div></div>
+        <div class="bg-clay-50 rounded-xl p-3"><div class="text-xs text-clay-500">Valor venta</div><div class="text-xl font-bold text-sage-600">${fmt(Math.max(0,st)*(p.precioRef||0))}</div></div>
+      </div>
+      ${moves.length? `<div class="overflow-x-auto border border-clay-100 rounded-xl">
+        <table class="w-full text-sm min-w-[480px]">
+          <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr>
+            <th class="text-left font-semibold px-4 py-2.5">Fecha</th>
+            <th class="text-left font-semibold px-3 py-2.5">Movimiento</th>
+            <th class="text-left font-semibold px-3 py-2.5">Detalle</th>
+            <th class="text-right font-semibold px-3 py-2.5">Cantidad</th>
+            <th class="text-right font-semibold px-4 py-2.5">Saldo</th>
+          </tr></thead><tbody>
+          ${moves.map(m=>`<tr class="border-t border-clay-100">
+            <td class="px-4 py-2.5 whitespace-nowrap text-clay-500">${m.fecha||''}</td>
+            <td class="px-3 py-2.5">${pill(m.tipo,tcolor[m.tipo]||'gray')}</td>
+            <td class="px-3 py-2.5 text-clay-600">${m.detalle}</td>
+            <td class="px-3 py-2.5 text-right font-semibold ${m.cantidad>=0?'text-sage-600':'text-red-600'}">${m.cantidad>=0?'+':'−'}${Math.abs(m.cantidad)}</td>
+            <td class="px-4 py-2.5 text-right font-medium">${m.saldo}</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<div class="text-center text-clay-400 text-sm py-8 border border-clay-100 rounded-xl">Este producto aún no tiene movimientos en Casa Augusta.<div class="text-xs mt-1">Recibe stock con "Transferir desde central".</div></div>`}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button></div>
+  `);
 }
 
 /* --------- TRANSFERENCIAS central → Casa Augusta --------- */
