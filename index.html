@@ -181,7 +181,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-87';
+const APP_VERSION = '2026.07.09-89';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -3798,6 +3798,38 @@ function descargarPlanillaInventario(){
   });
   savePdfDoc(doc, 'inventario-viet-pottery-'+todayISO()+'.pdf');
 }
+/* ----- Stock Casa Augusta imprimible (PDF) — sin costos ----- */
+function descargarStockCasaAugusta(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF();
+  let prods=[...DB.products].filter(p=>stockCA(p.id)>0 || !p.soloCotizacion);
+  prods.sort((a,b)=>productNameCliente(a).localeCompare(productNameCliente(b),'es',{sensitivity:'base',numeric:true}));
+  prods=[...prods.filter(p=>!p.soloCotizacion), ...prods.filter(p=>p.soloCotizacion)];
+  let totalUnidades=0;
+  const body=prods.map(p=>{
+    const st=Math.max(0,stockCA(p.id));
+    totalUnidades+=st;
+    return [p.sku, productNameCliente(p)+(p.soloCotizacion?'  (Solo cotización)':''), String(stockCA(p.id))];
+  });
+  body.push([{content:'TOTAL',colSpan:2,styles:{fontStyle:'bold',halign:'right'}}, {content:String(totalUnidades),styles:{fontStyle:'bold',halign:'center'}}]);
+  doc.autoTable({
+    head:[['SKU','Producto','En Casa\nAugusta']],
+    body:body,
+    styles:{fontSize:9,cellPadding:3,minCellHeight:9,lineColor:[235,216,203],lineWidth:0.2,textColor:[74,44,35],valign:'middle'},
+    headStyles:{fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{0:{cellWidth:28},2:{halign:'center',cellWidth:32}},
+    margin:{top:32,left:14,right:14},
+    didDrawPage:function(){
+      doc.setFillColor(74,44,35); doc.rect(0,0,210,26,'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Casa Augusta · Stock',14,12);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(221,176,155);
+      doc.text('Fecha: '+todayISO(),14,20);
+      doc.setTextColor(255,255,255); doc.text('Pág. '+doc.internal.getNumberOfPages(),196,12,{align:'right'});
+    }
+  });
+  savePdfDoc(doc, 'stock-casa-augusta-'+todayISO()+'.pdf');
+}
 function openAdjust(pid){
   const p=productById(pid);
   modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><h3 class="text-lg font-bold">Ajuste de stock</h3><button onclick="closeModal()" class="text-clay-400 text-xl">✕</button></div>
@@ -6051,6 +6083,7 @@ function renderCAStock(){
   <div class="card overflow-hidden">
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
       <input id="fCAStock" oninput="filterCAStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <button onclick="descargarStockCasaAugusta()" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50 whitespace-nowrap"><span>🖨️</span> Descargar PDF</button>
       <div id="caStCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
     </div>
     <div class="overflow-auto max-h-[66vh]"><table class="w-full text-sm min-w-[520px]" id="castbl">
