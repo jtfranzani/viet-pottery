@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-90';
+const APP_VERSION = '2026.07.09-91';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6284,7 +6284,7 @@ function renderCAVentas(){
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th>
       </tr></thead><tbody>
-      ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
+      ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
         <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}</td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
@@ -6292,22 +6292,67 @@ function renderCAVentas(){
         <td class="px-4 py-3">${caPagoPill(s)}</td>
         <td class="px-4 py-3">${caEstadoPill(s)}<div class="text-[11px] text-clay-400 mt-0.5">${caMetodoLabel(s.caMetodo)}</div></td>
         <td class="px-4 py-3 whitespace-nowrap text-clay-600">${s.docTipo==='pendiente'?pill('Pendiente','amber'):(s.docTipo==='no_aplica'?'—':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||'')))}</td>
-        <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
+        <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${rows.map(s=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5">
+      ${rows.map(s=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0"><div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}</div></div>
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
         <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${caEstadoPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="openCASale('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
   </div>`
   : emptyState({icon:'M3 3h18v4H3zM3 10h12v11H3z', titulo:'Sin ventas todavía', detalle:'Registra la primera venta de Casa Augusta.', accion:`<button onclick="openCASale()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">Registrar venta</button>`})}`;
+}
+// Detalle de venta de Casa Augusta (clickeable en la lista). Sin costos ni márgenes.
+function openCASaleDetail(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const tel=(c&&c.telefono)||s.clienteTel||'';
+  const total=saleTotal(s);
+  const docTxt = s.docTipo==='pendiente'?pill('Documento pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin documento','gray'):pill((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||''),'green'));
+  modal(`
+    <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
+      <div class="flex items-center justify-between">
+        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Venta Casa Augusta · ${s.fecha}</div></div>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+      </div>
+    </div>
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Cliente</div>
+          <div class="font-medium text-sm">${nombre}</div>
+          ${tel?`<div class="text-xs text-clay-500 mt-0.5">📞 ${tel}</div>`:''}
+        </div>
+        <div class="bg-clay-50 rounded-xl p-3.5">
+          <div class="text-xs text-clay-400 uppercase tracking-wide mb-1.5">Estado</div>
+          <div class="flex flex-wrap gap-1.5">${caPagoPill(s)}${caEstadoPill(s)}${docTxt}</div>
+          <div class="text-xs text-clay-500 mt-2">Entrega: ${caMetodoLabel(s.caMetodo)}${s.caCurrier?' · '+s.caCurrier:''}</div>
+        </div>
+      </div>
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
+        <div class="divide-y divide-clay-100">
+          ${s.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabelCliente(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+        </div>
+        <div class="px-4 py-3 bg-clay-50 text-sm">
+          <div class="flex justify-between font-bold text-clay-800"><span>Total</span><span>${fmt(total)}</span></div>
+        </div>
+      </div>
+      ${s.notas?`<div class="bg-clay-50 rounded-xl p-3.5"><div class="text-xs text-clay-400 uppercase tracking-wide mb-1">Notas</div><div class="text-sm text-clay-700 whitespace-pre-wrap">${s.notas}</div></div>`:''}
+    </div>
+    <div class="p-4 sm:p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
+      <button onclick="closeModal();openCASale('${s.id}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl text-sm">Editar</button>
+    </div>
+  `);
 }
 function stockCABaseVenta(productId){
   let base=stockCA(productId);
