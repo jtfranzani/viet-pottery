@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-91';
+const APP_VERSION = '2026.07.09-92';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -599,7 +599,8 @@ function stockOf(productId){
   const p = productById(productId); if(!p) return 0;
   let s = p.stockInicial;
   DB.sales.forEach(v=>{ if(v.perdido||v.bodega==='CA') return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
-  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }));
+  // Las compras/recepciones asignadas a Casa Augusta (item.bodega==='CA') NO suman al central.
+  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') s+=i.cantidad; }));
   DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
   return s;
@@ -609,6 +610,8 @@ function stockOf(productId){
 function stockCA(productId){
   let s = 0;
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); });
+  // Recepciones/compras asignadas directamente a Casa Augusta al recibir la OC.
+  DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') s+=i.cantidad; }));
   DB.sales.forEach(v=>{ if(v.bodega!=='CA'||v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
   (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); });
   return s;
@@ -3744,7 +3747,7 @@ function stockMovements(productId){
   const moves=[];
   const p=productById(productId);
   if(p) moves.push({fecha:'', orden:0, tipo:'Stock inicial', detalle:'Carga base del producto', cantidad:p.stockInicial});
-  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId) moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
+  DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega==='CA') return; s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
   (DB.adjustments||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:1, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Envío a Casa Augusta', cantidad:-i.cantidad}); }); });
@@ -4204,15 +4207,16 @@ let RECV=null;
 function recibirOrder(id){
   const o=DB.orders.find(x=>x.id===id); if(!o) return;
   RECV={id:o.id, numero:o.numero, proveedor:o.proveedor,
-        items:o.items.map(i=>({productId:i.productId, costo:i.costo, pedida:i.cantidad, recibida:i.cantidad}))};
+        items:o.items.map(i=>{ const p=productById(i.productId); const bd=(p&&p.bodegaDefault==='CA')?'CA':(p&&p.bodegaDefault==='REQ')?'REQ':(i.bodega==='CA'?'CA':'REQ'); return {productId:i.productId, costo:i.costo, pedida:i.cantidad, recibida:i.cantidad, bodega:bd, sel:false}; })};
   renderRecvModal();
 }
 function recvItemRow(it,ix){
   const p=productById(it.productId); const dif=(it.recibida||0)-it.pedida;
   return `<div class="grid grid-cols-12 gap-2 items-center">
-    <div class="col-span-6 text-sm">${p?productName(p):'(producto)'}${p?` <span class="text-clay-400 text-xs">${p.sku}</span>`:''}</div>
-    <div class="col-span-3 text-center text-sm text-clay-500">${it.pedida}</div>
-    <div class="col-span-3"><input type="number" min="0" value="${it.recibida}" oninput="onRecvQty(${ix},this.value)" class="w-full border ${dif<0?'border-amber-400 bg-amber-50':'border-clay-200'} rounded-lg px-2 py-2 text-sm text-center"></div>
+    <div class="col-span-5 text-sm">${p?productName(p):'(producto)'}${p?` <span class="text-clay-400 text-xs">${p.sku}</span>`:''}</div>
+    <div class="col-span-2 text-center text-sm text-clay-500">${it.pedida}</div>
+    <div class="col-span-2"><input type="number" min="0" value="${it.recibida}" oninput="onRecvQty(${ix},this.value)" class="w-full border ${dif<0?'border-amber-400 bg-amber-50':'border-clay-200'} rounded-lg px-2 py-2 text-sm text-center"></div>
+    <div class="col-span-3"><select onchange="onRecvBodega(${ix},this.value)" class="w-full border ${it.bodega==='CA'?'border-sage-300 bg-sage-50':'border-clay-200'} rounded-lg px-2 py-2 text-sm bg-white"><option value="REQ" ${it.bodega!=='CA'?'selected':''}>Requinoa</option><option value="CA" ${it.bodega==='CA'?'selected':''}>Casa Augusta</option></select></div>
   </div>`;
 }
 function renderRecvModal(){
@@ -4221,8 +4225,9 @@ function renderRecvModal(){
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white"><div><h3 class="text-lg font-bold">Confirmar recepción · ${r.numero}</h3><div class="text-xs text-clay-400">${r.proveedor}</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
     <div class="p-5 space-y-4">
-      <div class="text-sm text-clay-600">Revisa lo que realmente llegó. Si recibiste menos (o más) de lo pedido, ajusta la cantidad. <b>Solo lo recibido se suma al stock.</b></div>
-      <div class="grid grid-cols-12 gap-2 text-xs font-medium text-clay-400 px-1"><div class="col-span-6">Producto</div><div class="col-span-3 text-center">Pedido</div><div class="col-span-3 text-center">Recibido</div></div>
+      <div class="text-sm text-clay-600">Revisa lo que realmente llegó. Si recibiste menos (o más) de lo pedido, ajusta la cantidad. <b>Solo lo recibido se suma al stock.</b> Elige a qué bodega va cada producto; puedes mezclar Requinoa y Casa Augusta en la misma recepción.</div>
+      <div class="flex items-center gap-2 text-xs"><span class="text-clay-400">Enviar todos a:</span><button type="button" onclick="setAllRecvBodega('REQ')" class="px-2 py-1 rounded-lg border border-clay-200 hover:bg-clay-50">Requinoa</button><button type="button" onclick="setAllRecvBodega('CA')" class="px-2 py-1 rounded-lg border border-clay-200 hover:bg-clay-50">Casa Augusta</button></div>
+      <div class="grid grid-cols-12 gap-2 text-xs font-medium text-clay-400 px-1"><div class="col-span-5">Producto</div><div class="col-span-2 text-center">Pedido</div><div class="col-span-2 text-center">Recibido</div><div class="col-span-3 text-center">Bodega destino</div></div>
       <div class="space-y-2" id="recv_items">${r.items.map((it,ix)=>recvItemRow(it,ix)).join('')}</div>
       <div><label class="text-sm font-medium">Nota (opcional)</label><input id="recv_nota" placeholder="Ej: faltaron 5 unidades, llegan la próxima semana" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
     </div>
@@ -4232,18 +4237,24 @@ function renderRecvModal(){
     </div>`);
 }
 function onRecvQty(ix,v){RECV.items[ix].recibida=Math.max(0,+v||0);const el=document.getElementById('recv_total');if(el)el.textContent=fmt(RECV.items.reduce((a,i)=>a+(i.recibida||0)*i.costo,0));}
+function onRecvBodega(ix,v){ if(RECV&&RECV.items[ix]){ RECV.items[ix].bodega=(v==='CA'?'CA':'REQ'); const el=document.getElementById('recv_items'); if(el) el.innerHTML=RECV.items.map((it,i)=>recvItemRow(it,i)).join(''); } }
+function setAllRecvBodega(v){ if(!RECV)return; const b=(v==='CA'?'CA':'REQ'); RECV.items.forEach(i=>i.bodega=b); const el=document.getElementById('recv_items'); if(el) el.innerHTML=RECV.items.map((it,i)=>recvItemRow(it,i)).join(''); }
 function confirmarRecepcion(){
   const r=RECV; if(!r) return;
-  const items=r.items.filter(i=>(i.recibida||0)>0).map(i=>({productId:i.productId,cantidad:i.recibida,costo:i.costo}));
+  const items=r.items.filter(i=>(i.recibida||0)>0).map(i=>({productId:i.productId,cantidad:i.recibida,costo:i.costo,bodega:(i.bodega==='CA'?'CA':'REQ')}));
   if(items.length===0){ alert('No marcaste ninguna unidad como recibida.'); return; }
   const nota=(document.getElementById('recv_nota')?.value||'').trim();
   const hayDif=r.items.some(i=>(i.recibida||0)!==i.pedida);
-  DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:r.proveedor,items,notas:'Recepción de '+r.numero+(hayDif?' (cantidades ajustadas)':'')+(nota?' · '+nota:'')});
+  const uCA=items.filter(i=>i.bodega==='CA').reduce((a,i)=>a+i.cantidad,0);
+  const uREQ=items.filter(i=>i.bodega!=='CA').reduce((a,i)=>a+i.cantidad,0);
+  const destinoNota = (uCA>0&&uREQ>0)?' · '+uREQ+' u a Requinoa y '+uCA+' u a Casa Augusta':(uCA>0?' · a Casa Augusta':'');
+  DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:r.proveedor,items,notas:'Recepción de '+r.numero+(hayDif?' (cantidades ajustadas)':'')+destinoNota+(nota?' · '+nota:'')});
   const o=DB.orders.find(x=>x.id===r.id);
-  if(o){ o.estado='recibido'; o.recibido={fecha:todayISO(), items:r.items.map(i=>({productId:i.productId,pedida:i.pedida,recibida:i.recibida})), nota}; }
+  if(o){ o.estado='recibido'; o.recibido={fecha:todayISO(), items:r.items.map(i=>({productId:i.productId,pedida:i.pedida,recibida:i.recibida,bodega:(i.bodega==='CA'?'CA':'REQ')})), nota}; }
   const ocId=r.id; RECV=null; save(); closeModal(); go('compras');
+  const resumenBodega=(uCA>0&&uREQ>0)?('\n'+uREQ+' u a Bodega Requinoa · '+uCA+' u a Casa Augusta.'):(uCA>0?('\nTodo a Casa Augusta ('+uCA+' u).'):('\nTodo a Bodega Requinoa ('+uREQ+' u).'));
   if(o&&!o.facturaId){
-    if(confirm('✓ Recepción confirmada y sumada al stock.\n\n¿Quieres convertir la orden '+o.numero+' en una factura de compra ahora? Podrás confirmar el plazo, monto y adjuntar el PDF.')){
+    if(confirm('✓ Recepción confirmada y sumada al stock.'+resumenBodega+'\n\n¿Quieres convertir la orden '+o.numero+' en una factura de compra ahora? Podrás confirmar el plazo, monto y adjuntar el PDF.')){
       convertirOCaFactura(ocId);
     }
   }
@@ -6169,6 +6180,7 @@ function openCATransfersHist(){
 function caStockMovements(productId){
   const moves=[];
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); }); });
+  DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') moves.push({fecha:c.fecha, orden:0, tipo:'Compra', detalle:(c.proveedor||'Proveedor')+' · recepción directa', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
   (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Devolución', detalle:r.clienteNombre||r.motivo||'Devolución', cantidad:i.cantidad}); }); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
