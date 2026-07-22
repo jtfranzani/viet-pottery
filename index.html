@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-92';
+const APP_VERSION = '2026.07.09-99';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -513,6 +513,14 @@ async function bootData(){
   if(!DB.egresos) DB.egresos=[];
   if(!DB.transfers) DB.transfers=[];   // Transferencias central → Casa Augusta
   if(!DB.caReturns) DB.caReturns=[];   // Devoluciones que reingresan a Casa Augusta
+  // Migración: distinguir el ORIGEN de la venta (dónde se generó) de la BODEGA (de dónde sale el stock).
+  // Una venta es de Casa Augusta SOLO si se generó en ese punto (tipoDespacho==='CA'),
+  // no por el solo hecho de descontar stock de Casa Augusta. Las ventas de Pedidos que usan
+  // stock de Casa Augusta quedan en Ventas>Pedidos (origen distinto de 'CA').
+  { let migo=false;
+    (DB.sales||[]).forEach(s=>{ if(typeof s.origen==='undefined'){ s.origen=(s.tipoDespacho==='CA')?'CA':''; migo=true; } });
+    if(migo) save();
+  }
   migrarCuentas();
   if(cargarGastosJunio() && window.FB){ try{ await FB.setData(DB); }catch(e){ console.error('carga gastos junio', e); } }
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
@@ -1218,6 +1226,42 @@ function renderReportes(){
   const bk=Object.keys(buckets).sort();
   const vietN=d.sales.filter(s=>tipoDespachoOf(s)==='Viet').length;
   const franN=d.sales.filter(s=>tipoDespachoOf(s)==='Fran').length;
+  // Desglose por canal de venta: Pedidos (Ventas) vs Casa Augusta.
+  const chan=(list)=>({n:list.length, u:list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0), m:list.reduce((a,s)=>a+saleSubtotal(s),0)});
+  const chPed=chan(d.sales.filter(s=>s.origen!=='CA'));
+  const chCA=chan(d.sales.filter(s=>s.origen==='CA'));
+  const chTot=chan(d.sales);
+  const canalRow=(icon,nombre,c,bold)=>`<tr class="border-t border-clay-100">
+    <td class="py-2.5 pl-1 font-medium">${icon} ${nombre}</td>
+    <td class="py-2.5 text-right ${bold?'font-bold':''}">${c.n}</td>
+    <td class="py-2.5 text-right ${bold?'font-bold':''}">${c.u}</td>
+    <td class="py-2.5 text-right ${bold?'font-bold':'font-semibold'}">${fmt(c.m)}</td>
+    <td class="py-2.5 pr-1 text-right text-clay-500">${chTot.m?Math.round(c.m/chTot.m*100):0}%</td>
+  </tr>`;
+  const canalHTML=`<div class="card p-5 mb-6">
+    <div class="font-semibold mb-1">Ventas por canal</div>
+    <div class="text-xs text-clay-400 mb-3">Cuánto y cuántas ventas registró cada canal en el período (monto de productos, sin envío).</div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead class="text-clay-500 text-xs uppercase"><tr>
+        <th class="text-left py-2 pl-1">Canal</th>
+        <th class="text-right py-2">Ventas</th>
+        <th class="text-right py-2">Unidades</th>
+        <th class="text-right py-2">Monto</th>
+        <th class="text-right py-2 pr-1">% del total</th>
+      </tr></thead>
+      <tbody>
+        ${canalRow('📦','Pedidos',chPed)}
+        ${canalRow('🏠','Casa Augusta',chCA)}
+      </tbody>
+      <tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60">
+        <td class="py-2.5 pl-1 font-semibold">Total</td>
+        <td class="py-2.5 text-right font-bold">${chTot.n}</td>
+        <td class="py-2.5 text-right font-bold">${chTot.u}</td>
+        <td class="py-2.5 text-right font-bold">${fmt(chTot.m)}</td>
+        <td class="py-2.5 pr-1 text-right font-bold">100%</td>
+      </tr></tfoot>
+    </table></div>
+  </div>`;
   const presetBtn=(p,l)=>`<button onclick="setRepPreset('${p}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${REP.preset===p?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${l}</button>`;
   const tot=d.top.reduce((a,r)=>({cant:a.cant+r.cant,monto:a.monto+r.monto,costo:a.costo+r.costo,margen:a.margen+r.margen}),{cant:0,monto:0,costo:0,margen:0});
   const rentCard=(t,r,col,val)=>`<div class="card p-4"><div class="text-xs text-clay-500">${t}</div>${r?`<div class="text-base font-bold mt-1 leading-tight">${repName(r)}</div><div class="text-sm ${col} font-semibold mt-1">${val(r)}</div><div class="text-xs text-clay-400 mt-0.5">${r.cant} u · venta ${fmt(r.monto)}</div>`:'<div class="text-sm text-clay-400 mt-2">—</div>'}</div>`;
@@ -1237,6 +1281,7 @@ function renderReportes(){
     ${statCard('Envíos cobrados',fmt(d.envios),'cobrados al cliente','')}
     <button onclick="go('cobranzas')" class="block text-left w-full">${statCard('Por cobrar',fmt(d.porCobrar),'ir a cobranzas →','text-red-600')}</button>
   </div>
+  ${canalHTML}
   ${d.nVentas===0?empty:`
   <div class="grid lg:grid-cols-3 gap-4 items-start">
     <div class="card p-5 lg:col-span-2">
@@ -1255,7 +1300,8 @@ function renderReportes(){
   const monthLabelR=k=>{const p=k.split('-');return (MESES_R[(+p[1])-1]||'')+' '+p[0];};
   const metaMonth=(d.from.slice(0,7)===d.to.slice(0,7))?d.from.slice(0,7):todayISO().slice(0,7);
   const metaVal=(DB.metaUnidades&&DB.metaUnidades[metaMonth])||0;
-  const unitsMonth=DB.sales.filter(s=>(s.fecha||'').slice(0,7)===metaMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  // Cuenta solo ventas reales (excluye pedidos perdidos), igual que la tarjeta "Unidades vendidas".
+  const unitsMonth=DB.sales.filter(s=>!s.perdido && (s.fecha||'').slice(0,7)===metaMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const metaPct=metaVal?Math.min(100,Math.round(unitsMonth/metaVal*100)):0;
   const metaCard=`<div class="card p-5 sm:col-span-2">
     <div class="flex items-center justify-between gap-2">
@@ -1735,12 +1781,14 @@ function renderVentas(){
   const dir=VENTAS_SORT.dir==='asc'?1:-1;
   const despOrder={pendiente:0,en_camino:1,entregado:2};
   const sval=s=>{const k=VENTAS_SORT.key; if(k==='entrega')return s.fechaEntrega||''; if(k==='cliente'){const c=clientById(s.clienteId);return (c?c.nombre:(s.clienteNombre||'')).toLowerCase();} if(k==='total')return saleTotal(s); if(k==='pago')return s.pagado?1:0; if(k==='despacho')return despOrder[s.estadoDespacho]||0; if(k==='doc')return s.docTipo||''; return s.fecha||'';};
-  const rows=[...DB.sales].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
-  const ciudades=distinctCI(DB.sales.map(s=>s.ciudad));
-  const comunas=distinctCI(DB.sales.map(s=>s.comuna));
-  const activas=DB.sales.filter(s=>!s.perdido);
+  // Las ventas de Casa Augusta (origen==='CA') viven en su propio módulo, NO en Ventas > Pedidos.
+  const pedidoBase=DB.sales.filter(s=>s.origen!=='CA');
+  const rows=[...pedidoBase].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
+  const ciudades=distinctCI(pedidoBase.map(s=>s.ciudad));
+  const comunas=distinctCI(pedidoBase.map(s=>s.comuna));
+  const activas=pedidoBase.filter(s=>!s.perdido);
   const activosCount=activas.length;
-  const perdidosCount=DB.sales.filter(s=>s.perdido).length;
+  const perdidosCount=pedidoBase.filter(s=>s.perdido).length;
   const ingresoActivas=activas.reduce((a,s)=>a+saleTotal(s),0);
   const ticketProm = activosCount ? ingresoActivas/activosCount : 0;
   const unidadesTot = activas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
@@ -1806,7 +1854,7 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.bodega==='CA'?pill('Casa Augusta','green'):''}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -1823,7 +1871,7 @@ function renderVentas(){
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             <div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
-            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.bodega==='CA'?pill('Casa Augusta','green'):''}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
+            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
           </div>
           <div class="text-right shrink-0">
             <div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div>
@@ -2775,11 +2823,42 @@ function openSaleDetail(id, backFecha, backRes){
           ${!esBodega&&!s.perdido?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
           ${!esBodega&&!s.perdido&&!s.pagado?actBtn(`recordatorioCobranza('${s.id}')`,'📲 Recordar cobro'):''}
           ${!esBodega?actBtn(`openSale('${s.id}')`,'✏️ Editar pedido'):''}
+          ${!esBodega&&!s.perdido&&s.origen!=='CA'?actBtn(`moverACasaAugusta('${s.id}')`,'🏠 Mover a Casa Augusta'):''}
+          ${!esBodega&&s.origen==='CA'?actBtn(`moverAPedidos('${s.id}')`,'📦 Mover a Pedidos'):''}
           ${!esBodega?(s.perdido?actBtn(`reabrirPedido('${s.id}')`,'↩️ Reabrir pedido'):actBtn(`marcarPedidoPerdido('${s.id}')`,'🚫 Marcar perdido')):''}
         </div>
+        ${!esBodega&&s.origen!=='CA'?`<div class="text-[11px] text-clay-400 mt-2">Convierte este pedido en una <b>venta de Casa Augusta</b>: aparecerá en ese módulo y el stock se descontará de la bodega de Casa Augusta.</div>`:''}
       </div>
     </div>
   `);
+}
+// Convierte un pedido normal en una venta de Casa Augusta (aparece en ese módulo y descuenta su stock).
+function moverACasaAugusta(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  if(s.origen==='CA'){ toastInfo('Esta venta ya es de Casa Augusta.'); return; }
+  confirmModal({titulo:'¿Mover a Casa Augusta?', mensaje:'Esta venta pasará al módulo Casa Augusta y su stock se descontará de la bodega de Casa Augusta. Podrás revertirlo cuando quieras.', confirmar:'Mover a Casa Augusta', icon:'🏠', onConfirm:()=>{
+    s.origen='CA';
+    s.bodega='CA';
+    s.tipoDespacho='CA';
+    s.ciudad=s.ciudad||'Santiago';
+    if(!s.caMetodo) s.caMetodo='retiro_cliente';
+    s.caEstado = s.estadoDespacho==='entregado' ? 'entregado' : 'pendiente';
+    if(s.caMetodo==='currier' && !s.courier) s.courier=s.caCurrier||'Currier';
+    save(); closeModal(); go('ca_ventas');
+    toastInfo('✅ Venta movida a Casa Augusta.');
+  }});
+}
+// Devuelve una venta de Casa Augusta a Ventas > Pedidos (deja de aparecer en el módulo Casa Augusta).
+function moverAPedidos(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  confirmModal({titulo:'¿Mover a Pedidos?', mensaje:'Esta venta dejará de aparecer en el módulo Casa Augusta y volverá a Ventas > Pedidos. Elige de qué bodega se descuenta el stock.', confirmar:'Mover a Pedidos', icon:'📦', onConfirm:()=>{
+    s.origen='';
+    // Mantiene el stock en Casa Augusta por defecto (usaba stock de CA); el usuario puede cambiar la bodega editando el pedido.
+    s.tipoDespacho = (s.tipoDespacho==='CA') ? 'Viet' : (s.tipoDespacho||'Viet');
+    delete s.caEstado; delete s.caMetodo; delete s.caCurrier; delete s.caSeguimiento;
+    save(); closeModal(); go('ventas');
+    toastInfo('✅ Venta movida a Pedidos.');
+  }});
 }
 
 /* ===================== DESPACHOS ===================== */
@@ -2793,7 +2872,8 @@ function toggleDespShow(key){ DESP_SHOW[key]=!DESP_SHOW[key]; renderDespachos();
 function renderDespachos(){
   const v=document.getElementById('view');
   const cols=[['pendiente','Pendientes','amber'],['en_camino','En camino','blue'],['entregado','Entregados','green']];
-  const all=DB.sales.filter(s=>!s.perdido).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  // Las ventas de Casa Augusta se gestionan en su propio módulo (Entregas Casa Augusta), no aquí.
+  const all=DB.sales.filter(s=>!s.perdido && s.origen!=='CA').sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const activos=t=> all.filter(s=>tipoDespachoOf(s)===t && s.estadoDespacho!=='entregado').length;
   const sales = DESP_TIPO==='Todos'? all : all.filter(s=>tipoDespachoOf(s)===DESP_TIPO);
   const tab=(t,label,badge)=>`<button onclick="setDespTipo('${t}')" class="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 ${DESP_TIPO===t?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${badge!=null?`<span class="text-xs ${DESP_TIPO===t?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${badge}</span>`:''}</button>`;
@@ -2861,7 +2941,7 @@ function repartoAvisar(id){
   mostrarRecordatorio(msg, telWa(c&&c.telefono?c.telefono:''), '📲 Avisar entrega');
 }
 function repartoVentas(fecha){
-  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha)
+  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha && s.origen!=='CA')
     .sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
 }
 function abrirRutaMaps(fecha){
@@ -2915,7 +2995,7 @@ function renderMiDia(){
   const v=document.getElementById('view');
   const hoy=todayISO();
   const esBodega=SESSION.rol==='bodega';
-  const entregas=DB.sales.filter(s=>!s.perdido && s.fechaEntrega && s.fechaEntrega<=hoy && s.estadoDespacho!=='entregado').sort((a,b)=>(a.fechaEntrega||'').localeCompare(b.fechaEntrega||''));
+  const entregas=DB.sales.filter(s=>!s.perdido && s.origen!=='CA' && s.fechaEntrega && s.fechaEntrega<=hoy && s.estadoDespacho!=='entregado').sort((a,b)=>(a.fechaEntrega||'').localeCompare(b.fechaEntrega||''));
   const entAtras=entregas.filter(s=>s.fechaEntrega<hoy).length;
   const tareas=(DB.tasks||[]).filter(t=>t.estado!=='completada' && t.fecha && t.fecha<=hoy).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
   const tarAtras=tareas.filter(t=>t.fecha<hoy).length;
@@ -3171,7 +3251,7 @@ function autoSelectHTML(s, onchange){
   return `<select onclick="event.stopPropagation()" onchange="${onchange}" class="text-xs border border-clay-200 rounded-lg px-2 py-1 bg-white"><option value="" ${!s.auto?'selected':''}>Común</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select>`;
 }
 function openDiaEntregas(fecha){
-  const list=DB.sales.filter(s=>s.fechaEntrega===fecha).sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
+  const list=DB.sales.filter(s=>s.fechaEntrega===fecha && s.origen!=='CA').sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
   const estPill={pendiente:pill('Pendiente','amber'),en_camino:pill('En camino','blue'),entregado:pill('Entregado','green')};
   const totalU=list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
   const pend=list.filter(s=>s.estadoDespacho==='pendiente').length;
@@ -3266,7 +3346,7 @@ function renderCalendario(){
 
   const byDay={}; const sinFecha=[];
   DB.sales.forEach(s=>{
-    if(s.perdido) return;
+    if(s.perdido || s.origen==='CA') return;   // Las entregas de Casa Augusta se ven en su propio módulo
     if(!s.fechaEntrega){ sinFecha.push(s); return; }
     const [yy,mm,dd]=s.fechaEntrega.split('-').map(Number);
     if(yy===y && (mm-1)===m){ (byDay[dd]=byDay[dd]||[]).push(s); }
@@ -6072,7 +6152,8 @@ function renderTareas(){
    - Datos integrados a la plataforma con la etiqueta "Casa Augusta".
    - Pensado para una persona externa: NO muestra costos ni márgenes.
    ============================================================================ */
-const caSales = () => DB.sales.filter(s=>s.bodega==='CA' && !s.perdido);
+// Ventas de Casa Augusta = las GENERADAS en ese punto (origen==='CA'), no las que solo usan su stock.
+const caSales = () => DB.sales.filter(s=>s.origen==='CA' && !s.perdido);
 const caMetodoLabel = m => m==='currier' ? 'Retiro por currier' : 'Retiro por cliente';
 const caEstadoPill = s => (s.caEstado==='entregado') ? pill('Entregado','green') : pill('Pendiente','amber');
 const caPagoPill = s => s.pagado ? pill('Pagado','green') : pill('Por cobrar','red');
@@ -6360,9 +6441,12 @@ function openCASaleDetail(id){
       </div>
       ${s.notas?`<div class="bg-clay-50 rounded-xl p-3.5"><div class="text-xs text-clay-400 uppercase tracking-wide mb-1">Notas</div><div class="text-sm text-clay-700 whitespace-pre-wrap">${s.notas}</div></div>`:''}
     </div>
-    <div class="p-4 sm:p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
-      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
-      <button onclick="closeModal();openCASale('${s.id}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl text-sm">Editar</button>
+    <div class="p-4 sm:p-5 border-t border-clay-100 flex flex-wrap justify-between items-center gap-2 sticky bottom-0 bg-white">
+      <button onclick="moverAPedidos('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">📦 Mover a Pedidos</button>
+      <div class="flex gap-2">
+        <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
+        <button onclick="closeModal();openCASale('${s.id}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl text-sm">Editar</button>
+      </div>
     </div>
   `);
 }
@@ -6409,6 +6493,14 @@ function renderCASaleModal(){
         <div><label class="text-sm font-medium">Celular (opcional)</label><input id="ca_tel" value="${(s.clienteTel||'').replace(/"/g,'&quot;')}" placeholder="+56 9 ..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
       </div>
       <div><label class="text-sm font-medium">Fecha</label><input id="ca_fecha" type="date" value="${s.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="bg-clay-50 rounded-xl p-4 space-y-3">
+        <div class="text-sm font-semibold">Dirección del cliente <span class="text-xs font-normal text-clay-400">(opcional)</span></div>
+        <div><label class="text-xs text-clay-500">Dirección</label><input id="ca_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" placeholder="Calle y número" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"></div>
+        <div class="grid sm:grid-cols-2 gap-3">
+          <div><label class="text-xs text-clay-500">Ciudad</label><input id="ca_ciudad" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" placeholder="Santiago" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"></div>
+          <div><label class="text-xs text-clay-500">Comuna</label><input id="ca_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"></div>
+        </div>
+      </div>
       <div>
         <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos</label><button onclick="addCASaleItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
         <div id="ca_items" class="space-y-2">${s.items.map((it,ix)=>caSaleItemRow(it,ix)).join('')}</div>
@@ -6438,6 +6530,9 @@ function syncCASale(){
   if(g('ca_cli')) EDITCA.clienteNombre=g('ca_cli').value.trim();
   if(g('ca_tel')) EDITCA.clienteTel=g('ca_tel').value.trim();
   if(g('ca_fecha')) EDITCA.fecha=g('ca_fecha').value;
+  if(g('ca_dir')) EDITCA.direccion=g('ca_dir').value.trim();
+  if(g('ca_ciudad')) EDITCA.ciudad=g('ca_ciudad').value.trim();
+  if(g('ca_comuna')) EDITCA.comuna=g('ca_comuna').value.trim();
   if(g('ca_pagado')) EDITCA.pagado=g('ca_pagado').value==='true';
   if(g('ca_doc')) EDITCA.docTipo=g('ca_doc').value;
   if(g('ca_docnum')) EDITCA.docNumero=g('ca_docnum').value;
@@ -6459,12 +6554,13 @@ function saveCASale(){
   if(!EDITCA.clienteNombre){ alert('Escribe el nombre del cliente'); return; }
   const items=EDITCA.items.filter(i=>i.productId&&i.cantidad>0);
   if(!items.length){ alert('Agrega al menos un producto'); return; }
-  const cli=resolveClient(EDITCA.clienteNombre,'Santiago','','', EDITCA.clienteTel,'');
+  EDITCA.ciudad=(EDITCA.ciudad||'').trim()||'Santiago';
+  EDITCA.comuna=(EDITCA.comuna||'').trim();
+  EDITCA.direccion=(EDITCA.direccion||'').trim();
+  const cli=resolveClient(EDITCA.clienteNombre,EDITCA.ciudad,EDITCA.comuna,EDITCA.direccion, EDITCA.clienteTel,'');
   EDITCA.clienteId = cli?cli.id:'';
-  EDITCA.bodega='CA';
-  EDITCA.ciudad='Santiago';
-  EDITCA.comuna=EDITCA.comuna||'';
-  EDITCA.direccion=EDITCA.direccion||'';
+  EDITCA.origen='CA';      // Venta GENERADA en Casa Augusta (aparece en el módulo Casa Augusta)
+  EDITCA.bodega='CA';      // El stock se descuenta de la bodega de Casa Augusta
   EDITCA.tipoDespacho='CA';
   EDITCA.cuenta=EDITCA.cuenta||ACCOUNTS[0];
   EDITCA.costoEnvio=EDITCA.costoEnvio||0;
@@ -6497,15 +6593,19 @@ function renderCAEntregas(){
   const rows=[...caSales()];
   const pend=rows.filter(s=>s.caEstado!=='entregado').sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
   const ent=rows.filter(s=>s.caEstado==='entregado').sort((a,b)=>(b.entregadoAt||0)-(a.entregadoAt||0));
-  const card=(s,entregado)=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5">
+  const card=(s,entregado)=>{const c=clientById(s.clienteId);
+    const dir=[s.direccion,s.comuna,s.ciudad].filter(x=>x&&String(x).trim()).join(', ');
+    const seg=entregado?`${(s.courier||s.caCurrier)?`<div class="text-xs text-clay-500 mt-1.5">🚚 <b>${s.courier||s.caCurrier}</b>${s.caSeguimiento?(' · seguimiento '+s.caSeguimiento):''}</div>`:''}${s.entregadoAt?`<div class="text-xs text-clay-400 mt-0.5">Entregado ${s.fotoEntregaFecha||''} ${horaHM(s.entregadoAt)} hrs</div>`:''}`:'';
+    return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5">
     <div class="flex justify-between items-start gap-2">
-      <div class="min-w-0"><div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}${s.courier?(' · '+s.courier):''}</div></div>
+      <div class="min-w-0"><div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}${s.courier?(' · '+s.courier):''}</div>${dir?`<div class="text-xs text-clay-400 mt-0.5 truncate">📍 ${dir}</div>`:''}</div>
       <div class="text-right shrink-0">${caEstadoPill(s)}</div>
     </div>
     <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
+    ${seg}
     <div class="mt-3 pt-3 border-t border-clay-100 flex gap-2">${entregado
-      ? `<button onclick="revertirCAEntrega('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">↩️ Marcar como pendiente</button>`
-      : `<button onclick="markCAEntrega('${s.id}')" class="flex-1 text-xs font-semibold text-white bg-sage-600 hover:bg-sage-700 px-2 py-2 rounded-lg text-center">✓ Marcar entregado</button><button onclick="openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-2 rounded-lg text-center">Editar</button>`}</div>
+      ? `${tieneFotoEntrega(s)?`<button onclick="verRespaldoCA('${s.id}')" class="flex-1 text-xs font-semibold text-white bg-sage-600 hover:bg-sage-700 px-2 py-2 rounded-lg text-center">📎 Ver respaldo</button>`:`<button onclick="openCAEntregaModal('${s.id}')" class="flex-1 text-xs font-medium text-clay-700 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">📎 Agregar respaldo</button>`}<button onclick="revertirCAEntrega('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-2 rounded-lg text-center">↩️ Pendiente</button>`
+      : `<button onclick="openCAEntregaModal('${s.id}')" class="flex-1 text-xs font-semibold text-white bg-sage-600 hover:bg-sage-700 px-2 py-2 rounded-lg text-center">✓ Marcar entregado</button><button onclick="openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-2 rounded-lg text-center">Editar</button>`}</div>
   </div>`;};
   v.innerHTML=`
   <div class="grid grid-cols-2 gap-2.5 sm:gap-4 mb-4">
@@ -6519,10 +6619,99 @@ function renderCAEntregas(){
   ${ent.length? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${ent.map(s=>card(s,true)).join('')}</div>`
     : `<div class="card p-6 text-center text-clay-400 text-sm">Aún no hay entregas registradas.</div>`}`;
 }
-function markCAEntrega(id){
+let CA_ENT_UP=null; // {data, mime, name} respaldo pendiente de guardar en el modal de entrega
+function openCAEntregaModal(id){
   const s=DB.sales.find(x=>x.id===id); if(!s)return;
-  s.caEstado='entregado'; s.estadoDespacho='entregado'; if(!s.entregadoAt)s.entregadoAt=Date.now(); (s.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; });
-  save(); go('ca_entregas'); toastInfo('✅ Entrega registrada');
+  CA_ENT_UP=null;
+  const yaEntregado=s.caEstado==='entregado';
+  const courierVal=(s.courier||s.caCurrier||'').replace(/"/g,'&quot;');
+  const tieneResp=tieneFotoEntrega(s);
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">${yaEntregado?'Respaldo de entrega':'Confirmar entrega'}</h3><div class="text-xs text-clay-400">Casa Augusta · ${s.clienteNombre||'Cliente'}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="bg-clay-50 rounded-xl p-4 space-y-3">
+        <div class="text-sm font-semibold">¿Quién se llevó el producto?</div>
+        <div><label class="text-xs text-clay-500">Currier / persona que retiró</label><input id="ca_ent_courier" value="${courierVal}" placeholder="Nombre del currier o quien retiró" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"></div>
+        <div><label class="text-xs text-clay-500">N° de seguimiento (opcional)</label><input id="ca_ent_seg" value="${(s.caSeguimiento||'').replace(/"/g,'&quot;')}" placeholder="Código de seguimiento / tracking" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"></div>
+      </div>
+      <div class="bg-clay-50 rounded-xl p-4 space-y-3">
+        <div class="text-sm font-semibold">Respaldo de la entrega <span class="text-xs font-normal text-clay-400">(boleta o recibo del currier)</span></div>
+        <div id="ca_ent_preview" class="text-sm text-clay-500">${tieneResp?'✓ Ya hay un respaldo guardado. Puedes reemplazarlo abajo.':'Aún no has agregado un respaldo.'}</div>
+        <button onclick="caEntregaPickFile()" class="w-full border border-clay-300 border-dashed bg-white hover:bg-clay-50 text-clay-700 font-medium py-2.5 rounded-xl text-sm">📎 Subir imagen o archivo (PDF)</button>
+        <div class="text-[11px] text-clay-400">Se acepta foto de la boleta, comprobante del currier o PDF.</div>
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
+      <button onclick="confirmarCAEntrega('${s.id}')" class="bg-sage-600 hover:bg-sage-700 text-white font-semibold px-5 py-2.5 rounded-xl">${yaEntregado?'Guardar':'✓ Confirmar entrega'}</button>
+    </div>`);
+}
+function caEntregaPickFile(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,application/pdf';
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
+    const prev=document.getElementById('ca_ent_preview');
+    const setPrev=t=>{ if(prev) prev.textContent=t; };
+    if(f.type==='application/pdf'){
+      const r=new FileReader();
+      r.onload=()=>{ CA_ENT_UP={data:r.result, mime:'application/pdf', name:f.name||'respaldo.pdf'}; setPrev('✓ Archivo listo: '+CA_ENT_UP.name); };
+      r.onerror=()=>alert('No se pudo leer el archivo.');
+      r.readAsDataURL(f);
+    } else {
+      compressImage(f,1200,0.6).then(dataUrl=>{ CA_ENT_UP={data:dataUrl, mime:'image/jpeg', name:'respaldo.jpg'}; setPrev('✓ Imagen lista para guardar.'); })
+        .catch(()=>alert('No se pudo procesar la imagen. Intenta con otra foto o un PDF.'));
+    }
+  };
+  inp.click();
+}
+async function confirmarCAEntrega(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return;
+  const gc=document.getElementById('ca_ent_courier');
+  const gs=document.getElementById('ca_ent_seg');
+  const courier=gc?gc.value.trim():'';
+  const seg=gs?gs.value.trim():'';
+  if(courier){ s.courier=courier; s.caCurrier=courier; }
+  if(seg) s.caSeguimiento=seg; else if('caSeguimiento' in s) delete s.caSeguimiento;
+  if(CA_ENT_UP){
+    if(!window.FB||!FB.saveBlob){ alert('Se requiere conexión con la base de datos para guardar el respaldo.'); return; }
+    try{ const fileId=uid('foto');
+      await FB.saveBlob(fileId, {data:CA_ENT_UP.data, name:CA_ENT_UP.name, mime:CA_ENT_UP.mime, ts:Date.now()});
+      if(s.fotoEntregaId && FB.deleteBlob) FB.deleteBlob(s.fotoEntregaId);
+      s.fotoEntregaId=fileId; delete s.fotoEntrega;
+      s.fotoEntregaMime=CA_ENT_UP.mime;
+      if(!s.fotoEntregaFecha) s.fotoEntregaFecha=todayISO();
+    }catch(e){ alert('No se pudo guardar el respaldo.\n'+((e&&e.message)||'')); return; }
+  }
+  s.caEstado='entregado'; s.estadoDespacho='entregado';
+  if(!s.entregadoAt)s.entregadoAt=Date.now();
+  (s.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; });
+  CA_ENT_UP=null;
+  save(); closeModal(); go('ca_entregas'); toastInfo('✅ Entrega registrada');
+}
+async function verRespaldoCA(id){
+  const s=DB.sales.find(x=>x.id===id); if(!s)return;
+  if(!tieneFotoEntrega(s)){ openCAEntregaModal(id); return; }
+  let data=s.fotoEntrega||null, mime=s.fotoEntregaMime||'image/jpeg';
+  if(!data && s.fotoEntregaId && window.FB && FB.loadBlob){
+    modal('<div class="p-10 text-center text-clay-400 text-sm">Cargando respaldo… ⏳</div>');
+    try{ const rec=await FB.loadBlob(s.fotoEntregaId); data=rec&&rec.data; if(rec&&rec.mime) mime=rec.mime; }catch(e){}
+  }
+  const esPdf=(mime==='application/pdf')||(typeof data==='string' && data.indexOf('application/pdf')>-1);
+  const visor=!data?'<div class="p-10 text-center text-clay-400 text-sm">No se pudo cargar el respaldo.</div>'
+    : (esPdf?`<iframe src="${data}" class="w-full" style="height:60vh;border:0;border-radius:12px;"></iframe>`
+            :`<img src="${data}" class="w-full rounded-xl" style="max-height:60vh;object-fit:contain;">`);
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Respaldo de entrega</h3><div class="text-xs text-clay-400">${s.clienteNombre||''}${(s.courier||s.caCurrier)?(' · 🚚 '+(s.courier||s.caCurrier)):''}${s.caSeguimiento?(' · '+s.caSeguimiento):''}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 bg-clay-50">${visor}</div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between gap-2 sticky bottom-0 bg-white">
+      <button onclick="openCAEntregaModal('${s.id}')" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">🔄 Reemplazar / editar</button>
+      ${data?`<a href="${data}" download="${(s.fotoEntregaMime==='application/pdf')?'respaldo.pdf':'respaldo.jpg'}" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm">Descargar</a>`:''}
+    </div>`);
 }
 function revertirCAEntrega(id){
   const s=DB.sales.find(x=>x.id===id); if(!s)return;
