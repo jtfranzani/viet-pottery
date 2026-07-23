@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-99';
+const APP_VERSION = '2026.07.09-107';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -610,14 +610,16 @@ function stockOf(productId){
   // Las compras/recepciones asignadas a Casa Augusta (item.bodega==='CA') NO suman al central.
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') s+=i.cantidad; }));
   DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
-  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
+  // Transferencias: central→CA restan del central; CA→central (sentido 'aCentral') suman al central.
+  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; const dir=(t.sentido==='aCentral')?1:-1; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=dir*i.cantidad; }); });
   return s;
 }
 // Stock de la bodega CASA AUGUSTA (Santiago). Entra por transferencias desde central
 // y por devoluciones; sale por las ventas registradas en Casa Augusta.
 function stockCA(productId){
   let s = 0;
-  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); });
+  // Transferencias: central→CA suman a Casa Augusta; CA→central (sentido 'aCentral') restan de Casa Augusta.
+  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; const dir=(t.sentido==='aCentral')?-1:1; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=dir*i.cantidad; }); });
   // Recepciones/compras asignadas directamente a Casa Augusta al recibir la OC.
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') s+=i.cantidad; }));
   DB.sales.forEach(v=>{ if(v.bodega!=='CA'||v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
@@ -804,6 +806,107 @@ function pdfProFooter(doc, nota){
   doc.setFontSize(8); doc.setTextColor(150,150,150); doc.setFont('helvetica','normal');
   doc.text(EMPRESA.razon+'  ·  RUT '+EMPRESA.rut+'  ·  '+EMPRESA.marca,14,py);
   doc.text(nota||('Generado el '+new Date().toLocaleDateString('es-CL')),196,py,{align:'right'});
+}
+
+/* ===== Etiqueta de despacho (para pegar en el macetero) — Pedidos y Casa Augusta ===== */
+// Genera UNA etiqueta por hoja (A4), en blanco y negro, con la dirección y los productos ordenados.
+function generarEtiquetaDespacho(id){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF.'); return; }
+  const s=DB.sales.find(x=>x.id===id); if(!s) return;
+  const c=clientById(s.clienteId);
+  const nombre=c?c.nombre:(s.clienteNombre||'Cliente');
+  const tel=(c&&c.telefono)||s.clienteTel||'';
+  const direccion=(s.direccion||'').trim();
+  const comuna=titleCase((s.comuna||'').trim());
+  const ciudad=titleCase((s.ciudad||'').trim());
+  const esCA=s.origen==='CA';
+  // Normaliza el modo de entrega para ambos canales (Pedidos y Casa Augusta)
+  let modo, courier='', tracking='';
+  if(esCA){
+    if(s.caMetodo==='currier'){ modo='ENVÍO POR CURRIER'; courier=(s.caCurrier||s.courier||'').trim(); tracking=(s.caSeguimiento||s.seguimiento||'').trim(); }
+    else { modo='RETIRO EN TIENDA'; }
+  } else {
+    const tp=tipoDespachoOf(s);
+    if(tp==='Currier'){ modo='ENVÍO POR CURRIER'; courier=(s.courier||'').trim(); tracking=(s.seguimiento||'').trim(); }
+    else { modo='DESPACHO A DOMICILIO'; }
+  }
+  const ref=s.docNumero?((s.docTipo==='factura'?'Factura ':'Boleta ')+s.docNumero):('N° '+String(s.id).slice(-6).toUpperCase());
+  const unidades=s.items.reduce((a,i)=>a+(i.cantidad||0),0);
+
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+  const x=25, cw=160, p=9, xL=x+p, xR=x+cw-p, top=22;
+  let y=top+p+3;
+
+  // --- Encabezado ---
+  doc.setTextColor(0,0,0);
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('VIET POTTERY',xL,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(80,80,80);
+  doc.text(ref,xR,y-3,{align:'right'});
+  doc.text(s.fecha,xR,y+2,{align:'right'});
+  doc.setTextColor(0,0,0);
+  y+=5; doc.setDrawColor(0,0,0); doc.setLineWidth(0.4); doc.line(xL,y,xR,y);
+  y+=8;
+
+  // --- Modo de entrega (recuadro con borde negro, sin color) ---
+  doc.setLineWidth(0.6); doc.roundedRect(xL,y-6,cw-2*p,11,2,2);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text(modo,x+cw/2,y+1.5,{align:'center'});
+  y+=13;
+
+  // --- Destinatario (campo por campo, ordenado) ---
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(90,90,90); doc.text('DESTINATARIO',xL,y);
+  doc.setTextColor(0,0,0); y+=6.5;
+  doc.setFont('helvetica','bold'); doc.setFontSize(14);
+  doc.splitTextToSize(nombre,cw-2*p).forEach(ln=>{ doc.text(ln,xL,y); y+=6.5; });
+  y+=1.5;
+  const lblW=27;
+  const row=(label,val)=>{
+    if(!val) return;
+    doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(90,90,90); doc.text(label,xL,y);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(0,0,0);
+    const lines=doc.splitTextToSize(String(val),cw-2*p-lblW);
+    lines.forEach((ln,i)=>{ doc.text(ln,xL+lblW,y); if(i<lines.length-1) y+=5; });
+    y+=6.2;
+  };
+  row('Teléfono', tel);
+  if(direccion||comuna||ciudad){
+    row('Dirección', direccion||'—');
+    row('Comuna', comuna);
+    row('Ciudad', ciudad);
+  } else if(!esCA){
+    doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(120,120,120); doc.text('(sin dirección registrada)',xL,y); doc.setTextColor(0,0,0); y+=6.2;
+  }
+  // --- Transporte (si aplica) ---
+  row('Currier', courier);
+  row('Seguimiento', tracking);
+
+  // --- Contenido (lista, uno por línea, con cantidad alineada) ---
+  y+=1; doc.setDrawColor(210,210,210); doc.setLineWidth(0.3); doc.line(xL,y,xR,y); y+=6;
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(90,90,90);
+  doc.text('CONTENIDO ('+unidades+(unidades===1?' unidad':' unidades')+')',xL,y);
+  doc.setTextColor(0,0,0); y+=6;
+  const qx=xL+9;
+  s.items.forEach(i=>{
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(i.cantidad+'×',qx,y,{align:'right'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+    const lines=doc.splitTextToSize(itemLabelCliente(i),cw-2*p-14);
+    lines.forEach((ln,k)=>{ doc.text(ln,qx+3.5,y); if(k<lines.length-1) y+=5; });
+    y+=6;
+  });
+  if(s.notas){
+    y+=1; doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.splitTextToSize('Nota: '+s.notas,cw-2*p).slice(0,3).forEach(ln=>{ doc.text(ln,xL,y); y+=4.6; });
+    doc.setTextColor(0,0,0);
+  }
+
+  // --- Aviso frágil + borde de la etiqueta ---
+  y+=3; doc.setDrawColor(0,0,0); doc.setLineWidth(0.4); doc.line(xL,y,xR,y); y+=6;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('FRÁGIL — MANIPULAR CON CUIDADO',x+cw/2,y,{align:'center'});
+  const bottom=y+p-3;
+  doc.setDrawColor(0,0,0); doc.setLineWidth(0.7); doc.rect(x,top,cw,bottom-top);
+
+  const fnameCli=(nombre||'cliente').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  savePdfDoc(doc,'etiqueta-'+fnameCli+'.pdf');
 }
 
 function buildNav(){
@@ -1226,6 +1329,7 @@ function renderReportes(){
   const bk=Object.keys(buckets).sort();
   const vietN=d.sales.filter(s=>tipoDespachoOf(s)==='Viet').length;
   const franN=d.sales.filter(s=>tipoDespachoOf(s)==='Fran').length;
+  const currierN=d.sales.filter(s=>tipoDespachoOf(s)==='Currier').length;
   // Desglose por canal de venta: Pedidos (Ventas) vs Casa Augusta.
   const chan=(list)=>({n:list.length, u:list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0), m:list.reduce((a,s)=>a+saleSubtotal(s),0)});
   const chPed=chan(d.sales.filter(s=>s.origen!=='CA'));
@@ -1292,7 +1396,7 @@ function renderReportes(){
       <div class="text-sm text-clay-500">🏆 Producto más vendido</div>
       <div class="text-lg font-bold mt-1">${masV?repName(masV):'—'}</div>
       ${masV?`<div class="text-sm text-clay-500 mt-1">${masV.cant} unidades · ${fmt(masV.monto)}</div>`:''}
-      <div class="border-t border-clay-100 mt-4 pt-3 text-xs text-clay-400">Despachos: Viet ${vietN} · Fran ${franN}</div>
+      <div class="border-t border-clay-100 mt-4 pt-3 text-xs text-clay-400">Despachos: Viet ${vietN} · Fran ${franN}${currierN?` · Currier ${currierN}`:''}</div>
     </div>
   </div>`}`;
   // ---- TAB: Venta productos ----
@@ -1971,10 +2075,11 @@ function renderSaleModal(){
       </div>
 
       <div class="bg-clay-50 rounded-xl p-4">
-        <div class="flex items-center justify-between mb-2"><div class="text-sm font-semibold">Despacho</div>
+        <div class="flex items-center justify-between mb-2 gap-2 flex-wrap"><div class="text-sm font-semibold">Despacho</div>
           <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5">
             <button type="button" onclick="setSaleTipoDesp('Viet')" id="td_viet" class="px-3 py-1 rounded-md text-xs font-medium ${(s.tipoDespacho||'Viet')==='Viet'?'bg-sage-500 text-white':'text-clay-600'}">Despacho Viet</button>
             <button type="button" onclick="setSaleTipoDesp('Fran')" id="td_fran" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Fran'?'bg-blue-500 text-white':'text-clay-600'}">Despacho Fran</button>
+            <button type="button" onclick="setSaleTipoDesp('Currier')" id="td_currier" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Currier'?'bg-amber-500 text-white':'text-clay-600'}">Currier</button>
           </div>
         </div>
         <div class="grid sm:grid-cols-3 gap-3">
@@ -1982,11 +2087,13 @@ function renderSaleModal(){
           <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
-          <div><label class="text-xs text-clay-500">Courier</label><select id="s_courier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="" ${!s.courier?'selected':''}>Sin asignar</option><option value="Viet" ${s.courier==='Viet'?'selected':''}>Viet</option><option value="Fran" ${s.courier==='Fran'?'selected':''}>Fran</option><option value="Externo" ${s.courier==='Externo'?'selected':''}>Externo</option>${s.courier&&!['Viet','Fran','Externo'].includes(s.courier)?`<option value="${s.courier.replace(/"/g,'&quot;')}" selected>${s.courier}</option>`:''}</select></div>
+          <div id="s_courier_wrap" class="${s.tipoDespacho==='Currier'?'hidden':''}"><label class="text-xs text-clay-500">Courier</label><select id="s_courier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="" ${!s.courier?'selected':''}>Sin asignar</option><option value="Viet" ${s.courier==='Viet'?'selected':''}>Viet</option><option value="Fran" ${s.courier==='Fran'?'selected':''}>Fran</option><option value="Externo" ${s.courier==='Externo'?'selected':''}>Externo</option>${s.courier&&!['Viet','Fran','Externo'].includes(s.courier)?`<option value="${s.courier.replace(/"/g,'&quot;')}" selected>${s.courier}</option>`:''}</select></div>
+          <div id="s_currier_nombre_wrap" class="${s.tipoDespacho==='Currier'?'':'hidden'}"><label class="text-xs text-clay-500">Currier (empresa/persona)</label><input id="s_currier_nombre" value="${s.tipoDespacho==='Currier'?(s.courier||'').replace(/"/g,'&quot;'):''}" placeholder="Ej: Starken, Chilexpress…" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div id="s_seguimiento_wrap" class="${s.tipoDespacho==='Currier'?'':'hidden'}"><label class="text-xs text-clay-500">N° de seguimiento (opcional)</label><input id="s_seguimiento" value="${(s.seguimiento||'').replace(/"/g,'&quot;')}" placeholder="Tracking / orden de flete" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
+          <div id="s_auto_wrap" class="${s.tipoDespacho==='Currier'?'hidden':''}"><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
         </div>
-        <div class="text-xs text-clay-400 mt-2">El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.</div>
+        <div id="s_desp_hint" class="text-xs text-clay-400 mt-2">${s.tipoDespacho==='Currier'?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.'}</div>
       </div>
       <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
       <div class="bg-clay-50 rounded-xl p-4">
@@ -2058,8 +2165,15 @@ function syncSaleFromForm(){
   if(g('s_comuna')) EDIT.comuna=g('s_comuna').value.trim();
   if(g('s_dir')) EDIT.direccion=g('s_dir').value;
   if(g('s_disp')) EDIT.estadoDespacho=g('s_disp').value;
-  if(g('s_courier')) EDIT.courier=g('s_courier').value;
-  if(g('s_auto')) EDIT.auto=g('s_auto').value;
+  if(EDIT.tipoDespacho==='Currier'){
+    if(g('s_currier_nombre')) EDIT.courier=g('s_currier_nombre').value.trim();
+    if(g('s_seguimiento')) EDIT.seguimiento=g('s_seguimiento').value.trim();
+    EDIT.auto='';
+  } else {
+    if(g('s_courier')) EDIT.courier=g('s_courier').value;
+    if(g('s_auto')) EDIT.auto=g('s_auto').value;
+    if('seguimiento' in EDIT) delete EDIT.seguimiento;
+  }
   if(g('s_envio')) EDIT.costoEnvio=milesParse(g('s_envio').value);
   if(g('s_notas')) EDIT.notas=g('s_notas').value;
 }
@@ -2086,10 +2200,25 @@ function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateLineSub(ix);updateS
 function onSaleDesc(ix,v){let d=+v||0;d=Math.max(0,Math.min(100,d));EDIT.items[ix].descuento=d;updateLineSub(ix);updateSaleTotal();}
 function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef,descuento:0});refreshSaleItems();}
 function setSaleTipoDesp(t){
-  if(!EDIT) return; EDIT.tipoDespacho=t;
-  const viet=document.getElementById('td_viet'), fran=document.getElementById('td_fran');
+  if(!EDIT) return;
+  // Al cambiar de/hacia Currier, conserva el nombre del courier entre el select y el campo libre.
+  const gc=document.getElementById('s_courier'), gcn=document.getElementById('s_currier_nombre');
+  if(EDIT.tipoDespacho==='Currier' && gcn) EDIT.courier=gcn.value.trim();
+  else if(gc) EDIT.courier=gc.value;
+  EDIT.tipoDespacho=t;
+  const viet=document.getElementById('td_viet'), fran=document.getElementById('td_fran'), cur=document.getElementById('td_currier');
   if(viet) viet.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Viet'?'bg-sage-500 text-white':'text-clay-600');
   if(fran) fran.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Fran'?'bg-blue-500 text-white':'text-clay-600');
+  if(cur) cur.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Currier'?'bg-amber-500 text-white':'text-clay-600');
+  const esCurrier=t==='Currier';
+  const tog=(id,hide)=>{const el=document.getElementById(id); if(el) el.classList.toggle('hidden',hide);};
+  tog('s_courier_wrap',esCurrier);
+  tog('s_auto_wrap',esCurrier);
+  tog('s_currier_nombre_wrap',!esCurrier);
+  tog('s_seguimiento_wrap',!esCurrier);
+  if(esCurrier && gcn && !gcn.value && EDIT.courier && !['Viet','Fran'].includes(EDIT.courier)) gcn.value=EDIT.courier;
+  const hint=document.getElementById('s_desp_hint');
+  if(hint) hint.innerHTML=esCurrier?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.';
 }
 function setSaleBodega(t){
   if(!EDIT) return; EDIT.bodega = t==='CA' ? 'CA' : '';
@@ -2752,7 +2881,7 @@ function openSaleDetail(id, backFecha, backRes){
     ${step('done','Pedido registrado',s.fecha+' · '+tp)}
     ${step(s.pagado?'done':'amber', s.pagado?'Pago recibido':'Pago pendiente', s.pagado?('Pagado'+(s.cuenta?' · '+s.cuenta:'')):'Por cobrar — '+fmt(total))}
     ${step(s.docTipo==='pendiente'?'amber':'done','Documento', saleDocText(s))}
-    ${step(dp[0],dp[1],dp[2]+(s.courier?' · '+s.courier:'')+(s.fechaEntrega?' · entrega '+s.fechaEntrega:''))}
+    ${step(dp[0],dp[1],dp[2]+(s.courier?' · '+s.courier:'')+(s.seguimiento?' · seguimiento '+s.seguimiento:'')+(s.fechaEntrega?' · entrega '+s.fechaEntrega:''))}
     ${step(tieneFotoEntrega(s)?'done':'gray','Comprobante de entrega', tieneFotoEntrega(s)?('Registrado'+(s.fotoEntregaFecha?' el '+s.fotoEntregaFecha:'')):'Sin foto de respaldo aún', true)}
   `;
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
@@ -2818,6 +2947,7 @@ function openSaleDetail(id, backFecha, backRes){
         <div class="text-xs text-clay-400 uppercase tracking-wide mb-2.5">Documentos y acciones</div>
         <div class="flex flex-wrap gap-2">
           ${actBtn(`openConfirmacion('${s.id}')`,'🧾 Comprobante de venta',true)}
+          ${actBtn(`generarEtiquetaDespacho('${s.id}')`,'🏷️ Imprimir etiqueta')}
           ${actBtn(`openEntrega('${s.id}')`, s.estadoDespacho==='entregado'?'📦 Comprobante de entrega':(saleHayEntregaParcial(s)?'📦 Comprobante parcial':'📦 Entregar'))}
           ${!esBodega&&!s.perdido&&s.docTipo==='pendiente'?actBtn(`openEmitirSII('${s.id}')`,'Emitir SII'):''}
           ${!esBodega&&!s.perdido?actBtn(`openEmitirLink('${s.id}')`,'💳 Emitir Link'):''}
@@ -2862,7 +2992,7 @@ function moverAPedidos(id){
 }
 
 /* ===================== DESPACHOS ===================== */
-const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':'Viet');
+const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':(s.tipoDespacho==='Currier'?'Currier':'Viet'));
 let DESP_TIPO='Viet';
 let DESP_COL='pendiente'; // solo afecta la vista móvil: qué columna se muestra
 let DESP_SHOW={}; // columnas expandidas (ver todos)
@@ -2882,6 +3012,7 @@ function renderDespachos(){
   <div class="flex flex-wrap gap-2 mb-4 items-center">
     ${tab('Viet','Despachos Viet',activos('Viet'))}
     ${tab('Fran','Despachos Fran',activos('Fran'))}
+    ${tab('Currier','Currier',activos('Currier'))}
     ${tab('Todos','Todos',null)}
     <button onclick="openModoReparto(todayISO())" class="sm:ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">🚚 Modo reparto</button>
   </div>
@@ -2906,11 +3037,11 @@ function renderDespachos(){
           return `<div class="border ${atrasado?'border-red-300 ring-1 ring-red-200 bg-red-50/40':'border-clay-100'} rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
           ${atrasado?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-red-700 bg-red-100 rounded-lg px-2 py-1 mb-2">⚠️ Atrasado ${diasAtr} día${diasAtr!==1?'s':''} · debía entregarse el ${s.fechaEntrega}</div>`:esHoy?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-lg px-2 py-1 mb-2">📦 Entrega programada para hoy</div>`:''}
           <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs ${atrasado?'text-red-600 font-semibold':'text-clay-400'} whitespace-nowrap text-right">${s.fechaEntrega?fechaAmig(s.fechaEntrega):s.fecha}</div></div>
-          <div class="mt-1 flex flex-wrap gap-1">${pill('Despacho '+tp, tp==='Fran'?'blue':'green')}${autoBadge(s.auto)}</div>
+          <div class="mt-1 flex flex-wrap gap-1">${pill(tp==='Currier'?'Currier':('Despacho '+tp), tp==='Fran'?'blue':(tp==='Currier'?'amber':'green'))}${tp==='Currier'?'':autoBadge(s.auto)}${tp==='Currier'&&s.seguimiento?`<span class="badge bg-clay-100 text-clay-600">📦 ${s.seguimiento}</span>`:''}</div>
           <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           ${saleHayEntregaParcial(s)?`<div class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1.5 flex items-start gap-1">⏳<span>Entrega parcial — pendiente: ${pendientesTexto(s)}</span></div>`:''}
-          <div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>
+          ${tp==='Currier'?'':`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>`}
           ${tieneFotoEntrega(s)?`<div class="mt-2 text-[11px] text-sage-700 font-medium flex items-center gap-1">📷 Con foto de respaldo</div>`:''}
           <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key==='pendiente'?(saleHayEntregaParcial(s)?`<span class="flex items-center gap-1.5"><button onclick="event.stopPropagation();deshacerEntregaParcial('${s.id}','')" class="text-xs font-medium text-clay-600 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">↩️</button><button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Entregar resto ✓</button></span>`:`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">Marcar en camino →</button>`):key==='en_camino'?`<button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Marcar entregado ✓</button>`:pill('OK','green')}</div>
           <div class="mt-2">
@@ -2941,7 +3072,8 @@ function repartoAvisar(id){
   mostrarRecordatorio(msg, telWa(c&&c.telefono?c.telefono:''), '📲 Avisar entrega');
 }
 function repartoVentas(fecha){
-  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha && s.origen!=='CA')
+  // Los envíos por currier son externos: no van en la hoja de ruta/manejo del vehículo.
+  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha && s.origen!=='CA' && tipoDespachoOf(s)!=='Currier')
     .sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
 }
 function abrirRutaMaps(fecha){
@@ -3830,7 +3962,7 @@ function stockMovements(productId){
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega==='CA') return; s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
   (DB.adjustments||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:1, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
-  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Envío a Casa Augusta', cantidad:-i.cantidad}); }); });
+  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Recibido desde Casa Augusta', cantidad:i.cantidad}); else moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Envío a Casa Augusta', cantidad:-i.cantidad}); } }); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
   let bal=0; moves.forEach(m=>{ bal+=m.cantidad; m.saldo=bal; });
   return moves;
@@ -6169,7 +6301,7 @@ function renderCAStock(){
   const unidades=prods.reduce((a,p)=>a+Math.max(0,stockCA(p.id)),0);
   const conStock=prods.filter(p=>stockCA(p.id)>0).length;
   const valorVenta=prods.reduce((a,p)=>a+Math.max(0,stockCA(p.id))*(p.precioRef||0),0);
-  const transf=(DB.transfers||[]).filter(t=>t.estado!=='anulada').length;
+  const transf=(DB.transfers||[]).filter(t=>t.estado!=='anulada' && t.sentido!=='aCentral').length;
   v.innerHTML=`
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
     <div id="caCardStock" onclick="caToggleConStock()" title="Ver solo los productos con stock" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition ${CA_STOCK_ONLY?'ring-2 ring-sage-500':''}">
@@ -6197,6 +6329,7 @@ function renderCAStock(){
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
       <input id="fCAStock" oninput="filterCAStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
       <button onclick="descargarStockCasaAugusta()" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50 whitespace-nowrap"><span>🖨️</span> Descargar PDF</button>
+      <button onclick="openCATransferReverse()" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50 whitespace-nowrap"><span>📦</span> Enviar a central</button>
       <div id="caStCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
     </div>
     <div class="overflow-auto max-h-[66vh]"><table class="w-full text-sm min-w-[520px]" id="castbl">
@@ -6232,7 +6365,7 @@ function caToggleConStock(){
 }
 // Historial de transferencias recibidas desde la bodega central (sin costos).
 function openCATransfersHist(){
-  const ts=[...(DB.transfers||[]).filter(t=>t.estado!=='anulada')].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const ts=[...(DB.transfers||[]).filter(t=>t.estado!=='anulada' && t.sentido!=='aCentral')].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   const rows = ts.length ? ts.map(t=>{
     const tot=(t.items||[]).reduce((a,i)=>a+(+i.cantidad||0),0);
     const det=(t.items||[]).map(i=>{const p=productById(i.productId); return `${p?productNameCliente(p):'Producto'} ×${i.cantidad}`;}).join(', ');
@@ -6260,7 +6393,7 @@ function openCATransfersHist(){
 // Movimientos de un producto en la bodega Casa Augusta: transferencias (+), ventas (−) y devoluciones (+).
 function caStockMovements(productId){
   const moves=[];
-  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); }); });
+  (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Enviado a central (Requínoa)', cantidad:-i.cantidad}); else moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); } }); });
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') moves.push({fecha:c.fecha, orden:0, tipo:'Compra', detalle:(c.proveedor||'Proveedor')+' · recepción directa', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
   (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Devolución', detalle:r.clienteNombre||r.motivo||'Devolución', cantidad:i.cantidad}); }); });
@@ -6314,7 +6447,7 @@ function openCATrazabilidad(productId){
 
 /* --------- TRANSFERENCIAS central → Casa Augusta --------- */
 let EDITT=null;
-function caTransferProdOpt(sel){ return DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · central ${stockOf(p.id)}</option>`).join(''); }
+function caTransferProdOpt(sel){ const rev=!!(EDITT&&EDITT.reverse); return DB.products.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · ${rev?('Casa Augusta '+stockCA(p.id)):('central '+stockOf(p.id))}</option>`).join(''); }
 function openCATransfer(){
   EDITT={fecha:todayISO(), items:[{productId:DB.products[0].id,cantidad:1}], notas:''};
   modal(`
@@ -6350,11 +6483,38 @@ function addCATransferItem(){ syncCATransfer(); EDITT.items.push({productId:DB.p
 function removeCATransferItem(ix){ if(EDITT.items.length<=1)return; syncCATransfer(); EDITT.items.splice(ix,1); document.getElementById('t_items').innerHTML=EDITT.items.map((it,ix)=>caTransferRow(it,ix)).join(''); }
 function saveCATransfer(){
   syncCATransfer();
+  const rev=!!EDITT.reverse;
   const items=EDITT.items.filter(i=>i.productId&&i.cantidad>0);
   if(!items.length){ alert('Agrega al menos un producto'); return; }
-  DB.transfers.push({id:uid('tr'), fecha:EDITT.fecha||todayISO(), items:items.map(i=>({productId:i.productId,cantidad:+i.cantidad})), notas:EDITT.notas||'', estado:'ok', creadoPor:(SESSION.nombre||SESSION.email)});
+  if(rev){
+    // Validar que Casa Augusta tenga stock suficiente para enviar a central
+    const acc={}; items.forEach(i=>{ acc[i.productId]=(acc[i.productId]||0)+(+i.cantidad); });
+    for(const pid in acc){ const disp=stockCA(pid); if(acc[pid]>disp){ const p=productById(pid); alert('Stock insuficiente en Casa Augusta para "'+(p?productNameCliente(p):pid)+'". Disponible: '+disp+', intentas enviar: '+acc[pid]+'.'); return; } }
+  }
+  DB.transfers.push({id:uid('tr'), fecha:EDITT.fecha||todayISO(), sentido:rev?'aCentral':'aCA', items:items.map(i=>({productId:i.productId,cantidad:+i.cantidad})), notas:EDITT.notas||'', estado:'ok', creadoPor:(SESSION.nombre||SESSION.email)});
   save(); closeModal(); go('ca_stock');
-  toastInfo('✅ Transferencia registrada a Casa Augusta');
+  toastInfo(rev?'✅ Envío registrado a Bodega Requínoa (central)':'✅ Transferencia registrada a Casa Augusta');
+}
+function openCATransferReverse(){
+  EDITT={fecha:todayISO(), items:[{productId:DB.products[0].id,cantidad:1}], notas:'', reverse:true};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">Enviar a Bodega Requínoa (central)</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="text-sm text-clay-500">Registra los productos que Casa Augusta devuelve a la bodega central (Requínoa). Se descuentan del stock de Casa Augusta y se suman al central. El stock que se muestra es el disponible en Casa Augusta.</div>
+      <div><label class="text-sm font-medium">Fecha</label><input id="t_fecha" type="date" value="${EDITT.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div>
+        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos</label><button onclick="addCATransferItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div id="t_items" class="space-y-2">${EDITT.items.map((it,ix)=>caTransferRow(it,ix)).join('')}</div>
+      </div>
+      <div><label class="text-sm font-medium">Notas (opcional)</label><input id="t_notas" value="" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
+      <button onclick="saveCATransfer()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Registrar envío a central</button>
+    </div>`);
 }
 
 /* --------- VENTAS CASA AUGUSTA --------- */
@@ -6442,7 +6602,10 @@ function openCASaleDetail(id){
       ${s.notas?`<div class="bg-clay-50 rounded-xl p-3.5"><div class="text-xs text-clay-400 uppercase tracking-wide mb-1">Notas</div><div class="text-sm text-clay-700 whitespace-pre-wrap">${s.notas}</div></div>`:''}
     </div>
     <div class="p-4 sm:p-5 border-t border-clay-100 flex flex-wrap justify-between items-center gap-2 sticky bottom-0 bg-white">
-      <button onclick="moverAPedidos('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">📦 Mover a Pedidos</button>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="generarEtiquetaDespacho('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">🏷️ Imprimir etiqueta</button>
+        <button onclick="moverAPedidos('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">📦 Mover a Pedidos</button>
+      </div>
       <div class="flex gap-2">
         <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cerrar</button>
         <button onclick="closeModal();openCASale('${s.id}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl text-sm">Editar</button>
@@ -6472,13 +6635,20 @@ function caStockWarn(it){
   return '';
 }
 function refreshCAWarns(){ if(!EDITCA)return; EDITCA.items.forEach((it,ix)=>{ const el=document.getElementById('ca_warn_'+ix); if(el) el.innerHTML=caStockWarn(it); }); }
+function caLineSubHtml(it){
+  const desc=it.descuento||0; const sub=lineTotal(it);
+  return desc>0
+    ? `<span class="text-sage-700">Subtotal: <span class="line-through text-clay-300">${fmt(it.cantidad*it.precio)}</span> → <b>${fmt(sub)}</b> · ${desc}% dcto</span>`
+    : `<span class="text-clay-400">Subtotal: <b>${fmt(sub)}</b></span>`;
+}
 function caSaleItemRow(it,ix){
   return `<div class="border border-clay-100 rounded-xl p-2.5 bg-clay-50/40" data-ix="${ix}"><div class="grid grid-cols-12 gap-2 items-center">
-    <select onchange="onCASaleProd(${ix},this.value)" class="col-span-12 sm:col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm bg-white">${caSaleProdOpt(it.productId)}</select>
-    <input type="number" min="1" value="${it.cantidad}" oninput="onCASaleQty(${ix},this.value)" class="col-span-4 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center bg-white" title="Cantidad">
-    <input type="text" inputmode="numeric" value="${milesIn(it.precio)}" oninput="onCASalePrice(${ix},moneyInput(this))" class="col-span-6 sm:col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio">
-    <button onclick="removeCASaleItem(${ix})" class="col-span-2 sm:col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
-  </div><div id="ca_warn_${ix}">${caStockWarn(it)}</div></div>`;
+    <select onchange="onCASaleProd(${ix},this.value)" class="col-span-12 sm:col-span-5 border border-clay-200 rounded-lg px-2 py-2 text-sm bg-white">${caSaleProdOpt(it.productId)}</select>
+    <input type="number" min="1" value="${it.cantidad}" oninput="onCASaleQty(${ix},this.value)" class="col-span-3 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center bg-white" title="Cantidad">
+    <input type="text" inputmode="numeric" value="${milesIn(it.precio)}" oninput="onCASalePrice(${ix},moneyInput(this))" class="col-span-4 sm:col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio">
+    <div class="col-span-4 sm:col-span-2 relative"><input type="number" min="0" max="100" value="${it.descuento||0}" oninput="onCASaleDesc(${ix},this.value)" class="w-full border border-clay-200 rounded-lg pl-2 pr-6 py-2 text-sm text-right bg-white" title="Descuento %"><span class="absolute right-2 top-1/2 -translate-y-1/2 text-clay-400 text-xs">%</span></div>
+    <button onclick="removeCASaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
+  </div><div id="ca_sub_${ix}" class="text-xs text-right mt-1.5">${caLineSubHtml(it)}</div><div id="ca_warn_${ix}">${caStockWarn(it)}</div></div>`;
 }
 function renderCASaleModal(){
   const s=EDITCA;
@@ -6503,6 +6673,13 @@ function renderCASaleModal(){
       </div>
       <div>
         <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos</label><button onclick="addCASaleItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div class="hidden sm:grid grid-cols-12 gap-2 px-2.5 mb-1 text-[11px] font-semibold text-clay-400 uppercase tracking-wide">
+          <div class="col-span-5">Producto</div>
+          <div class="col-span-2 text-center">Cantidad</div>
+          <div class="col-span-2 text-right">Precio</div>
+          <div class="col-span-2 text-right">Descuento</div>
+          <div class="col-span-1"></div>
+        </div>
         <div id="ca_items" class="space-y-2">${s.items.map((it,ix)=>caSaleItemRow(it,ix)).join('')}</div>
       </div>
       <div class="grid sm:grid-cols-2 gap-3">
@@ -6514,11 +6691,12 @@ function renderCASaleModal(){
         <div class="grid sm:grid-cols-2 gap-3">
           <div><label class="text-xs text-clay-500">Método</label><select id="ca_metodo" onchange="onCAMetodo(this.value)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="retiro_cliente" ${s.caMetodo==='retiro_cliente'?'selected':''}>Retiro por el cliente (showroom)</option><option value="currier" ${s.caMetodo==='currier'?'selected':''}>Retiro por currier</option></select></div>
           <div id="ca_currier_wrap" class="${s.caMetodo==='currier'?'':'hidden'}"><label class="text-xs text-clay-500">Currier</label><input id="ca_currier" value="${(s.caCurrier||'').replace(/"/g,'&quot;')}" placeholder="Nombre del currier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div id="ca_seguimiento_wrap" class="${s.caMetodo==='currier'?'':'hidden'}"><label class="text-xs text-clay-500">N° de seguimiento (opcional)</label><input id="ca_seguimiento" value="${(s.caSeguimiento||'').replace(/"/g,'&quot;')}" placeholder="Tracking / orden de flete" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="ca_estado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="pendiente" ${s.caEstado!=='entregado'?'selected':''}>Pendiente</option><option value="entregado" ${s.caEstado==='entregado'?'selected':''}>Entregado</option></select></div>
         </div>
       </div>
       <div><label class="text-sm font-medium">Notas (opcional)</label><input id="ca_notas" value="${(s.notas||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-      <div class="bg-clay-50 rounded-xl p-4 flex justify-between items-center"><span class="font-semibold">Total</span><span id="ca_total" class="text-xl font-bold text-clay-800">${fmt(s.items.reduce((a,i)=>a+i.cantidad*i.precio,0))}</span></div>
+      <div class="bg-clay-50 rounded-xl p-4 flex justify-between items-center"><span class="font-semibold">Total</span><span id="ca_total" class="text-xl font-bold text-clay-800">${fmt(s.items.reduce((a,i)=>a+lineTotal(i),0))}</span></div>
     </div>
     <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
       <div>${s.id?`<button onclick="deleteCASale('${s.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
@@ -6538,17 +6716,20 @@ function syncCASale(){
   if(g('ca_docnum')) EDITCA.docNumero=g('ca_docnum').value;
   if(g('ca_metodo')) EDITCA.caMetodo=g('ca_metodo').value;
   if(g('ca_currier')) EDITCA.caCurrier=g('ca_currier').value.trim();
+  if(g('ca_seguimiento')) EDITCA.caSeguimiento=g('ca_seguimiento').value.trim();
   if(g('ca_estado')) EDITCA.caEstado=g('ca_estado').value;
   if(g('ca_notas')) EDITCA.notas=g('ca_notas').value;
 }
-function onCAMetodo(v){ const w=document.getElementById('ca_currier_wrap'); if(w) w.classList.toggle('hidden', v!=='currier'); }
+function onCAMetodo(v){ const esC=v==='currier'; const w=document.getElementById('ca_currier_wrap'); if(w) w.classList.toggle('hidden', !esC); const sw=document.getElementById('ca_seguimiento_wrap'); if(sw) sw.classList.toggle('hidden', !esC); }
 function onCASaleProd(ix,pid){ const p=productById(pid); EDITCA.items[ix].productId=pid; EDITCA.items[ix].precio=p.precioRef; refreshCASaleItems(); }
-function onCASaleQty(ix,v){ EDITCA.items[ix].cantidad=Math.max(1,+v||1); updateCASaleTotal(); refreshCAWarns(); }
-function onCASalePrice(ix,v){ EDITCA.items[ix].precio=+v||0; updateCASaleTotal(); }
-function addCASaleItem(){ syncCASale(); const p=DB.products[0]; EDITCA.items.push({productId:p.id,cantidad:1,precio:p.precioRef}); refreshCASaleItems(); }
+function onCASaleQty(ix,v){ EDITCA.items[ix].cantidad=Math.max(1,+v||1); updateCASaleLineSub(ix); updateCASaleTotal(); refreshCAWarns(); }
+function onCASalePrice(ix,v){ EDITCA.items[ix].precio=+v||0; updateCASaleLineSub(ix); updateCASaleTotal(); }
+function onCASaleDesc(ix,v){ let d=+v||0; d=Math.max(0,Math.min(100,d)); EDITCA.items[ix].descuento=d; updateCASaleLineSub(ix); updateCASaleTotal(); }
+function updateCASaleLineSub(ix){ const el=document.getElementById('ca_sub_'+ix); if(el) el.innerHTML=caLineSubHtml(EDITCA.items[ix]); }
+function addCASaleItem(){ syncCASale(); const p=DB.products[0]; EDITCA.items.push({productId:p.id,cantidad:1,precio:p.precioRef,descuento:0}); refreshCASaleItems(); }
 function removeCASaleItem(ix){ if(EDITCA.items.length<=1)return; syncCASale(); EDITCA.items.splice(ix,1); refreshCASaleItems(); }
 function refreshCASaleItems(){ const el=document.getElementById('ca_items'); if(el) el.innerHTML=EDITCA.items.map((it,ix)=>caSaleItemRow(it,ix)).join(''); updateCASaleTotal(); }
-function updateCASaleTotal(){ const el=document.getElementById('ca_total'); if(el) el.textContent=fmt(EDITCA.items.reduce((a,i)=>a+i.cantidad*i.precio,0)); }
+function updateCASaleTotal(){ const el=document.getElementById('ca_total'); if(el) el.textContent=fmt(EDITCA.items.reduce((a,i)=>a+lineTotal(i),0)); }
 function saveCASale(){
   syncCASale();
   if(!EDITCA.clienteNombre){ alert('Escribe el nombre del cliente'); return; }
@@ -6567,7 +6748,8 @@ function saveCASale(){
   EDITCA.fechaEntrega=EDITCA.fechaEntrega||EDITCA.fecha;
   EDITCA.estadoDespacho = EDITCA.caEstado==='entregado'?'entregado':'pendiente';
   EDITCA.courier = EDITCA.caMetodo==='currier'?(EDITCA.caCurrier||'Currier'):'';
-  EDITCA.items = items.map(i=>({productId:i.productId,cantidad:+i.cantidad,precio:+i.precio,descripcion:productNameCliente(productById(i.productId))}));
+  if(EDITCA.caMetodo!=='currier'){ delete EDITCA.caSeguimiento; }
+  EDITCA.items = items.map(i=>({productId:i.productId,cantidad:+i.cantidad,precio:+i.precio,descuento:+i.descuento||0,descripcion:productNameCliente(productById(i.productId))}));
   if(EDITCA.caEstado==='entregado'){ if(!EDITCA.entregadoAt) EDITCA.entregadoAt=Date.now(); EDITCA.items.forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else { delete EDITCA.entregadoAt; EDITCA.items.forEach(i=>{ delete i.entregadoQty; }); }
   if(EDITCA.id){ const ix=DB.sales.findIndex(x=>x.id===EDITCA.id); DB.sales[ix]=EDITCA; }
@@ -6910,13 +7092,13 @@ function descargarRespaldoExcel(){
   add('Ventas',(DB.sales||[]).map(s=>{const c=clientById(s.clienteId);return {
     'Fecha':s.fecha||'','Entrega':s.fechaEntrega||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Zona':zonaOf(s),'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Dirección':s.direccion||'',
     'Productos':itemsStr(s.items),'Subtotal':saleSubtotal(s),'Envío':s.costoEnvio||0,'Total':saleTotal(s),
-    'Pago':s.pagado?'Pagado':'Por cobrar','Cuenta':s.cuenta||'','Despacho':s.estadoDespacho||'','Tipo despacho':tipoDespachoOf(s),'Courier':s.courier||'',
+    'Pago':s.pagado?'Pagado':'Por cobrar','Cuenta':s.cuenta||'','Despacho':s.estadoDespacho||'','Tipo despacho':tipoDespachoOf(s),'Courier':s.courier||'','N° seguimiento':s.seguimiento||'',
     'Documento':docPlain(s),'N° doc':s.docNumero||''
   };}));
 
   add('Despachos',(DB.sales||[]).map(s=>{const c=clientById(s.clienteId);return {
     'Fecha entrega':s.fechaEntrega||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Estado':s.estadoDespacho||'','Tipo':tipoDespachoOf(s),
-    'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Dirección':s.direccion||'','Courier':s.courier||'','Costo envío':s.costoEnvio||0,'Productos':itemsStr(s.items)
+    'Ciudad':s.ciudad||'','Comuna':s.comuna||'','Dirección':s.direccion||'','Courier':s.courier||'','N° seguimiento':s.seguimiento||'','Costo envío':s.costoEnvio||0,'Productos':itemsStr(s.items)
   };}));
 
   add('Calendario',(DB.sales||[]).filter(s=>s.fechaEntrega).sort((a,b)=>(a.fechaEntrega||'').localeCompare(b.fechaEntrega||'')).map(s=>{const c=clientById(s.clienteId);return {
