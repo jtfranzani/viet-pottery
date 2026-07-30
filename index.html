@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-107';
+const APP_VERSION = '2026.07.09-113';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -513,6 +513,7 @@ async function bootData(){
   if(!DB.egresos) DB.egresos=[];
   if(!DB.transfers) DB.transfers=[];   // Transferencias central → Casa Augusta
   if(!DB.caReturns) DB.caReturns=[];   // Devoluciones que reingresan a Casa Augusta
+  if(!DB.prospectos) DB.prospectos=[]; // Prospectos de clientes (interesados en Casa Augusta)
   // Migración: distinguir el ORIGEN de la venta (dónde se generó) de la BODEGA (de dónde sale el stock).
   // Una venta es de Casa Augusta SOLO si se generó en ese punto (tipoDespacho==='CA'),
   // no por el solo hecho de descontar stock de Casa Augusta. Las ventas de Pedidos que usan
@@ -526,6 +527,16 @@ async function bootData(){
   if(!DB.counter) DB.counter={boleta:0,factura:0,oc:0,pres:0};
   if(typeof DB.counter.oc!=='number') DB.counter.oc=0;
   if(typeof DB.counter.pres!=='number') DB.counter.pres=0;
+  if(typeof DB.counter.pedido!=='number') DB.counter.pedido=0;
+  // El N° de pedido ahora es manual y opcional (se escribe a mano, p. ej. para currier).
+  // Limpieza única: borra los N° de pedido que se habían asignado automáticamente (PED-0001…),
+  // para que el campo quede vacío y cada quien anote el número que quiera.
+  if(!DB.migPedidoManual){
+    let migp=false;
+    (DB.sales||[]).forEach(s=>{ if(typeof s.pedidoNum==='string' && /^PED-\d+$/.test(s.pedidoNum)){ s.pedidoNum=''; migp=true; } });
+    DB.migPedidoManual=true;
+    if(migp||true) save();
+  }
   // Migración: mover fotos de entrega antiguas (guardadas dentro del documento principal) a documentos aparte,
   // para liberar espacio y evitar que se supere el límite de tamaño de la base.
   if(window.FB && FB.saveBlob){
@@ -639,6 +650,7 @@ const NAV = [
   {id:'ca_stock',  label:'Stock', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'ca_entregas', label:'Entregas', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
   {id:'ca_devoluciones', label:'Devoluciones', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8'},
+  {id:'ca_prospectos', label:'Potencial Cliente', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM19 8v6M22 11h-6'},
   {id:'ventas',    label:'Pedidos',   grupo:'Ventas', roles:['admin','vendedor'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
   {id:'presupuestos', label:'Presupuestos', grupo:'Ventas', roles:['admin','vendedor'], icon:'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6'},
   {id:'ofertas',   label:'Ofertas',   grupo:'Ventas', roles:['admin','vendedor'], icon:'M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01'},
@@ -828,9 +840,10 @@ function generarEtiquetaDespacho(id){
   } else {
     const tp=tipoDespachoOf(s);
     if(tp==='Currier'){ modo='ENVÍO POR CURRIER'; courier=(s.courier||'').trim(); tracking=(s.seguimiento||'').trim(); }
+    else if(tp==='Retiro'){ modo='RETIRO EN TIENDA'; }
     else { modo='DESPACHO A DOMICILIO'; }
   }
-  const ref=s.docNumero?((s.docTipo==='factura'?'Factura ':'Boleta ')+s.docNumero):('N° '+String(s.id).slice(-6).toUpperCase());
+  const ref=s.pedidoNum?('Pedido '+s.pedidoNum):(s.docNumero?((s.docTipo==='factura'?'Factura ':'Boleta ')+s.docNumero):('N° '+String(s.id).slice(-6).toUpperCase()));
   const unidades=s.items.reduce((a,i)=>a+(i.cantidad||0),0);
 
   const { jsPDF }=window.jspdf;
@@ -941,11 +954,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Casa Augusta · Devoluciones'};
+  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Casa Augusta · Devoluciones',ca_prospectos:'Casa Augusta · Potencial Cliente'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios,ca_ventas:renderCAVentas,ca_stock:renderCAStock,ca_entregas:renderCAEntregas,ca_devoluciones:renderCADevoluciones})[view]();
+  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios,ca_ventas:renderCAVentas,ca_stock:renderCAStock,ca_entregas:renderCAEntregas,ca_devoluciones:renderCADevoluciones,ca_prospectos:renderCAProspectos})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
@@ -959,6 +972,7 @@ function headerAction(view){
   if(view==='plancuentas' && SESSION.rol==='admin') return btn('openCuenta()','Nueva cuenta');
   if(view==='tareas') return btn('openTask()','Nueva tarea');
   if(view==='ca_ventas') return btn('openCASale()','Registrar venta');
+  if(view==='ca_prospectos') return btn('openProspecto()','Nuevo potencial cliente');
   if(view==='ca_stock') return btn('openCATransfer()','Transferir desde central');
   if(view==='ca_devoluciones') return btn('openCADevolucion()','Registrar devolución');
   return '';
@@ -1958,7 +1972,7 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -1974,7 +1988,7 @@ function renderVentas(){
       ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<div class="vcard bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
-            <div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
+            ${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
             <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
           </div>
           <div class="text-right shrink-0">
@@ -2065,6 +2079,7 @@ function renderSaleModal(){
       </div>
 
       <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="text-sm font-medium">N° de pedido <span class="text-clay-400 font-normal">(opcional)</span></label><input id="s_pedidonum" value="${s.pedidoNum||''}" placeholder="Ej: 1234 (currier)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><div class="text-[11px] text-clay-400 mt-1">Escríbelo a mano si lo necesitas, p. ej. para el currier.</div></div>
         <div><label class="text-sm font-medium">Cuenta / pago</label><select id="s_cuenta" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">${ACCOUNTS.map(a=>`<option ${a===s.cuenta?'selected':''}>${a}</option>`).join('')}</select></div>
         <div><label class="text-sm font-medium">Estado de pago</label><select id="s_pagado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="false" ${!s.pagado?'selected':''}>Por cobrar</option><option value="true" ${s.pagado?'selected':''}>Pagado</option></select></div>
         <div><label class="text-sm font-medium">Documento</label>
@@ -2080,20 +2095,21 @@ function renderSaleModal(){
             <button type="button" onclick="setSaleTipoDesp('Viet')" id="td_viet" class="px-3 py-1 rounded-md text-xs font-medium ${(s.tipoDespacho||'Viet')==='Viet'?'bg-sage-500 text-white':'text-clay-600'}">Despacho Viet</button>
             <button type="button" onclick="setSaleTipoDesp('Fran')" id="td_fran" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Fran'?'bg-blue-500 text-white':'text-clay-600'}">Despacho Fran</button>
             <button type="button" onclick="setSaleTipoDesp('Currier')" id="td_currier" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Currier'?'bg-amber-500 text-white':'text-clay-600'}">Currier</button>
+            <button type="button" onclick="setSaleTipoDesp('Retiro')" id="td_retiro" class="px-3 py-1 rounded-md text-xs font-medium ${s.tipoDespacho==='Retiro'?'bg-clay-600 text-white':'text-clay-600'}">Retiro en Tienda</button>
           </div>
         </div>
         <div class="grid sm:grid-cols-3 gap-3">
-          <div><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" placeholder="Ciudad" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
-          <div><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div id="s_ciudad_wrap" class="${s.tipoDespacho==='Retiro'?'hidden':''}"><label class="text-xs text-clay-500">Ciudad</label><input id="s_ciudad" list="cityList" value="${(s.ciudad||'').replace(/"/g,'&quot;')}" placeholder="Ciudad" autocomplete="off" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><datalist id="cityList">${CITIES.map(c=>`<option value="${c}">`).join('')}</datalist></div>
+          <div id="s_comuna_wrap" class="${s.tipoDespacho==='Retiro'?'hidden':''}"><label class="text-xs text-clay-500">Comuna</label><input id="s_comuna" value="${(s.comuna||'').replace(/"/g,'&quot;')}" placeholder="Comuna" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div id="s_dir_wrap" class="${s.tipoDespacho==='Retiro'?'hidden':''}"><label class="text-xs text-clay-500">Dirección (calle, número)</label><input id="s_dir" value="${(s.direccion||'').replace(/"/g,'&quot;')}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div><label class="text-xs text-clay-500">Estado</label><select id="s_disp" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="pendiente" ${s.estadoDespacho==='pendiente'?'selected':''}>Pendiente</option><option value="en_camino" ${s.estadoDespacho==='en_camino'?'selected':''}>En camino</option><option value="entregado" ${s.estadoDespacho==='entregado'?'selected':''}>Entregado</option></select></div>
-          <div id="s_courier_wrap" class="${s.tipoDespacho==='Currier'?'hidden':''}"><label class="text-xs text-clay-500">Courier</label><select id="s_courier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="" ${!s.courier?'selected':''}>Sin asignar</option><option value="Viet" ${s.courier==='Viet'?'selected':''}>Viet</option><option value="Fran" ${s.courier==='Fran'?'selected':''}>Fran</option><option value="Externo" ${s.courier==='Externo'?'selected':''}>Externo</option>${s.courier&&!['Viet','Fran','Externo'].includes(s.courier)?`<option value="${s.courier.replace(/"/g,'&quot;')}" selected>${s.courier}</option>`:''}</select></div>
+          <div id="s_courier_wrap" class="${(s.tipoDespacho==='Currier'||s.tipoDespacho==='Retiro')?'hidden':''}"><label class="text-xs text-clay-500">Courier</label><select id="s_courier" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white"><option value="" ${!s.courier?'selected':''}>Sin asignar</option><option value="Viet" ${s.courier==='Viet'?'selected':''}>Viet</option><option value="Fran" ${s.courier==='Fran'?'selected':''}>Fran</option><option value="Externo" ${s.courier==='Externo'?'selected':''}>Externo</option>${s.courier&&!['Viet','Fran','Externo'].includes(s.courier)?`<option value="${s.courier.replace(/"/g,'&quot;')}" selected>${s.courier}</option>`:''}</select></div>
           <div id="s_currier_nombre_wrap" class="${s.tipoDespacho==='Currier'?'':'hidden'}"><label class="text-xs text-clay-500">Currier (empresa/persona)</label><input id="s_currier_nombre" value="${s.tipoDespacho==='Currier'?(s.courier||'').replace(/"/g,'&quot;'):''}" placeholder="Ej: Starken, Chilexpress…" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
           <div id="s_seguimiento_wrap" class="${s.tipoDespacho==='Currier'?'':'hidden'}"><label class="text-xs text-clay-500">N° de seguimiento (opcional)</label><input id="s_seguimiento" value="${(s.seguimiento||'').replace(/"/g,'&quot;')}" placeholder="Tracking / orden de flete" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-          <div id="s_auto_wrap" class="${s.tipoDespacho==='Currier'?'hidden':''}"><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
+          <div id="s_envio_wrap" class="${s.tipoDespacho==='Retiro'?'hidden':''}"><label class="text-xs text-clay-500">Costo envío</label><input id="s_envio" type="text" inputmode="numeric" value="${milesIn(s.costoEnvio)}" oninput="onSaleEnvio(moneyInput(this))" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+          <div id="s_auto_wrap" class="${(s.tipoDespacho==='Currier'||s.tipoDespacho==='Retiro')?'hidden':''}"><label class="text-xs text-clay-500">Auto de despacho</label><select id="s_auto" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="" ${!s.auto?'selected':''}>Común (sin asignar)</option>${AUTOS.map(a=>`<option value="${a}" ${s.auto===a?'selected':''}>${a}</option>`).join('')}</select></div>
         </div>
-        <div id="s_desp_hint" class="text-xs text-clay-400 mt-2">${s.tipoDespacho==='Currier'?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.'}</div>
+        <div id="s_desp_hint" class="text-xs text-clay-400 mt-2">${s.tipoDespacho==='Retiro'?'El cliente retira su pedido en la tienda. No requiere dirección, courier ni costo de envío. Cuando lo retire, márcalo como <b>Entregado</b>.':(s.tipoDespacho==='Currier'?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.')}</div>
       </div>
       <div><label class="text-sm font-medium">Notas</label><input id="s_notas" value="${s.notas}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
       <div class="bg-clay-50 rounded-xl p-4">
@@ -2161,6 +2177,7 @@ function syncSaleFromForm(){
   if(g('s_pagado')) EDIT.pagado=g('s_pagado').value==='true';
   if(g('s_doc')) EDIT.docTipo=g('s_doc').value;
   if(g('s_docnum')) EDIT.docNumero=g('s_docnum').value;
+  if(g('s_pedidonum')) EDIT.pedidoNum=g('s_pedidonum').value.trim();
   if(g('s_ciudad')) EDIT.ciudad=g('s_ciudad').value.trim();
   if(g('s_comuna')) EDIT.comuna=g('s_comuna').value.trim();
   if(g('s_dir')) EDIT.direccion=g('s_dir').value;
@@ -2169,12 +2186,16 @@ function syncSaleFromForm(){
     if(g('s_currier_nombre')) EDIT.courier=g('s_currier_nombre').value.trim();
     if(g('s_seguimiento')) EDIT.seguimiento=g('s_seguimiento').value.trim();
     EDIT.auto='';
+  } else if(EDIT.tipoDespacho==='Retiro'){
+    // Retiro en tienda: sin courier, auto, seguimiento, dirección ni costo de envío
+    EDIT.courier=''; EDIT.auto=''; EDIT.ciudad=''; EDIT.comuna=''; EDIT.direccion=''; EDIT.costoEnvio=0;
+    if('seguimiento' in EDIT) delete EDIT.seguimiento;
   } else {
     if(g('s_courier')) EDIT.courier=g('s_courier').value;
     if(g('s_auto')) EDIT.auto=g('s_auto').value;
     if('seguimiento' in EDIT) delete EDIT.seguimiento;
   }
-  if(g('s_envio')) EDIT.costoEnvio=milesParse(g('s_envio').value);
+  if(EDIT.tipoDespacho!=='Retiro' && g('s_envio')) EDIT.costoEnvio=milesParse(g('s_envio').value);
   if(g('s_notas')) EDIT.notas=g('s_notas').value;
 }
 // Busca un cliente por nombre (sin distinguir mayúsculas) o lo crea automáticamente.
@@ -2206,19 +2227,26 @@ function setSaleTipoDesp(t){
   if(EDIT.tipoDespacho==='Currier' && gcn) EDIT.courier=gcn.value.trim();
   else if(gc) EDIT.courier=gc.value;
   EDIT.tipoDespacho=t;
-  const viet=document.getElementById('td_viet'), fran=document.getElementById('td_fran'), cur=document.getElementById('td_currier');
+  const viet=document.getElementById('td_viet'), fran=document.getElementById('td_fran'), cur=document.getElementById('td_currier'), ret=document.getElementById('td_retiro');
   if(viet) viet.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Viet'?'bg-sage-500 text-white':'text-clay-600');
   if(fran) fran.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Fran'?'bg-blue-500 text-white':'text-clay-600');
   if(cur) cur.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Currier'?'bg-amber-500 text-white':'text-clay-600');
-  const esCurrier=t==='Currier';
+  if(ret) ret.className='px-3 py-1 rounded-md text-xs font-medium '+(t==='Retiro'?'bg-clay-600 text-white':'text-clay-600');
+  const esCurrier=t==='Currier', esRetiro=t==='Retiro';
   const tog=(id,hide)=>{const el=document.getElementById(id); if(el) el.classList.toggle('hidden',hide);};
-  tog('s_courier_wrap',esCurrier);
-  tog('s_auto_wrap',esCurrier);
+  tog('s_courier_wrap',esCurrier||esRetiro);
+  tog('s_auto_wrap',esCurrier||esRetiro);
   tog('s_currier_nombre_wrap',!esCurrier);
   tog('s_seguimiento_wrap',!esCurrier);
+  // Retiro en tienda: sin dirección ni costo de envío
+  tog('s_ciudad_wrap',esRetiro);
+  tog('s_comuna_wrap',esRetiro);
+  tog('s_dir_wrap',esRetiro);
+  tog('s_envio_wrap',esRetiro);
+  if(esRetiro){ const ev=document.getElementById('s_envio'); if(ev) ev.value='0'; EDIT.costoEnvio=0; updateSaleTotal(); }
   if(esCurrier && gcn && !gcn.value && EDIT.courier && !['Viet','Fran'].includes(EDIT.courier)) gcn.value=EDIT.courier;
   const hint=document.getElementById('s_desp_hint');
-  if(hint) hint.innerHTML=esCurrier?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.';
+  if(hint) hint.innerHTML=esRetiro?'El cliente retira su pedido en la tienda. No requiere dirección, courier ni costo de envío. Cuando lo retire, márcalo como <b>Entregado</b>.':(esCurrier?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.');
 }
 function setSaleBodega(t){
   if(!EDIT) return; EDIT.bodega = t==='CA' ? 'CA' : '';
@@ -2492,6 +2520,7 @@ function comprobanteHTML(s){
       <div style="background:#f3f6f1;border-radius:10px;padding:11px;margin-bottom:18px;">
         <table cellpadding="0" cellspacing="0" style="margin:0 auto;border-collapse:collapse;"><tr><td style="vertical-align:middle;padding:0;"><svg width="20" height="20" viewBox="0 0 20 20" style="display:block;"><circle cx="10" cy="10" r="10" fill="#5f7f4d"></circle><path d="M5.5 10.3l2.8 2.8 6-6.2" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></td><td style="vertical-align:middle;padding:0 0 0 8px;font-weight:600;font-size:14px;color:#3a5030;">¡Compra confirmada!</td></tr></table>
       </div>
+      ${s.pedidoNum?row('N° de pedido',`<b>${s.pedidoNum}</b>`):''}
       ${row('Cliente',`<b>${nombre}</b>`)}
       ${row('Fecha',s.fecha)}
       ${s.fechaEntrega?row('Entrega estimada',`<b>${s.fechaEntrega}</b>`):''}
@@ -2889,7 +2918,7 @@ function openSaleDetail(id, backFecha, backRes){
     <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
       ${backFecha?`<button onclick="openDiaEntregas('${backFecha}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al resumen del día</button>`:(backRes?`<button onclick="resBack('${backRes}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al detalle</button>`:'')}
       <div class="flex items-center justify-between">
-        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Detalle del pedido · ${s.fecha}</div></div>
+        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">${s.pedidoNum?`<span class="font-semibold text-clay-700">${s.pedidoNum}</span> · `:''}Detalle del pedido · ${s.fecha}</div></div>
         <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
       </div>
     </div>
@@ -2907,7 +2936,7 @@ function openSaleDetail(id, backFecha, backRes){
           <div class="flex flex-wrap gap-1.5">${s.perdido?pill('Perdido','red'):''}${payPill(s)}${dispPill(s)}${saleHayEntregaParcial(s)?pill('Entrega parcial','blue'):''}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?pill('Sin doc','gray'):pill(saleDocText(s),'green'))}${autoBadge(s.auto)}</div>
           ${s.perdido?`<div class="text-xs text-red-600 mt-2 bg-red-50 rounded-lg px-2.5 py-1.5">Pedido perdido${s.perdidoAt?' el '+new Date(s.perdidoAt).toLocaleDateString('es-CL'):''}${s.perdidoMotivo?' · '+s.perdidoMotivo:''}</div>`:''}
           ${saleHayEntregaParcial(s)?`<div class="text-xs text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⏳ <b>Pendiente de entregar:</b> ${pendientesTexto(s)}${s.fechaEntregaReagendada?`<br>📅 Nueva entrega agendada para <b>${fechaAmig(s.fechaEntrega)}</b>`:''}</div>`:''}
-          <div class="text-xs text-clay-500 mt-2">Despacho ${tp}${s.auto?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
+          <div class="text-xs text-clay-500 mt-2">${tp==='Retiro'?'🏪 Retiro en tienda':('Despacho '+tp)}${(tp!=='Retiro'&&s.auto)?' · '+s.auto:''}${s.fechaEntrega?' · entrega '+s.fechaEntrega:''}${s.estadoDespacho==='entregado'&&s.entregadoAt?' · '+horaHM(s.entregadoAt)+' hrs':''}</div>
           <div class="flex flex-wrap gap-2 mt-2">
             <button onclick="toggleEntregaEstado('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg ${s.estadoDespacho==='entregado'?'bg-clay-100 text-clay-700 hover:bg-clay-200':'bg-sage-100 text-sage-700 hover:bg-sage-200'}">${s.estadoDespacho==='entregado'?'↩️ Marcar como pendiente':(saleHayEntregaParcial(s)?'✓ Entregar lo pendiente':'✓ Marcar como entregado')}</button>
             ${saleHayEntregaParcial(s)?`<button onclick="reagendarPendiente('${s.id}','${backFecha||''}')" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">📅 Agendar entrega del resto</button>`:''}
@@ -2918,7 +2947,7 @@ function openSaleDetail(id, backFecha, backRes){
       <div class="border border-clay-100 rounded-xl overflow-hidden">
         <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
         <div class="divide-y divide-clay-100">
-          ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');const pr=productById(i.productId);const costoLinea=(pr?pr.costo:0)*i.cantidad;const ventaLinea=lineTotal(i);return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}${estado?'<br>'+estado:''}</span><span class="text-right whitespace-nowrap"><span class="font-medium">${fmt(ventaLinea)}</span>${verMargen?`<br><span class="text-[11px] text-clay-400">costo ${fmt(costoLinea)}</span><br><span class="text-[11px] text-sage-600 font-medium">margen ${fmt(ventaLinea-costoLinea)}</span>`:''}</span></div>`;}).join('')}
+          ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');const pr=productById(i.productId);const costoLinea=(pr?pr.costo:0)*i.cantidad;const ventaLinea=lineTotal(i);const unit=i.cantidad>0?Math.round(ventaLinea/i.cantidad):ventaLinea;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}<br><span class="text-[11px] text-clay-400">${fmt(unit)} c/u${dt>0?' (con descuento)':''}</span>${estado?'<br>'+estado:''}</span><span class="text-right whitespace-nowrap"><span class="font-medium">${fmt(ventaLinea)}</span>${verMargen?`<br><span class="text-[11px] text-clay-400">costo ${fmt(costoLinea)}</span><br><span class="text-[11px] text-sage-600 font-medium">margen ${fmt(ventaLinea-costoLinea)}</span>`:''}</span></div>`;}).join('')}
         </div>
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
           <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
@@ -2992,7 +3021,7 @@ function moverAPedidos(id){
 }
 
 /* ===================== DESPACHOS ===================== */
-const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':(s.tipoDespacho==='Currier'?'Currier':'Viet'));
+const tipoDespachoOf = s => (s.tipoDespacho==='Fran'?'Fran':(s.tipoDespacho==='Currier'?'Currier':(s.tipoDespacho==='Retiro'?'Retiro':'Viet')));
 let DESP_TIPO='Viet';
 let DESP_COL='pendiente'; // solo afecta la vista móvil: qué columna se muestra
 let DESP_SHOW={}; // columnas expandidas (ver todos)
@@ -3013,6 +3042,7 @@ function renderDespachos(){
     ${tab('Viet','Despachos Viet',activos('Viet'))}
     ${tab('Fran','Despachos Fran',activos('Fran'))}
     ${tab('Currier','Currier',activos('Currier'))}
+    ${tab('Retiro','Retiro en tienda',activos('Retiro'))}
     ${tab('Todos','Todos',null)}
     <button onclick="openModoReparto(todayISO())" class="sm:ml-auto bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5">🚚 Modo reparto</button>
   </div>
@@ -3037,11 +3067,11 @@ function renderDespachos(){
           return `<div class="border ${atrasado?'border-red-300 ring-1 ring-red-200 bg-red-50/40':'border-clay-100'} rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
           ${atrasado?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-red-700 bg-red-100 rounded-lg px-2 py-1 mb-2">⚠️ Atrasado ${diasAtr} día${diasAtr!==1?'s':''} · debía entregarse el ${s.fechaEntrega}</div>`:esHoy?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-lg px-2 py-1 mb-2">📦 Entrega programada para hoy</div>`:''}
           <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs ${atrasado?'text-red-600 font-semibold':'text-clay-400'} whitespace-nowrap text-right">${s.fechaEntrega?fechaAmig(s.fechaEntrega):s.fecha}</div></div>
-          <div class="mt-1 flex flex-wrap gap-1">${pill(tp==='Currier'?'Currier':('Despacho '+tp), tp==='Fran'?'blue':(tp==='Currier'?'amber':'green'))}${tp==='Currier'?'':autoBadge(s.auto)}${tp==='Currier'&&s.seguimiento?`<span class="badge bg-clay-100 text-clay-600">📦 ${s.seguimiento}</span>`:''}</div>
-          <div class="text-xs text-clay-500 mt-1.5">${[s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>'}</div>
+          <div class="mt-1 flex flex-wrap gap-1">${pill(tp==='Currier'?'Currier':(tp==='Retiro'?'Retiro en tienda':('Despacho '+tp)), tp==='Fran'?'blue':(tp==='Currier'?'amber':(tp==='Retiro'?'clay':'green')))}${(tp==='Currier'||tp==='Retiro')?'':autoBadge(s.auto)}${tp==='Currier'&&s.seguimiento?`<span class="badge bg-clay-100 text-clay-600">📦 ${s.seguimiento}</span>`:''}</div>
+          <div class="text-xs text-clay-500 mt-1.5">${tp==='Retiro'?'🏪 Retiro en tienda':([s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>')}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           ${saleHayEntregaParcial(s)?`<div class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1.5 flex items-start gap-1">⏳<span>Entrega parcial — pendiente: ${pendientesTexto(s)}</span></div>`:''}
-          ${tp==='Currier'?'':`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>`}
+          ${(tp==='Currier'||tp==='Retiro')?'':`<div class="flex items-center gap-2 mt-2"><span class="text-[11px] text-clay-400">Auto:</span>${autoSelectHTML(s, `asignarAutoDespacho('${s.id}',this.value)`)}</div>`}
           ${tieneFotoEntrega(s)?`<div class="mt-2 text-[11px] text-sage-700 font-medium flex items-center gap-1">📷 Con foto de respaldo</div>`:''}
           <div class="flex items-center justify-between mt-2"><span class="text-xs ${s.courier?'':'text-clay-300'}">${s.courier||'sin courier'}</span>${key==='pendiente'?(saleHayEntregaParcial(s)?`<span class="flex items-center gap-1.5"><button onclick="event.stopPropagation();deshacerEntregaParcial('${s.id}','')" class="text-xs font-medium text-clay-600 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">↩️</button><button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Entregar resto ✓</button></span>`:`<button onclick="event.stopPropagation();advanceDispatch('${s.id}')" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2 py-1 rounded-lg">Marcar en camino →</button>`):key==='en_camino'?`<button onclick="event.stopPropagation();openEntregaSelector('${s.id}','')" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-1 rounded-lg">Marcar entregado ✓</button>`:pill('OK','green')}</div>
           <div class="mt-2">
@@ -3072,8 +3102,8 @@ function repartoAvisar(id){
   mostrarRecordatorio(msg, telWa(c&&c.telefono?c.telefono:''), '📲 Avisar entrega');
 }
 function repartoVentas(fecha){
-  // Los envíos por currier son externos: no van en la hoja de ruta/manejo del vehículo.
-  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha && s.origen!=='CA' && tipoDespachoOf(s)!=='Currier')
+  // Los envíos por currier son externos y los retiros en tienda no se despachan: no van en la hoja de ruta/manejo del vehículo.
+  return DB.sales.filter(s=>!s.perdido && s.fechaEntrega===fecha && s.origen!=='CA' && tipoDespachoOf(s)!=='Currier' && tipoDespachoOf(s)!=='Retiro')
     .sort((a,b)=>(a.ciudad||'').localeCompare(b.ciudad||'')||(a.comuna||'').localeCompare(b.comuna||''));
 }
 function abrirRutaMaps(fecha){
@@ -6539,7 +6569,7 @@ function renderCAVentas(){
       </tr></thead><tbody>
       ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
-        <td class="px-4 py-3 font-medium">${c?c.nombre:(s.clienteNombre||'—')}</td>
+        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}</td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
@@ -6551,7 +6581,7 @@ function renderCAVentas(){
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
       ${rows.map(s=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0"><div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}</div></div>
+          <div class="min-w-0">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}</div></div>
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
@@ -6573,7 +6603,7 @@ function openCASaleDetail(id){
   modal(`
     <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
       <div class="flex items-center justify-between">
-        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">Venta Casa Augusta · ${s.fecha}</div></div>
+        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">${s.pedidoNum?`<span class="font-semibold text-clay-700">${s.pedidoNum}</span> · `:''}Venta Casa Augusta · ${s.fecha}</div></div>
         <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
       </div>
     </div>
@@ -6593,7 +6623,7 @@ function openCASaleDetail(id){
       <div class="border border-clay-100 rounded-xl overflow-hidden">
         <div class="px-4 py-2.5 bg-clay-50 text-xs uppercase tracking-wide text-clay-400">Productos</div>
         <div class="divide-y divide-clay-100">
-          ${s.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabelCliente(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
+          ${s.items.map(i=>{const dt=i.descuento||0;const ventaLinea=lineTotal(i);const unit=i.cantidad>0?Math.round(ventaLinea/i.cantidad):ventaLinea;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabelCliente(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}<br><span class="text-[11px] text-clay-400">${fmt(unit)} c/u${dt>0?' (con descuento)':''}</span></span><span class="font-medium whitespace-nowrap">${fmt(ventaLinea)}</span></div>`;}).join('')}
         </div>
         <div class="px-4 py-3 bg-clay-50 text-sm">
           <div class="flex justify-between font-bold text-clay-800"><span>Total</span><span>${fmt(total)}</span></div>
@@ -6682,6 +6712,7 @@ function renderCASaleModal(){
         </div>
         <div id="ca_items" class="space-y-2">${s.items.map((it,ix)=>caSaleItemRow(it,ix)).join('')}</div>
       </div>
+      <div><label class="text-sm font-medium">N° de pedido <span class="text-clay-400 font-normal">(opcional)</span></label><input id="ca_pedidonum" value="${s.pedidoNum||''}" placeholder="Ej: 1234 (currier)" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><div class="text-[11px] text-clay-400 mt-1">Escríbelo a mano si lo necesitas, p. ej. para el currier.</div></div>
       <div class="grid sm:grid-cols-2 gap-3">
         <div><label class="text-sm font-medium">Estado de pago</label><select id="ca_pagado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"><option value="false" ${!s.pagado?'selected':''}>Por cobrar</option><option value="true" ${s.pagado?'selected':''}>Pagado</option></select></div>
         <div><label class="text-sm font-medium">Documento</label><div class="flex gap-2"><select id="ca_doc" class="border border-clay-200 rounded-xl px-2 py-2 mt-1 flex-1"><option value="pendiente" ${s.docTipo==='pendiente'?'selected':''}>Pendiente</option><option value="boleta" ${s.docTipo==='boleta'?'selected':''}>Boleta</option><option value="factura" ${s.docTipo==='factura'?'selected':''}>Factura</option><option value="no_aplica" ${s.docTipo==='no_aplica'?'selected':''}>No aplica</option></select><input id="ca_docnum" value="${s.docNumero||''}" placeholder="N°" class="w-16 border border-clay-200 rounded-xl px-2 py-2 mt-1"></div></div>
@@ -6714,6 +6745,7 @@ function syncCASale(){
   if(g('ca_pagado')) EDITCA.pagado=g('ca_pagado').value==='true';
   if(g('ca_doc')) EDITCA.docTipo=g('ca_doc').value;
   if(g('ca_docnum')) EDITCA.docNumero=g('ca_docnum').value;
+  if(g('ca_pedidonum')) EDITCA.pedidoNum=g('ca_pedidonum').value.trim();
   if(g('ca_metodo')) EDITCA.caMetodo=g('ca_metodo').value;
   if(g('ca_currier')) EDITCA.caCurrier=g('ca_currier').value.trim();
   if(g('ca_seguimiento')) EDITCA.caSeguimiento=g('ca_seguimiento').value.trim();
@@ -6969,6 +7001,101 @@ function saveCADevolucion(){
   DB.caReturns.push({id:uid('dev'), fecha:EDITCR.fecha||todayISO(), clienteNombre:EDITCR.clienteNombre||'', items:items.map(i=>({productId:i.productId,cantidad:+i.cantidad})), motivo:EDITCR.motivo||'', creadoPor:(SESSION.nombre||SESSION.email)});
   save(); closeModal(); go('ca_devoluciones');
   toastInfo('✅ Devolución registrada · stock reingresado a Casa Augusta');
+}
+
+/* ===================== PROSPECTOS DE CLIENTES (Casa Augusta) ===================== */
+// Registro simple de personas interesadas en maceteros: nombre, teléfono, correo y lo que les interesa (pedido).
+let EDITPR=null;
+let PROSP_FILTRO='todos';
+const PROSP_ESTADOS=[['nuevo','Nuevo','amber'],['contactado','Contactado','blue'],['convertido','Convertido','green'],['descartado','Descartado','gray']];
+function prospEstadoPill(e){ const f=PROSP_ESTADOS.find(x=>x[0]===e)||PROSP_ESTADOS[0]; return pill(f[1],f[2]); }
+function setProspFiltro(v){ PROSP_FILTRO=v; renderCAProspectos(); }
+function renderCAProspectos(){
+  const v=document.getElementById('view');
+  const all=[...(DB.prospectos||[])].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||(b.id||'').localeCompare(a.id||''));
+  const cnt=k=>all.filter(p=>(p.estado||'nuevo')===k).length;
+  const rows=PROSP_FILTRO==='todos'?all:all.filter(p=>(p.estado||'nuevo')===PROSP_FILTRO);
+  const chip=(k,label,n)=>`<button onclick="setProspFiltro('${k}')" class="px-3 py-1.5 rounded-lg text-xs font-medium ${PROSP_FILTRO===k?'bg-clay-700 text-white':'bg-white border border-clay-200 text-clay-600 hover:bg-clay-50'}">${label}${n!=null?` <span class="text-[11px] ${PROSP_FILTRO===k?'bg-white/20':'bg-clay-100 text-clay-600'} px-1.5 rounded-full">${n}</span>`:''}</button>`;
+  v.innerHTML=`
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Potenciales clientes', all.length, 'registrados','')}
+    ${statCard('Nuevos', cnt('nuevo'), 'por contactar','text-amber-600')}
+    ${statCard('En seguimiento', cnt('contactado'), 'contactados','text-blue-600')}
+    ${statCard('Convertidos', cnt('convertido'), 'ya compraron','text-sage-700')}
+  </div>
+  <div class="flex flex-wrap gap-2 mb-4">${chip('todos','Todos',all.length)}${PROSP_ESTADOS.map(e=>chip(e[0],e[1],cnt(e[0]))).join('')}</div>
+  ${rows.length? `<div class="card overflow-hidden">
+    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm min-w-[760px]">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+        <th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Le interesa (pedido)</th><th class="text-left px-4 py-3">Estado</th><th class="px-4 py-3"></th>
+      </tr></thead><tbody>
+      ${rows.map(p=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openProspecto('${p.id}')">
+        <td class="px-4 py-3 whitespace-nowrap text-clay-500">${p.fecha||'—'}</td>
+        <td class="px-4 py-3"><div class="font-medium">${(p.nombre||'—').replace(/</g,'&lt;')}</div><div class="text-xs text-clay-500 mt-0.5">${[p.telefono?'📞 '+p.telefono:'',p.email?'✉️ '+p.email:''].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin contacto</span>'}</div></td>
+        <td class="px-4 py-3 text-clay-700">${p.interes?String(p.interes).replace(/</g,'&lt;'):'<span class="text-clay-300">—</span>'}${p.notas?`<div class="text-xs text-clay-400 mt-0.5">📝 ${String(p.notas).replace(/</g,'&lt;')}</div>`:''}</td>
+        <td class="px-4 py-3">${prospEstadoPill(p.estado||'nuevo')}</td>
+        <td class="px-4 py-3 text-right whitespace-nowrap"><div class="inline-flex items-center gap-1.5">${p.telefono?`<a href="https://wa.me/${telWa(p.telefono)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2.5 py-1.5 rounded-lg">💬 WhatsApp</a>`:''}<button onclick="event.stopPropagation();openProspecto('${p.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></div></td>
+      </tr>`).join('')}
+      </tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
+      ${rows.map(p=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openProspecto('${p.id}')">
+        <div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="font-bold truncate">${(p.nombre||'—').replace(/</g,'&lt;')}</div><div class="text-xs text-clay-400 mt-0.5">${p.fecha||''}</div></div>${prospEstadoPill(p.estado||'nuevo')}</div>
+        <div class="text-xs text-clay-500 mt-1.5">${[p.telefono?'📞 '+p.telefono:'',p.email?'✉️ '+p.email:''].filter(Boolean).join(' · ')||'sin contacto'}</div>
+        ${p.interes?`<div class="text-sm text-clay-600 mt-2 leading-snug">${String(p.interes).replace(/</g,'&lt;')}</div>`:''}
+        ${p.telefono?`<div class="mt-3 pt-3 border-t border-clay-100"><a href="https://wa.me/${telWa(p.telefono)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="block w-full text-center text-xs font-medium text-sage-700 bg-sage-100 hover:bg-sage-200 px-2 py-2 rounded-lg">💬 Escribir por WhatsApp</a></div>`:''}
+      </div>`).join('')}
+    </div>
+  </div>`
+  : emptyState({icon:'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8z', titulo:'Sin potenciales clientes todavía', detalle:'Anota aquí a las personas que preguntan por maceteros: nombre, teléfono, correo y lo que les interesa, para hacerles seguimiento.', accion:`<button onclick="openProspecto()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">Nuevo potencial cliente</button>`})}`;
+}
+function openProspecto(id){
+  const p=id?(DB.prospectos||[]).find(x=>x.id===id):null;
+  EDITPR = p?JSON.parse(JSON.stringify(p)):{id:null,fecha:todayISO(),nombre:'',telefono:'',email:'',interes:'',notas:'',estado:'nuevo'};
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 class="text-lg font-bold">${p?'Editar potencial cliente':'Nuevo potencial cliente'}</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="text-sm text-clay-500">Anota a un cliente interesado en maceteros para hacerle seguimiento.</div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Fecha</label><input id="pr_fecha" type="date" value="${EDITPR.fecha||todayISO()}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Estado</label><select id="pr_estado" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${PROSP_ESTADOS.map(e=>`<option value="${e[0]}" ${(EDITPR.estado||'nuevo')===e[0]?'selected':''}>${e[1]}</option>`).join('')}</select></div>
+      </div>
+      <div><label class="text-sm font-medium">Nombre del cliente</label><input id="pr_nombre" value="${(EDITPR.nombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre y apellido" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="text-sm font-medium">Teléfono</label><input id="pr_tel" value="${(EDITPR.telefono||'').replace(/"/g,'&quot;')}" placeholder="+56 9 ..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Correo</label><input id="pr_email" type="email" value="${(EDITPR.email||'').replace(/"/g,'&quot;')}" placeholder="correo@ejemplo.cl" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      </div>
+      <div><label class="text-sm font-medium">¿Qué le interesa? (pedido)</label><textarea id="pr_interes" rows="3" placeholder="Ej: 2 maceteros Vietnam L en óxido, cotización para terraza..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1">${(EDITPR.interes||'').replace(/</g,'&lt;')}</textarea></div>
+      <div><label class="text-sm font-medium">Notas (opcional)</label><input id="pr_notas" value="${(EDITPR.notas||'').replace(/"/g,'&quot;')}" placeholder="Seguimiento, presupuesto enviado, etc." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between gap-2 sticky bottom-0 bg-white">
+      <div>${p?`<button onclick="deleteProspecto('${p.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div>
+      <div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
+      <button onclick="saveProspecto()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar</button></div>
+    </div>`);
+}
+function saveProspecto(){
+  const g=id=>document.getElementById(id);
+  EDITPR.fecha=g('pr_fecha')?g('pr_fecha').value:EDITPR.fecha;
+  EDITPR.estado=g('pr_estado')?g('pr_estado').value:'nuevo';
+  EDITPR.nombre=g('pr_nombre')?g('pr_nombre').value.trim():'';
+  EDITPR.telefono=g('pr_tel')?g('pr_tel').value.trim():'';
+  EDITPR.email=g('pr_email')?g('pr_email').value.trim():'';
+  EDITPR.interes=g('pr_interes')?g('pr_interes').value.trim():'';
+  EDITPR.notas=g('pr_notas')?g('pr_notas').value.trim():'';
+  if(!EDITPR.nombre && !EDITPR.telefono && !EDITPR.email){ alert('Anota al menos el nombre o un dato de contacto'); return; }
+  if(EDITPR.id){ const ix=DB.prospectos.findIndex(x=>x.id===EDITPR.id); if(ix>=0) DB.prospectos[ix]=EDITPR; }
+  else { EDITPR.id=uid('pr'); EDITPR.creadoPor=(SESSION.nombre||SESSION.email); DB.prospectos.push(EDITPR); }
+  save(); closeModal(); go('ca_prospectos');
+  toastInfo('✅ Potencial cliente guardado');
+}
+function deleteProspecto(id){
+  const p=(DB.prospectos||[]).find(x=>x.id===id); if(!p) return;
+  if(!confirm('¿Eliminar este potencial cliente?')) return;
+  DB.prospectos=DB.prospectos.filter(x=>x.id!==id); save(); closeModal(); go('ca_prospectos');
+  toastInfo('Potencial cliente eliminado');
 }
 
 /* ===================== USUARIOS Y PERMISOS ===================== */
