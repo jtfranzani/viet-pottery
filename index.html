@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-113';
+const APP_VERSION = '2026.07.09-115';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -503,6 +503,7 @@ async function bootData(){
   if(!DB.orders) DB.orders=[];
   if(!DB.users) DB.users=[];
   if(!DB.adjustments) DB.adjustments=[];
+  if(!DB.adjustmentsCA) DB.adjustmentsCA=[]; // Ajustes manuales de inventario en Casa Augusta
   if(!DB.quotes) DB.quotes=[];
   if(!DB.invoices) DB.invoices=[];
   if(!DB.suppliers) DB.suppliers=[];
@@ -635,6 +636,8 @@ function stockCA(productId){
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') s+=i.cantidad; }));
   DB.sales.forEach(v=>{ if(v.bodega!=='CA'||v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
   (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); });
+  // Ajustes manuales de inventario en Casa Augusta (conteo, merma, regalo, etc.).
+  (DB.adjustmentsCA||[]).forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
   return s;
 }
 function clientBalance(clientId){
@@ -6374,7 +6377,7 @@ function renderCAStock(){
       </tr>`;}).join('')}
       </tbody></table></div>
   </div>
-  <div class="text-xs text-clay-400 mt-3 px-1">💡 El stock de Casa Augusta se surte con <b>transferencias desde la bodega central</b>. Usa "Transferir desde central" para registrar lo que llega; baja solo al registrar ventas y sube con las devoluciones.</div>`;
+  <div class="text-xs text-clay-400 mt-3 px-1">💡 El stock de Casa Augusta se surte con <b>transferencias desde la bodega central</b> y baja al registrar ventas (sube con las devoluciones). Si necesitas cuadrar el inventario con lo que realmente hay, abre un producto y usa <b>"Ajustar inventario"</b>.</div>`;
   filterCAStock();
 }
 function filterCAStock(){
@@ -6427,6 +6430,7 @@ function caStockMovements(productId){
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') moves.push({fecha:c.fecha, orden:0, tipo:'Compra', detalle:(c.proveedor||'Proveedor')+' · recepción directa', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
   (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Devolución', detalle:r.clienteNombre||r.motivo||'Devolución', cantidad:i.cantidad}); }); });
+  (DB.adjustmentsCA||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:2, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
   let bal=0; moves.forEach(m=>{ bal+=m.cantidad; m.saldo=bal; });
   return moves;
@@ -6438,7 +6442,7 @@ function openCATrazabilidad(productId){
   const st=stockCA(productId);
   const entradas=moves.filter(m=>m.cantidad>0).reduce((a,m)=>a+m.cantidad,0);
   const salidas=moves.filter(m=>m.cantidad<0).reduce((a,m)=>a+Math.abs(m.cantidad),0);
-  const tcolor={'Transferencia':'green','Venta':'blue','Devolución':'amber'};
+  const tcolor={'Transferencia':'green','Venta':'blue','Devolución':'amber','Ajuste':'amber','Compra':'green'};
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white">
       <div><h3 class="text-lg font-bold">${productNameCliente(p)}</h3><div class="text-xs text-clay-400">${p.sku} · Trazabilidad en Casa Augusta</div></div>
@@ -6471,8 +6475,48 @@ function openCATrazabilidad(productId){
         </table>
       </div>` : `<div class="text-center text-clay-400 text-sm py-8 border border-clay-100 rounded-xl">Este producto aún no tiene movimientos en Casa Augusta.<div class="text-xs mt-1">Recibe stock con "Transferir desde central".</div></div>`}
     </div>
-    <div class="p-5 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button></div>
+    <div class="p-5 border-t border-clay-100 flex flex-wrap justify-between items-center gap-2 sticky bottom-0 bg-white">
+      <button onclick="openCAAdjust('${productId}')" class="inline-flex items-center gap-1 px-4 py-2 rounded-xl border border-clay-200 text-sm text-clay-700 hover:bg-clay-50">⚖️ Ajustar inventario</button>
+      <button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button>
+    </div>
   `);
+}
+// Ajuste manual de inventario en Casa Augusta (conteo, merma, regalo, rotura...).
+function openCAAdjust(pid){
+  const p=productById(pid); if(!p) return;
+  const actual=stockCA(pid);
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><div><h3 class="text-lg font-bold">Ajustar inventario</h3><div class="text-xs text-clay-400">Casa Augusta</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
+  <div class="p-5 space-y-3">
+    <div class="text-sm text-clay-500">${productNameCliente(p)} · ${p.sku}</div>
+    <div class="bg-clay-50 rounded-xl px-3 py-2.5 flex items-center justify-between"><span class="text-sm text-clay-500">Stock actual en el sistema</span><span class="text-lg font-bold text-clay-800">${actual}</span></div>
+    <div><label class="text-sm font-medium">Inventario real <span class="text-clay-400 font-normal">(lo que realmente hay)</span></label><input id="adjca_real" type="number" min="0" value="${actual}" oninput="caAdjPreview(${actual})" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div id="adjca_diff" class="text-sm text-clay-400">La plataforma calculará el ajuste automáticamente.</div>
+    <div><label class="text-sm font-medium">Motivo</label><input id="adjca_m" placeholder="Conteo, merma, rotura, regalo..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+    <div class="text-[11px] text-clay-400">💡 Escribe cuántas unidades hay realmente en Casa Augusta y el sistema corrige el stock por ti. Queda registrado en la trazabilidad del producto.</div>
+  </div>
+  <div class="p-5 border-t border-clay-100 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveCAAdjust('${pid}',${actual})" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2 rounded-xl">Aplicar</button></div>`);
+  caAdjPreview(actual);
+}
+function caAdjPreview(actual){
+  const el=document.getElementById('adjca_diff'); if(!el) return;
+  const raw=(document.getElementById('adjca_real')||{}).value;
+  const real=+raw;
+  if(raw===''||!isFinite(real)){ el.className='text-sm text-clay-400'; el.textContent='La plataforma calculará el ajuste automáticamente.'; return; }
+  const d=Math.round(real)-actual;
+  if(d===0){ el.className='text-sm text-clay-400'; el.textContent='Sin cambios: el inventario ya coincide.'; }
+  else if(d>0){ el.className='text-sm text-sage-700 font-medium'; el.innerHTML=`Ajuste: <b>+${d}</b> (entran ${d} unidad${d===1?'':'es'}).`; }
+  else { el.className='text-sm text-red-600 font-medium'; el.innerHTML=`Ajuste: <b>−${Math.abs(d)}</b> (salen ${Math.abs(d)} unidad${Math.abs(d)===1?'':'es'}).`; }
+}
+function saveCAAdjust(pid,actual){
+  const raw=(document.getElementById('adjca_real')||{}).value;
+  const real=+raw;
+  if(raw===''||!isFinite(real)||real<0){ alert('Escribe el inventario real (número válido)'); return; }
+  const q=Math.round(real)-actual;
+  if(!q){ closeModal(); return; }
+  const motivo=((document.getElementById('adjca_m')||{}).value||'').trim();
+  DB.adjustmentsCA.push({id:uid('aca'),productId:pid,cantidad:q,motivo:motivo,fecha:todayISO(),creadoPor:(SESSION.nombre||SESSION.email)});
+  save(); closeModal(); go('ca_stock');
+  toastInfo('✅ Inventario ajustado a '+Math.round(real)+' ('+(q>0?'+':'')+q+')');
 }
 
 /* --------- TRANSFERENCIAS central → Casa Augusta --------- */
