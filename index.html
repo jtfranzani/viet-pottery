@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-115';
+const APP_VERSION = '2026.07.09-117';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6677,6 +6677,7 @@ function openCASaleDetail(id){
     </div>
     <div class="p-4 sm:p-5 border-t border-clay-100 flex flex-wrap justify-between items-center gap-2 sticky bottom-0 bg-white">
       <div class="flex flex-wrap gap-2">
+        <button onclick="openConfirmacion('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">🧾 Comprobante de venta</button>
         <button onclick="generarEtiquetaDespacho('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">🏷️ Imprimir etiqueta</button>
         <button onclick="moverAPedidos('${s.id}')" class="px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50">📦 Mover a Pedidos</button>
       </div>
@@ -6828,15 +6829,20 @@ function saveCASale(){
   EDITCA.items = items.map(i=>({productId:i.productId,cantidad:+i.cantidad,precio:+i.precio,descuento:+i.descuento||0,descripcion:productNameCliente(productById(i.productId))}));
   if(EDITCA.caEstado==='entregado'){ if(!EDITCA.entregadoAt) EDITCA.entregadoAt=Date.now(); EDITCA.items.forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else { delete EDITCA.entregadoAt; EDITCA.items.forEach(i=>{ delete i.entregadoQty; }); }
+  let esNueva=false;
   if(EDITCA.id){ const ix=DB.sales.findIndex(x=>x.id===EDITCA.id); DB.sales[ix]=EDITCA; }
   else{
+    esNueva=true;
     EDITCA.id=uid('s');
     if(EDITCA.docTipo==='boleta'&&!EDITCA.docNumero){DB.counter.boleta++;EDITCA.docNumero=String(DB.counter.boleta);}
     if(EDITCA.docTipo==='factura'&&!EDITCA.docNumero){DB.counter.factura++;EDITCA.docNumero=String(DB.counter.factura);}
     DB.sales.push(EDITCA);
   }
+  const nuevoId=EDITCA.id;
   save(); closeModal(); go('ca_ventas');
   toastInfo('✅ Venta registrada en Casa Augusta');
+  // Al registrar una venta nueva, ofrece de inmediato el comprobante para descargar/compartir.
+  if(esNueva){ openConfirmacion(nuevoId); }
 }
 function deleteCASale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
