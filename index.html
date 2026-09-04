@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-119';
+const APP_VERSION = '2026.07.09-120';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6597,6 +6597,145 @@ let CAV_MES='todos', CAV_PAGO='todos', CAV_ENTREGA='todos', CAV_Q='', CAV_DESDE=
 function setCAVFiltro(k,val){ if(k==='mes'){CAV_MES=val; CAV_DESDE=''; CAV_HASTA='';} else if(k==='pago')CAV_PAGO=val; else if(k==='entrega')CAV_ENTREGA=val; else if(k==='desde'){CAV_DESDE=val; CAV_MES='todos';} else if(k==='hasta'){CAV_HASTA=val; CAV_MES='todos';} renderCAVentas(); }
 function limpiarCAVFiltros(){ CAV_MES='todos'; CAV_PAGO='todos'; CAV_ENTREGA='todos'; CAV_Q=''; CAV_DESDE=''; CAV_HASTA=''; renderCAVentas(); }
 function caVentasSearch(val){ CAV_Q=val; renderCAVentas(); const el=document.getElementById('caVentasQ'); if(el){ el.focus(); const t=el.value; el.value=''; el.value=t; } }
+// Devuelve las ventas de Casa Augusta aplicando los filtros activos (mes / rango / pago / entrega / búsqueda)
+function caVentasFiltradas(){
+  const q=(CAV_Q||'').toLowerCase().trim();
+  return [...caSales()].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).filter(s=>{
+    const f=s.fecha||'';
+    if(CAV_MES!=='todos' && f.slice(0,7)!==CAV_MES) return false;
+    if(CAV_DESDE && f < CAV_DESDE) return false;
+    if(CAV_HASTA && f > CAV_HASTA) return false;
+    if(CAV_PAGO==='pagado' && !s.pagado) return false;
+    if(CAV_PAGO==='porcobrar' && s.pagado) return false;
+    if(CAV_ENTREGA==='entregado' && s.caEstado!=='entregado') return false;
+    if(CAV_ENTREGA==='pendiente' && s.caEstado==='entregado') return false;
+    if(q){ const c=clientById(s.clienteId); const txt=((c?c.nombre:'')+' '+(s.clienteNombre||'')+' '+(s.pedidoNum||'')+' '+s.items.map(i=>itemLabelCliente(i)).join(' ')).toLowerCase(); if(!txt.includes(q)) return false; }
+    return true;
+  });
+}
+// Reporte PDF completo de ventas de Casa Augusta (respeta los filtros activos)
+function descargarReporteVentasCA(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const rows=caVentasFiltradas();
+  if(!rows.length){ toastInfo('No hay ventas para el reporte con los filtros actuales.'); return; }
+  const IVA=0.19;
+  // --- Métricas globales ---
+  const totalConIva=rows.reduce((a,s)=>a+saleTotal(s),0);
+  const neto=totalConIva/(1+IVA);
+  const iva=totalConIva-neto;
+  const subtotalProd=rows.reduce((a,s)=>a+saleSubtotal(s),0);       // solo productos (con descuento)
+  const envios=rows.reduce((a,s)=>a+(s.costoEnvio||0),0);
+  const unidades=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
+  const nVentas=rows.length;
+  const ticket=nVentas?totalConIva/nVentas:0;
+  const descuentos=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad*i.precio*(i.descuento||0)/100),0),0);
+  const pagadas=rows.filter(s=>s.pagado); const nPag=pagadas.length; const montoPag=pagadas.reduce((a,s)=>a+saleTotal(s),0);
+  const porCobrar=rows.filter(s=>!s.pagado); const nPC=porCobrar.length; const montoPC=porCobrar.reduce((a,s)=>a+saleTotal(s),0);
+  const entregadas=rows.filter(s=>s.caEstado==='entregado').length;
+  const pendientes=nVentas-entregadas;
+  // --- Desglose por método de entrega ---
+  const porMetodo={};
+  rows.forEach(s=>{ const k=caMetodoLabel(s.caMetodo); if(!porMetodo[k]) porMetodo[k]={n:0,monto:0}; porMetodo[k].n++; porMetodo[k].monto+=saleTotal(s); });
+  // --- Desglose por producto (unidades y monto) ---
+  const porProd={};
+  rows.forEach(s=>s.items.forEach(i=>{ const p=productById(i.productId); const nom=p?productNameCliente(p):(i.descripcion||'Producto'); const sku=p?p.sku:'—'; const k=sku+'|'+nom; if(!porProd[k]) porProd[k]={sku,nom,uni:0,monto:0}; porProd[k].uni+=(i.cantidad||0); porProd[k].monto+=lineTotal(i); }));
+  const prodArr=Object.values(porProd).sort((a,b)=>b.monto-a.monto);
+  // --- Rango del reporte ---
+  const fechas=rows.map(s=>s.fecha||'').filter(Boolean).sort();
+  let periodoTxt;
+  if(CAV_MES!=='todos') periodoTxt=mesLabel(CAV_MES);
+  else if(CAV_DESDE||CAV_HASTA) periodoTxt=(CAV_DESDE||fechas[0]||'inicio')+'  a  '+(CAV_HASTA||fechas[fechas.length-1]||'hoy');
+  else periodoTxt='Todas las ventas'+(fechas.length?('  ('+fechas[0]+' a '+fechas[fechas.length-1]+')'):'');
+  const extraFiltros=[];
+  if(CAV_PAGO==='pagado') extraFiltros.push('Solo pagadas');
+  if(CAV_PAGO==='porcobrar') extraFiltros.push('Solo por cobrar');
+  if(CAV_ENTREGA==='entregado') extraFiltros.push('Solo entregadas');
+  if(CAV_ENTREGA==='pendiente') extraFiltros.push('Solo pendientes');
+  if((CAV_Q||'').trim()) extraFiltros.push('Búsqueda: "'+CAV_Q.trim()+'"');
+
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF();
+  const M=14, PW=210;
+  const brown=[125,72,54], dark=[74,44,35], sand=[221,176,155], sage=[90,110,86];
+  // Encabezado
+  doc.setFillColor(...dark); doc.rect(0,0,PW,30,'F');
+  if(LOGO_DATAURL){ const h=16, w=(LOGO_W&&LOGO_H)?Math.min(38,h*(LOGO_W/LOGO_H)):16; try{ doc.addImage(LOGO_DATAURL,'PNG',M,7,w,h); }catch(e){} }
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Casa Augusta · Reporte de ventas', PW-M, 14, {align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...sand);
+  doc.text('Periodo: '+periodoTxt, PW-M, 21, {align:'right'});
+  doc.text('Generado: '+todayISO(), PW-M, 26, {align:'right'});
+  let y=40;
+  if(extraFiltros.length){ doc.setFontSize(8); doc.setTextColor(150,120,105); doc.text('Filtros: '+extraFiltros.join('  ·  '), M, y); y+=6; }
+
+  // Resumen económico (tabla)
+  doc.autoTable({
+    startY:y,
+    head:[['Resumen económico','Monto']],
+    body:[
+      ['Total vendido (con IVA)', fmt(totalConIva)],
+      ['Neto (sin IVA)', fmt(neto)],
+      ['IVA (19%)', fmt(iva)],
+      ['Subtotal productos', fmt(subtotalProd)],
+      ...(envios>0?[['Envíos cobrados', fmt(envios)]]:[]),
+      ...(descuentos>0?[['Descuentos otorgados', '- '+fmt(descuentos)]]:[]),
+    ],
+    styles:{fontSize:10,cellPadding:3.2,lineColor:[235,216,203],lineWidth:0.2,textColor:dark,valign:'middle'},
+    headStyles:{fillColor:brown,textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{1:{halign:'right',fontStyle:'bold',cellWidth:55}},
+    margin:{left:M,right:M},
+  });
+  y=doc.lastAutoTable.finalY+6;
+
+  // Indicadores operativos (tabla)
+  doc.autoTable({
+    startY:y,
+    head:[['Indicadores','Valor']],
+    body:[
+      ['N° de ventas', String(nVentas)],
+      ['Maceteros vendidos (unidades)', String(unidades)],
+      ['Ticket promedio', fmt(ticket)],
+      ['Ventas pagadas', nPag+'  ('+fmt(montoPag)+')'],
+      ['Ventas por cobrar', nPC+'  ('+fmt(montoPC)+')'],
+      ['Entregadas / pendientes', entregadas+' / '+pendientes],
+    ],
+    styles:{fontSize:10,cellPadding:3.2,lineColor:[235,216,203],lineWidth:0.2,textColor:dark,valign:'middle'},
+    headStyles:{fillColor:sage,textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{1:{halign:'right',cellWidth:55}},
+    margin:{left:M,right:M},
+  });
+  y=doc.lastAutoTable.finalY+6;
+
+  // Desglose por método de entrega
+  const metodoBody=Object.entries(porMetodo).map(([k,v])=>[k, String(v.n), fmt(v.monto)]);
+  doc.autoTable({
+    startY:y,
+    head:[['Método de entrega','Ventas','Monto']],
+    body:metodoBody,
+    styles:{fontSize:9.5,cellPadding:3,lineColor:[235,216,203],lineWidth:0.2,textColor:dark,valign:'middle'},
+    headStyles:{fillColor:brown,textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{1:{halign:'center',cellWidth:28},2:{halign:'right',cellWidth:45}},
+    margin:{left:M,right:M},
+  });
+  y=doc.lastAutoTable.finalY+6;
+
+  // Desglose por producto
+  const prodBody=prodArr.map(p=>[p.sku, p.nom, String(p.uni), fmt(p.monto)]);
+  prodBody.push([{content:'TOTAL',colSpan:2,styles:{fontStyle:'bold',halign:'right'}}, {content:String(unidades),styles:{fontStyle:'bold',halign:'center'}}, {content:fmt(subtotalProd),styles:{fontStyle:'bold',halign:'right'}}]);
+  doc.autoTable({
+    startY:y,
+    head:[['SKU','Producto','Unidades','Monto (con desc.)']],
+    body:prodBody,
+    styles:{fontSize:9,cellPadding:2.8,lineColor:[235,216,203],lineWidth:0.2,textColor:dark,valign:'middle'},
+    headStyles:{fillColor:sage,textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{0:{cellWidth:24},2:{halign:'center',cellWidth:24},3:{halign:'right',cellWidth:38}},
+    margin:{top:14,left:M,right:M},
+    didDrawPage:function(){ doc.setFontSize(8); doc.setTextColor(150,120,105); doc.text('Viet Pottery · Casa Augusta',M,290); doc.text('Pág. '+doc.internal.getNumberOfPages(),PW-M,290,{align:'right'}); }
+  });
+
+  const tag=CAV_MES!=='todos'?CAV_MES:((CAV_DESDE||CAV_HASTA)?((CAV_DESDE||'')+'_'+(CAV_HASTA||'')):'todas');
+  savePdfDoc(doc, 'reporte-ventas-casa-augusta-'+tag+'.pdf');
+}
 function renderCAVentas(){
   const v=document.getElementById('view');
   const allSales=[...caSales()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
@@ -6646,7 +6785,8 @@ function renderCAVentas(){
       <option value="pendiente" ${CAV_ENTREGA==='pendiente'?'selected':''}>Pendientes</option>
     </select>
     ${hayFiltro?`<button onclick="limpiarCAVFiltros()" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">✕ Limpiar</button>`:''}
-    <div class="text-xs text-clay-400 ml-auto">${rows.length} de ${allSales.length} venta${allSales.length!==1?'s':''}</div>
+    <button onclick="descargarReporteVentasCA()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl whitespace-nowrap ml-auto">📄 Reporte PDF</button>
+    <div class="text-xs text-clay-400">${rows.length} de ${allSales.length} venta${allSales.length!==1?'s':''}</div>
   </div>`;
   v.innerHTML=`
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
