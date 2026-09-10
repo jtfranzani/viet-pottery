@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-126';
+const APP_VERSION = '2026.07.09-129';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -516,6 +516,7 @@ async function bootData(){
   if(!DB.caReturns) DB.caReturns=[];   // Devoluciones que reingresan a Casa Augusta
   if(!DB.prospectos) DB.prospectos=[]; // Prospectos de clientes (interesados en Casa Augusta)
   if(!DB.shopifyMap) DB.shopifyMap={}; // Vinculación: { skuShopify : idProductoPlataforma }. La plataforma es la matriz.
+  if(DB.shopifyStockBuffer==null) DB.shopifyStockBuffer=1; // Colchón: unidades que se reservan y NO se publican en Shopify (protege la venta presencial).
   // Migración: distinguir el ORIGEN de la venta (dónde se generó) de la BODEGA (de dónde sale el stock).
   // Una venta es de Casa Augusta SOLO si se generó en ese punto (tipoDespacho==='CA'),
   // no por el solo hecho de descontar stock de Casa Augusta. Las ventas de Pedidos que usan
@@ -6350,74 +6351,84 @@ const caShopifySales = () => caSales().filter(s=>caCanal(s)==='Shopify');
    La PLATAFORMA es la matriz (única fuente de verdad). No cambiamos ningún SKU:
    ni los de Shopify (VP-PE-AK-AR-M) ni los de la plataforma (VP-001...). En vez de eso,
    guardamos una tabla de equivalencia en DB.shopifyMap = { skuShopify : idProductoPlataforma }.
-   Así ambos sistemas "se leen igual" sin tocar nada. Catálogo Shopify (imagen fija del 2026-09). */
+   Así ambos sistemas "se leen igual" sin tocar nada. Precios sincronizados desde Shopify (Admin API) el 10-09-2026. */
 const SHOPIFY_CATALOG = [
-  {producto:'Angkor Arena', sku:'VP-PE-AK-AR-S', talla:'S', precio:45000},
-  {producto:'Angkor Arena', sku:'VP-PE-AK-AR-M', talla:'M', precio:58000},
+  {producto:'Angkor Arena', sku:'VP-PE-AK-AR-S', talla:'S', precio:40000},
+  {producto:'Angkor Arena', sku:'VP-PE-AK-AR-M', talla:'M', precio:60000},
   {producto:'Angkor Arena', sku:'VP-PE-AK-AR-L', talla:'L', precio:83000},
-  {producto:'Angkor Grafito', sku:'VP-PE-AK-GR-S', talla:'S', precio:45000},
-  {producto:'Angkor Grafito', sku:'VP-PE-AK-GR-M', talla:'M', precio:58000},
+  {producto:'Angkor Grafito', sku:'VP-PE-AK-GR-S', talla:'S', precio:40000},
+  {producto:'Angkor Grafito', sku:'VP-PE-AK-GR-M', talla:'M', precio:60000},
   {producto:'Angkor Grafito', sku:'VP-PE-AK-GR-L', talla:'L', precio:83000},
-  {producto:'Angkor Gris', sku:'VP-PE-AK-GS-S', talla:'S', precio:45000},
-  {producto:'Angkor Gris', sku:'VP-PE-AK-GS-M', talla:'M', precio:58000},
+  {producto:'Angkor Gris', sku:'VP-PE-AK-GS-S', talla:'S', precio:40000},
+  {producto:'Angkor Gris', sku:'VP-PE-AK-GS-M', talla:'M', precio:60000},
   {producto:'Angkor Gris', sku:'VP-PE-AK-GS-L', talla:'L', precio:83000},
-  {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-S', talla:'S', precio:45000},
+  {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-S', talla:'S', precio:43000},
   {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-M', talla:'M', precio:70000},
-  {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-L', talla:'L', precio:110000},
-  {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-L', talla:'L', precio:43000},
-  {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-XL', talla:'XL', precio:80000},
-  {producto:'Bowl Lotus Grafito', sku:'VP-PE-BL-GR-L', talla:'L', precio:43000},
-  {producto:'Bowl Lotus Grafito', sku:'VP-PE-BL-GR-XL', talla:'XL', precio:80000},
-  {producto:'Bowl Ubud Pizarra', sku:'VP-PE-UB-PZ-L', talla:'L', precio:50000},
-  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-M', talla:'M', precio:130000},
-  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-L', talla:'L', precio:142800},
-  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-XL', talla:'XL', precio:178500},
-  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-M', talla:'M', precio:87990},
-  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-L', talla:'L', precio:100990},
-  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-XL', talla:'XL', precio:118990},
+  {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-L', talla:'L', precio:99000},
+  {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-L', talla:'L', precio:42000},
+  {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-XL', talla:'XL', precio:75000},
+  {producto:'Bowl Lotus Grafito', sku:'VP-PE-BL-GR-L', talla:'L', precio:42000},
+  {producto:'Bowl Lotus Grafito', sku:'VP-PE-BL-GR-XL', talla:'XL', precio:75000},
+  {producto:'Bowl Ubud Pizarra', sku:'VP-PE-UB-PZ-L', talla:'L', precio:48000},
+  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-M', talla:'M', precio:129990},
+  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-L', talla:'L', precio:142990},
+  {producto:'Canton Fierro con base', sku:'VP-FE-CT-CB-XL', talla:'XL', precio:178990},
+  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-M', talla:'M', precio:89990},
+  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-L', talla:'L', precio:119990},
+  {producto:'Canton Fierro sin base', sku:'VP-FE-CT-SB-XL', talla:'XL', precio:129990},
   {producto:'Drizzle Oxido', sku:'VP-PE-DZ-OX-M', talla:'M', precio:45000, draft:true},
   {producto:'Drizzle Oxido', sku:'VP-PE-DZ-OX-ME', talla:'ME', precio:45000, draft:true},
   {producto:'Ezzy Oxido', sku:'VP-PE-EZ-OX-S', talla:'S', precio:35000},
   {producto:'Ezzy Oxido', sku:'VP-PE-EZ-OX-M', talla:'M', precio:45000},
   {producto:'Ezzy Oxido', sku:'VP-PE-EZ-OX-L', talla:'L', precio:60000},
   {producto:'Hanoi Macchiato', sku:'VP-PE-HN-MC-M', talla:'M', precio:48000},
-  {producto:'Hanoi Macchiato', sku:'VP-PE-HN-MC-L', talla:'L', precio:63000},
-  {producto:'Hanoi Terracota', sku:'VP-PE-HN-TE-M', talla:'M', precio:45000},
-  {producto:'Hanoi Terracota', sku:'VP-PE-HN-TE-L', talla:'L', precio:60000},
-  {producto:'Imperial Grafito', sku:'VP-PE-IM-GR-M', talla:'M', precio:38000},
+  {producto:'Hanoi Macchiato', sku:'VP-PE-HN-MC-L', talla:'L', precio:65000},
+  {producto:'Hanoi Terracota', sku:'VP-PE-HN-TE-M', talla:'M', precio:48000},
+  {producto:'Hanoi Terracota', sku:'VP-PE-HN-TE-L', talla:'L', precio:65000},
+  {producto:'Imperial Grafito', sku:'VP-PE-IM-GR-M', talla:'M', precio:43000},
   {producto:'Imperial Grafito', sku:'VP-PE-IM-GR-L', talla:'L', precio:63000},
-  {producto:'Imperial Grafito', sku:'VP-PE-IM-GR-T', talla:'T', precio:55000},
-  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-M', talla:'M', precio:45000},
-  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-L', talla:'L', precio:65000},
-  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-XL', talla:'XL', precio:120000},
-  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-M', talla:'M', precio:45000},
-  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-L', talla:'L', precio:68000},
-  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-XL', talla:'XL', precio:125000},
-  {producto:'Pagoda Arena', sku:'VP-PE-PG-AR-U', talla:'U', precio:45000},
-  {producto:'Pagoda Grafito', sku:'VP-PE-PG-GR-U', talla:'U', precio:45000},
+  {producto:'Imperial Grafito', sku:'VP-PE-IM-GR-T', talla:'T', precio:65000},
+  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-M', talla:'M', precio:47000},
+  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-L', talla:'L', precio:70000},
+  {producto:'Nara Grafito', sku:'VP-PE-NR-GR-XL', talla:'XL', precio:132000},
+  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-M', talla:'M', precio:47000},
+  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-L', talla:'L', precio:70000},
+  {producto:'Nara Oxido', sku:'VP-PE-NR-OX-XL', talla:'XL', precio:132000},
+  {producto:'Pagoda Arena', sku:'VP-PE-PG-AR-U', talla:'U', precio:55000},
+  {producto:'Pagoda Grafito', sku:'VP-PE-PG-GR-U', talla:'U', precio:55000},
   {producto:'Pagoda Gris', sku:'VP-PE-PG-GS-U', talla:'U', precio:45000},
-  {producto:'Shanghai Autoregante Bool Negro', sku:'VP-AR-SH-BN-M', talla:'M', precio:90000},
-  {producto:'Shanghai Autoregante Bool Negro', sku:'VP-AR-SH-BN-L', talla:'L', precio:90000},
-  {producto:'Shanghai Autoregante Tinaja Negro', sku:'VP-AR-SH-TN-M', talla:'M', precio:95000},
-  {producto:'Shanghai Autoregante Tinaja Negro', sku:'VP-AR-SH-TN-L', talla:'L', precio:95000},
-  {producto:'Vasija Cemento', sku:'VP-CE-VS-M-P', talla:'M', precio:75990},
-  {producto:'Vasija Cemento', sku:'VP-CE-VS-M-N', talla:'M', precio:75990},
-  {producto:'Vasija Cemento', sku:'VP-CE-VS-L-P', talla:'L', precio:118990},
-  {producto:'Vasija Cemento', sku:'VP-CE-VS-L-N', talla:'L', precio:118990},
-  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-S', talla:'S', precio:30000},
-  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-M', talla:'M', precio:45000},
-  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-L', talla:'L', precio:60000},
-  {producto:'Vietnam Grafito', sku:'VP-PE-VN-GR-S', talla:'S', precio:33000},
-  {producto:'Vietnam Grafito', sku:'VP-PE-VN-GR-M', talla:'M', precio:48000},
+  {producto:'Shanghai Autoregante Bool Negro', sku:'VP-AR-SH-BN-M', talla:'M', precio:102000},
+  {producto:'Shanghai Autoregante Bool Negro', sku:'VP-AR-SH-BN-L', talla:'L', precio:125000},
+  {producto:'Shanghai Autoregante Tinaja Negro', sku:'VP-AR-SH-TN-M', talla:'M', precio:102000},
+  {producto:'Shanghai Autoregante Tinaja Negro', sku:'VP-AR-SH-TN-L', talla:'L', precio:125000},
+  {producto:'Vasija Cemento', sku:'VP-CE-VS-M-P', talla:'M', precio:76000},
+  {producto:'Vasija Cemento', sku:'VP-CE-VS-M-N', talla:'M', precio:76000},
+  {producto:'Vasija Cemento', sku:'VP-CE-VS-L-P', talla:'L', precio:110000},
+  {producto:'Vasija Cemento', sku:'VP-CE-VS-L-N', talla:'L', precio:110000},
+  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-S', talla:'S', precio:34000},
+  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-M', talla:'M', precio:49000},
+  {producto:'Vietnam Arena', sku:'VP-PE-VN-AR-L', talla:'L', precio:63000},
+  {producto:'Vietnam Grafito', sku:'VP-PE-VN-GR-S', talla:'S', precio:34000},
+  {producto:'Vietnam Grafito', sku:'VP-PE-VN-GR-M', talla:'M', precio:49000},
   {producto:'Vietnam Grafito', sku:'VP-PE-VN-GR-L', talla:'L', precio:63000},
-  {producto:'Vietnam Oxido', sku:'VP-PE-VN-OX-S', talla:'S', precio:33000},
-  {producto:'Vietnam Oxido', sku:'VP-PE-VN-OX-M', talla:'M', precio:48000},
+  {producto:'Vietnam Oxido', sku:'VP-PE-VN-OX-S', talla:'S', precio:34000},
+  {producto:'Vietnam Oxido', sku:'VP-PE-VN-OX-M', talla:'M', precio:49000},
   {producto:'Vietnam Oxido', sku:'VP-PE-VN-OX-L', talla:'L', precio:63000},
-  {producto:'Yunnan Cemento', sku:'VP-PE-YN-CC-M', talla:'M', precio:48000},
-  {producto:'Yunnan Cemento', sku:'VP-PE-YN-CC-L', talla:'L', precio:65000},
-  {producto:'Yunnan Grafito', sku:'VP-PE-YN-GR-M', talla:'M', precio:48000},
+  {producto:'Yunnan Cemento', sku:'VP-PE-YN-CC-M', talla:'M', precio:60000},
+  {producto:'Yunnan Cemento', sku:'VP-PE-YN-CC-L', talla:'L', precio:75000},
+  {producto:'Yunnan Grafito', sku:'VP-PE-YN-GR-M', talla:'M', precio:60000},
   {producto:'Yunnan Grafito', sku:'VP-PE-YN-GR-L', talla:'L', precio:65000}
 ];
+// Fecha de la última sincronización de precios desde Shopify (se muestra en la pantalla de Vinculación).
+const SHOPIFY_PRECIOS_FECHA = '10-09-2026';
+// Precio de Shopify por SKU. La plataforma toma este precio como referencia para las ventas online.
+function precioShopifySku(sku){ const v=SHOPIFY_CATALOG.find(x=>x.sku===sku); return v?v.precio:null; }
+// Aplica el precio de Shopify al producto de plataforma vinculado (actualiza su precioRef). NO toca el SKU.
+function aplicarPrecioShopify(sku){ const v=SHOPIFY_CATALOG.find(x=>x.sku===sku); const pid=(DB.shopifyMap||{})[sku]; if(!v||!pid) return; const p=productById(pid); if(!p) return; p.precioRef=v.precio; save(); renderCAShopify(); }
+// Cuántos vínculos tienen el precio de la plataforma distinto al de Shopify (desalineados).
+function shopifyPrecioDesalineados(){ let n=0; SHOPIFY_CATALOG.forEach(v=>{ const pid=(DB.shopifyMap||{})[v.sku]; if(!pid) return; const p=productById(pid); if(p && Number(p.precioRef)!==Number(v.precio)) n++; }); return n; }
+// Aplica TODOS los precios de Shopify a los productos vinculados de la plataforma.
+function aplicarTodosPreciosShopify(){ const pend=shopifyPrecioDesalineados(); if(!pend){ if(typeof toastInfo==='function') toastInfo('Los precios ya están iguales a Shopify.'); return; } if(!confirm('¿Igualar '+pend+' precio(s) de la plataforma a los de Shopify? Se actualiza el precio de referencia de cada producto vinculado. Los SKU no se tocan.')) return; let n=0; SHOPIFY_CATALOG.forEach(v=>{ const pid=(DB.shopifyMap||{})[v.sku]; if(!pid) return; const p=productById(pid); if(p && Number(p.precioRef)!==Number(v.precio)){ p.precioRef=v.precio; n++; } }); save(); renderCAShopify(); if(typeof toastInfo==='function') toastInfo('Se actualizaron '+n+' precio(s) en la plataforma según Shopify.'); }
 // Resolver: dado un SKU de Shopify, devuelve el producto de la PLATAFORMA vinculado (o null).
 function productByShopifySku(sku){ const pid=(DB.shopifyMap||{})[sku]; return pid?productById(pid):null; }
 // Cuántos SKU de Shopify ya tienen su equivalencia definida.
@@ -6435,6 +6446,97 @@ function shopifySuggest(v){
     if(diff<bestDiff){ bestDiff=diff; best=p; }
   });
   return best;
+}
+
+/* --------- PEDIDOS DE SHOPIFY (importación manual) ---------
+   La app es estática y no puede consultar Shopify sola. Estos pedidos son una "foto" traída
+   desde Shopify (Admin API) el 10-09-2026. El botón "Importar" los convierte en ventas de
+   Casa Augusta con canal Shopify (descuentan stockCA). Los pedidos marcados excluir=true son
+   pruebas del desarrollador web (aparecen tachados en Shopify) y NO se importan por defecto. */
+const SHOPIFY_ORDERS = [
+  {orderId:'7630756151606', num:'#1003', fecha:'2026-09-04', cliente:'Valentina Ovalle', email:'valentinaovalle@gmail.com', tel:'', direccion:'Avenida El Tranque 10400', comuna:'Lo Barnechea', ciudad:'Santiago', pagado:true, total:37990, items:[{sku:'VP-PE-VN-OX-S', titulo:'Vietnam Oxido', variante:'S', cantidad:1, precio:33000}]},
+  {orderId:'7552174981430', num:'#1002', fecha:'2026-08-03', cliente:'Pascal Correa', email:'pascalcorrea.web@gmail.com', tel:'', direccion:'Calle Camino del Huilli 3379', comuna:'Lo Barnechea', ciudad:'Santiago', pagado:true, total:50, items:[{sku:null, titulo:'Producto Prueba Envios', variante:'', cantidad:1, precio:50}], excluir:true, motivoExcluir:'Pedido de prueba (envíos)'},
+  {orderId:'7552169115958', num:'#1001', fecha:'2026-08-03', cliente:'Pascal Correa', email:'pascalcorrea.web@gmail.com', tel:'', direccion:'Calle Camino del Huilli 3379', comuna:'Lo Barnechea', ciudad:'Santiago', pagado:true, total:58000, items:[{sku:null, titulo:'Angkor Arena', variante:'M', cantidad:1, precio:58000}], excluir:true, motivoExcluir:'Pedido de prueba del desarrollador'}
+];
+const SHOPIFY_ORDERS_FECHA = '10-09-2026';
+// ¿Ya está importado este pedido de Shopify? (se guarda shopifyOrderId en la venta)
+function shopifyOrderImportado(orderId){ return (DB.sales||[]).some(x=>x.shopifyOrderId===orderId); }
+// Construye una venta de Casa Augusta (canal Shopify) a partir de un pedido de Shopify.
+function buildSaleFromShopifyOrder(o){
+  const items = (o.items||[]).map(li=>{
+    const p = li.sku?productByShopifySku(li.sku):null;
+    if(!p) return null; // línea sin producto vinculado en la plataforma: no se puede importar
+    return {productId:p.id, cantidad:+li.cantidad||1, precio:+li.precio||p.precioRef||0, descuento:0, descripcion:productNameCliente(p)};
+  }).filter(Boolean);
+  if(!items.length) return null;
+  const cli = resolveClient(o.cliente, o.ciudad||'Santiago', o.comuna||'', o.direccion||'', o.tel||'', o.email||'');
+  return { id:uid('s'), fecha:o.fecha, clienteNombre:o.cliente, clienteTel:o.tel||'', clienteId:cli?cli.id:'',
+    direccion:o.direccion||'', ciudad:o.ciudad||'Santiago', comuna:o.comuna||'',
+    items, pagado:!!o.pagado, docTipo:'pendiente', docNumero:'',
+    bodega:'CA', origen:'CA', tipoDespacho:'CA', canal:'Shopify',
+    caMetodo:'currier', caCurrier:'', caSeguimiento:'', caEstado:'pendiente',
+    cuenta:ACCOUNTS[0], costoEnvio:0, fechaEntrega:o.fecha, estadoDespacho:'pendiente', courier:'',
+    notas:'Importado de Shopify '+o.num, pedidoNum:o.num, shopifyOrderId:o.orderId, shopifyNum:o.num };
+}
+// ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
+function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId)) return false; return (o.items||[]).some(li=>li.sku && productByShopifySku(li.sku)); }
+function shopifyOrdersPendientes(){ return SHOPIFY_ORDERS.filter(shopifyOrderImportable).length; }
+// Estado de importación de la selección (modal)
+let IMPORT_SEL=null;
+function importShopifyOrders(){ IMPORT_SEL={}; SHOPIFY_ORDERS.forEach(o=>{ IMPORT_SEL[o.orderId]=shopifyOrderImportable(o); }); renderImportShopifyModal(); }
+function toggleImportOrder(orderId){ if(!IMPORT_SEL) return; IMPORT_SEL[orderId]=!IMPORT_SEL[orderId]; renderImportShopifyModal(); }
+function confirmImportShopifyOrders(){
+  if(!IMPORT_SEL) return;
+  const elegidos = SHOPIFY_ORDERS.filter(o=>IMPORT_SEL[o.orderId] && !shopifyOrderImportado(o.orderId));
+  if(!elegidos.length){ if(typeof toastInfo==='function') toastInfo('No hay pedidos nuevos seleccionados para importar.'); return; }
+  let n=0, saltados=0;
+  elegidos.forEach(o=>{ const venta=buildSaleFromShopifyOrder(o); if(venta){ DB.sales.push(venta); n++; } else { saltados++; } });
+  save(); closeModal(); go('ca_shopify');
+  if(typeof toastInfo==='function') toastInfo('✅ Se importaron '+n+' pedido(s) de Shopify'+(saltados?(' · '+saltados+' sin vincular, omitido(s)'):'')+'.');
+}
+function renderImportShopifyModal(){
+  const filaLinea=(li)=>{ const p=li.sku?productByShopifySku(li.sku):null; const okv=!!p;
+    return `<div class="flex items-baseline justify-between gap-2 text-xs ${okv?'text-clay-600':'text-red-600'}">
+      <span>${li.cantidad}× ${li.titulo}${li.variante?(' · '+li.variante):''}</span>
+      <span class="whitespace-nowrap">${fmt(li.precio)} ${okv?`<span class="text-clay-400">→ ${productName(p)}</span>`:'· <b>sin vínculo</b>'}</span>
+    </div>`; };
+  const card=(o)=>{ const importado=shopifyOrderImportado(o.orderId); const sinVinculo=!o.excluir && !importado && !(o.items||[]).some(li=>li.sku && productByShopifySku(li.sku));
+    const bloqueado = importado || o.excluir || sinVinculo;
+    const sel = !!(IMPORT_SEL&&IMPORT_SEL[o.orderId]) && !bloqueado;
+    let etiqueta='';
+    if(importado) etiqueta=pill('Ya importado','green');
+    else if(o.excluir) etiqueta=pill('Prueba — no se importa','gray');
+    else if(sinVinculo) etiqueta=pill('Falta vincular SKU','amber');
+    else etiqueta=pill('Nuevo','blue');
+    return `<div class="border ${sel?'border-clay-400 bg-clay-50/60':'border-clay-100'} rounded-2xl p-3.5 ${bloqueado?'opacity-70':''}">
+      <div class="flex items-start gap-3">
+        <input type="checkbox" ${sel?'checked':''} ${bloqueado?'disabled':''} onchange="toggleImportOrder('${o.orderId}')" class="mt-1 h-4 w-4 accent-clay-700 ${bloqueado?'cursor-not-allowed':'cursor-pointer'}">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <div class="font-semibold text-clay-800">${o.num} · ${o.cliente}</div>
+            <div class="text-sm font-bold tabular-nums whitespace-nowrap">${fmt(o.total)}</div>
+          </div>
+          <div class="text-[11px] text-clay-400 mb-1.5">${o.fecha}${o.comuna?(' · '+o.comuna):''} · ${o.pagado?'Pagado':'Por cobrar'}</div>
+          <div class="space-y-0.5">${(o.items||[]).map(filaLinea).join('')}</div>
+          <div class="mt-2 flex items-center gap-2">${etiqueta}${o.motivoExcluir?`<span class="text-[11px] text-clay-400">${o.motivoExcluir}</span>`:''}</div>
+        </div>
+      </div>
+    </div>`; };
+  const nuevos=SHOPIFY_ORDERS.filter(shopifyOrderImportable).length;
+  const selCount=SHOPIFY_ORDERS.filter(o=>IMPORT_SEL&&IMPORT_SEL[o.orderId]&&shopifyOrderImportable(o)).length;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Importar pedidos de Shopify</h3><div class="text-xs text-clay-400">Foto del ${SHOPIFY_ORDERS_FECHA} · ${SHOPIFY_ORDERS.length} pedido(s), ${nuevos} nuevo(s)</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <div class="text-sm text-clay-600 bg-blue-50 border border-blue-100 rounded-xl p-3 leading-snug">Se crearán como ventas de Casa Augusta con canal <b>Shopify</b> y descontarán stock de Casa Augusta. Los pedidos de <b>prueba</b> (tachados en Shopify) vienen desmarcados. Los ya importados no se repiten.</div>
+      ${SHOPIFY_ORDERS.map(card).join('')}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
+      <button onclick="confirmImportShopifyOrders()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl ${selCount?'':'opacity-50 pointer-events-none'}">Importar ${selCount||''} pedido${selCount!==1?'s':''}</button>
+    </div>`);
 }
 let CA_STOCK_ONLY=false; // filtro de la tarjeta "Unidades": solo productos con stock
 
@@ -6963,13 +7065,93 @@ function vincSearch(val){ SHOP_VQ=val; renderCAShopify(); const el=document.getE
 // Auto-vincular: rellena SOLO los que aún no tienen equivalencia usando la sugerencia por precio/talla.
 function autoVincularShopify(){ if(!DB.shopifyMap) DB.shopifyMap={}; let n=0; SHOPIFY_CATALOG.forEach(v=>{ if(DB.shopifyMap[v.sku]) return; const p=shopifySuggest(v); if(p){ DB.shopifyMap[v.sku]=p.id; n++; } }); save(); renderCAShopify(); if(typeof toastInfo==='function') toastInfo(n?('Se sugirieron '+n+' vínculos. Revísalos y ajusta los que no calcen.'):'No hubo vínculos nuevos por sugerir.'); }
 function limpiarVinculosShopify(){ if(!confirm('¿Borrar TODAS las equivalencias Shopify↔Plataforma? Los SKU no se tocan, solo la tabla de vínculos.')) return; DB.shopifyMap={}; save(); renderCAShopify(); }
+/* --------- STOCK CASA AUGUSTA → SHOPIFY ---------
+   La plataforma (Casa Augusta) es la matriz. Aquí se calcula, por cada SKU de Shopify vinculado,
+   cuánto stock debe quedar PUBLICADO en Shopify = max(0, stockCA - colchón).
+   La app NO puede empujar sola a Shopify (es estática). El usuario copia la lista y me pide
+   "sincroniza el stock a Shopify"; yo la empujo por MCP (set-inventory) con red de seguridad. */
+function shopifyStockBuffer(){ const b=Number(DB.shopifyStockBuffer); return isNaN(b)?1:Math.max(0,b); }
+function setShopifyStockBuffer(val){ let n=parseInt(val,10); if(isNaN(n)||n<0) n=0; DB.shopifyStockBuffer=n; save(); renderCAShopify(); }
+// Filas de stock: solo variantes de Shopify VINCULADAS a un producto de la plataforma.
+function shopifyStockRows(){ const buf=shopifyStockBuffer();
+  return SHOPIFY_CATALOG.map(v=>{ const p=productByShopifySku(v.sku); if(!p) return null;
+    const cca=stockCA(p.id); const objetivo=Math.max(0, cca-buf);
+    return {sku:v.sku, producto:v.producto, talla:v.talla, prod:p, stockCA:cca, buffer:buf, objetivo};
+  }).filter(Boolean).sort((a,b)=>a.producto.localeCompare(b.producto,'es',{numeric:true}));
+}
+// Texto que el usuario copia y me pega para que yo empuje a Shopify.
+function copyShopifyStockList(){ const rows=shopifyStockRows(); if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía. Vincula primero en la pestaña "Vincular SKU".'); return; }
+  const fecha=new Date().toISOString().slice(0,10);
+  const lineas=rows.map(r=>`${r.sku}\t${r.objetivo}`).join('\n');
+  const txt=`Sincronizar stock Casa Augusta → Shopify (colchón ${shopifyStockBuffer()} u.) — ${fecha}\nSKU\tDISPONIBLE_ONLINE\n${lineas}`;
+  const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Lista copiada. Pégamela en el chat y dime "sincroniza el stock a Shopify".'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
+}
+function shopStockFallbackCopy(txt,cb){ try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); if(cb)cb(); }catch(e){ if(typeof toastInfo==='function') toastInfo('No se pudo copiar automáticamente. Selecciona el texto a mano.'); } }
+function renderShopStock(){
+  const buf=shopifyStockBuffer();
+  const rows=shopifyStockRows();
+  const vinc=rows.length, total=SHOPIFY_CATALOG.length, faltan=total-vinc;
+  const totalObjetivo=rows.reduce((a,r)=>a+r.objetivo,0);
+  const totalCA=rows.reduce((a,r)=>a+r.stockCA,0);
+  const reservado=totalCA-totalObjetivo;
+  const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl leading-none">📦</div>
+      <div class="text-sm text-clay-700 leading-snug">
+        <div class="font-semibold text-clay-800 mb-0.5">El stock de Casa Augusta manda a Shopify</div>
+        Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = stock de Casa Augusta <b>menos el colchón</b> de seguridad.
+        <div class="text-xs text-clay-500 mt-1.5">La app no puede escribir sola en Shopify. Copia la lista y pídeme <b>“sincroniza el stock a Shopify”</b>: yo empujo cada cantidad a Shopify de forma segura (sin pisar cambios recientes).</div>
+      </div>
+    </div>
+  </div>`;
+  const stats=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Productos vinculados',vinc,'de '+total+(faltan?(' · faltan '+faltan):''),faltan?'text-amber-600':'text-sage-700')}
+    ${statCard('A publicar online',totalObjetivo,'unidades','text-blue-700')}
+    ${statCard('Reservado (colchón)',reservado,buf+' u. por producto','text-clay-600')}
+  </div>`;
+  const acciones=`<div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-3">
+    <label class="text-sm text-clay-600 flex items-center gap-2">Colchón de seguridad
+      <input type="number" min="0" value="${buf}" onchange="setShopifyStockBuffer(this.value)" class="border border-clay-200 rounded-xl px-2.5 py-1.5 text-sm w-20 text-center tabular-nums">
+      <span class="text-xs text-clay-400">u. por producto</span>
+    </label>
+    <button onclick="copyShopifyStockList()" class="text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl ml-auto">📋 Copiar lista para sincronizar</button>
+  </div>`;
+  if(!vinc){ return banner+stats+acciones+emptyState({icon:'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', titulo:'Aún no hay SKU vinculados', detalle:'Ve a la pestaña "Vincular SKU" y conecta los productos de Shopify con la plataforma. Aquí aparecerá el stock a publicar.'}); }
+  const pillObj=(r)=>{ if(r.objetivo===0) return pill('Agotado online','red'); if(r.stockCA<=buf) return pill('Solo colchón','amber'); return pill(r.objetivo+' disponible','green'); };
+  const filaDesktop=(r)=>`<tr class="border-t border-clay-100">
+    <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku}</div></td>
+    <td class="px-4 py-3 text-center text-clay-500">${r.talla}</td>
+    <td class="px-4 py-3 text-right tabular-nums font-semibold ${r.stockCA<=0?'text-red-600':'text-clay-800'}">${r.stockCA}</td>
+    <td class="px-4 py-3 text-center tabular-nums text-clay-400">−${r.buffer}</td>
+    <td class="px-4 py-3 text-right tabular-nums font-bold text-blue-700">${r.objetivo}</td>
+    <td class="px-4 py-3 text-center">${pillObj(r)}</td>
+  </tr>`;
+  const filaMobile=(r)=>`<div class="bg-white border border-clay-100 rounded-2xl p-3.5">
+    <div class="flex justify-between items-start gap-2">
+      <div class="min-w-0"><div class="font-bold truncate">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku} · Talla ${r.talla}</div></div>
+      <div class="text-right shrink-0"><div class="text-lg font-bold leading-none text-blue-700 tabular-nums">${r.objetivo}</div><div class="text-[11px] text-clay-400">online</div></div>
+    </div>
+    <div class="mt-2 flex items-center justify-between text-xs text-clay-500"><span>Casa Augusta: <b class="tabular-nums ${r.stockCA<=0?'text-red-600':'text-clay-700'}">${r.stockCA}</b> − colchón ${r.buffer}</span>${pillObj(r)}</div>
+  </div>`;
+  const tabla=`<div class="card overflow-hidden">
+    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm min-w-[720px]">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+        <th class="text-left px-4 py-3">Producto</th><th class="text-center px-4 py-3">Talla</th><th class="text-right px-4 py-3">Stock Casa Augusta</th><th class="text-center px-4 py-3">Colchón</th><th class="text-right px-4 py-3">Disponible online</th><th class="text-center px-4 py-3">Estado</th>
+      </tr></thead><tbody>${rows.map(filaDesktop).join('')}</tbody></table></div>
+    <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${rows.map(filaMobile).join('')}</div>
+  </div>`;
+  return banner+stats+acciones+tabla;
+}
 function renderCAShopify(){
   const v=document.getElementById('view');
   const tabBar=`<div class="flex gap-1 mb-4 bg-clay-100 p-1 rounded-2xl w-full sm:w-auto sm:inline-flex">
     <button onclick="setShopTab('ventas')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='ventas'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Ventas Shopify</button>
     <button onclick="setShopTab('vinculacion')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='vinculacion'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Vincular SKU <span class="ml-1 text-[11px] tabular-nums ${shopifyMapCount()===SHOPIFY_CATALOG.length?'text-sage-600':'text-clay-400'}">${shopifyMapCount()}/${SHOPIFY_CATALOG.length}</span></button>
+    <button onclick="setShopTab('stock')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='stock'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Stock → Shopify</button>
   </div>`;
   if(SHOP_TAB==='vinculacion'){ v.innerHTML=tabBar+renderShopVinculacion(); return; }
+  if(SHOP_TAB==='stock'){ v.innerHTML=tabBar+renderShopStock(); return; }
   const allSales=[...caShopifySales()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   const periodos=[...new Set(allSales.map(s=>(s.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const q=(SHOP_Q||'').toLowerCase().trim();
@@ -6983,18 +7165,23 @@ function renderCAShopify(){
   const porCobrar=rows.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
   const unidades=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
   const hayFiltro=(SHOP_MES!=='todos'||q!=='');
+  const pend=shopifyOrdersPendientes();
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
       <div class="text-2xl leading-none">🛍️</div>
-      <div class="text-sm text-clay-700 leading-snug">
+      <div class="text-sm text-clay-700 leading-snug flex-1">
         <div class="font-semibold text-clay-800 mb-0.5">Ventas de la tienda online (Shopify)</div>
         Aquí ves las ventas hechas por Shopify. Son ventas de Casa Augusta: <b>descuentan el mismo stock de Casa Augusta</b> y también aparecen en "Registrar venta".
-        <div class="text-xs text-clay-500 mt-1.5">Por ahora se registran a mano con el botón <b>“Registrar venta Shopify”</b>. Cuando conectemos Shopify a la plataforma, estas ventas entrarán solas.</div>
+        <div class="text-xs text-clay-500 mt-1.5">Puedes <b>importar los pedidos de Shopify</b> con el botón de abajo (foto del ${SHOPIFY_ORDERS_FECHA}) o registrar una venta a mano. Los pedidos de prueba vienen desmarcados.</div>
       </div>
     </div>
   </div>`;
+  const importRow=`<div class="flex flex-wrap gap-2 mb-4">
+    <button onclick="importShopifyOrders()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl inline-flex items-center gap-2">⬇️ Importar pedidos de Shopify${pend?` <span class="bg-white/25 rounded-full px-2 py-0.5 text-xs tabular-nums">${pend} nuevo${pend!==1?'s':''}</span>`:''}</button>
+    <button onclick="openCASale(null,'Shopify')" class="text-sm font-semibold text-clay-700 border border-clay-200 hover:bg-clay-50 px-4 py-2.5 rounded-xl">+ Registrar venta a mano</button>
+  </div>`;
   if(!allSales.length){
-    v.innerHTML = tabBar + banner + emptyState({icon:'M9 2L6 6v14a2 2 0 002 2h8a2 2 0 002-2V6l-3-4zM6 6h12M15 10a3 3 0 01-6 0', titulo:'Sin ventas de Shopify todavía', detalle:'Cuando registres o importes una venta de Shopify, aparecerá aquí.', accion:`<button onclick="openCASale(null,'Shopify')" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">Registrar venta Shopify</button>`});
+    v.innerHTML = tabBar + banner + importRow + emptyState({icon:'M9 2L6 6v14a2 2 0 002 2h8a2 2 0 002-2V6l-3-4zM6 6h12M15 10a3 3 0 01-6 0', titulo:'Sin ventas de Shopify todavía', detalle:'Importa los pedidos de Shopify con el botón de arriba, o registra una venta a mano.', accion:`<button onclick="importShopifyOrders()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">⬇️ Importar pedidos de Shopify</button>`});
     return;
   }
   const selCls='border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white';
@@ -7011,6 +7198,7 @@ function renderCAShopify(){
   v.innerHTML=`
   ${tabBar}
   ${banner}
+  ${importRow}
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Ventas Shopify',rows.length,SHOP_MES!=='todos'?mesLabel(SHOP_MES):'registradas','text-blue-700')}
     ${statCard('Total vendido',fmt(totalVentas),'','text-sage-700')}
@@ -7058,50 +7246,60 @@ function renderShopVinculacion(){
   const optionsFor=(pid)=>`<option value="">— Sin vincular —</option>`+prods.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${productName(p)}${p.precioRef?' · '+fmt(p.precioRef):''}</option>`).join('');
   const cat=SHOPIFY_CATALOG.filter(v=>{ if(!q) return true; return (v.producto+' '+v.sku).toLowerCase().includes(q); });
   const vinculados=shopifyMapCount(), total=SHOPIFY_CATALOG.length, faltan=total-vinculados;
+  const desalineados=shopifyPrecioDesalineados();
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
       <div class="text-2xl leading-none">🔗</div>
       <div class="text-sm text-clay-700 leading-snug">
-        <div class="font-semibold text-clay-800 mb-0.5">Emparejar los SKU de Shopify con la plataforma</div>
-        Tu plataforma es la <b>matriz</b> (la fuente de verdad). Aquí conectas cada producto de Shopify con su equivalente en la plataforma, <b>sin cambiar ningún SKU</b>. Así ambos "se leen igual" y las ventas de Shopify sabrán a qué producto descontar.
-        <div class="text-xs text-clay-500 mt-1.5">Usa <b>“Sugerir automático”</b> para un primer emparejamiento por precio y talla, luego revisa cada uno.</div>
+        <div class="font-semibold text-clay-800 mb-0.5">Emparejar los SKU y precios de Shopify con la plataforma</div>
+        Tu plataforma es la <b>matriz</b> (la fuente de verdad). Aquí conectas cada producto de Shopify con su equivalente en la plataforma, <b>sin cambiar ningún SKU</b>, y mantienes los <b>precios iguales a Shopify</b>. Los precios mostrados vienen de Shopify (última sincronización: <b>${SHOPIFY_PRECIOS_FECHA}</b>).
+        <div class="text-xs text-clay-500 mt-1.5">Cuando cambies un precio en Shopify, pídeme <b>“actualiza los precios desde Shopify”</b> y los dejo al día; luego con <b>“Igualar precios a Shopify”</b> se pasan a la plataforma.</div>
       </div>
     </div>
   </div>`;
   const stats=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Vinculados',vinculados,'de '+total,'text-sage-700')}
     ${statCard('Por vincular',faltan,faltan?'pendientes':'¡completo!',faltan?'text-red-600':'text-sage-700')}
-    ${statCard('Productos plataforma',prods.length,'disponibles','')}
+    ${statCard('Precios desalineados',desalineados,desalineados?'distintos a Shopify':'todos al día',desalineados?'text-red-600':'text-sage-700')}
   </div>`;
   const acciones=`<div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-2">
     <input id="vincQ" value="${(SHOP_VQ||'').replace(/"/g,'&quot;')}" oninput="vincSearch(this.value)" placeholder="Buscar producto o SKU de Shopify..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
-    <button onclick="autoVincularShopify()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl">✨ Sugerir automático</button>
+    <button onclick="autoVincularShopify()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl">✨ Sugerir vínculos</button>
+    ${desalineados?`<button onclick="aplicarTodosPreciosShopify()" class="text-xs font-semibold text-white bg-sage-700 hover:bg-sage-800 px-3 py-2 rounded-xl">💲 Igualar precios a Shopify (${desalineados})</button>`:''}
     ${vinculados?`<button onclick="limpiarVinculosShopify()" class="text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 px-3 py-2 rounded-xl">Borrar vínculos</button>`:''}
     <div class="text-xs text-clay-400 ml-auto">${cat.length} de ${total} variante${total!==1?'s':''}</div>
   </div>`;
   const selCls='border border-clay-200 rounded-xl px-2.5 py-2 text-sm bg-white w-full';
+  // Celda de precio de la plataforma comparado con el de Shopify.
+  const precioCell=(v,p)=>{ if(!p) return `<span class="text-clay-300">—</span>`;
+    const pl=Number(p.precioRef)||0, sh=Number(v.precio)||0;
+    if(pl===sh) return `<span class="text-sage-600 tabular-nums">${fmt(pl)} ✓</span>`;
+    return `<div class="text-amber-600 tabular-nums font-medium">${fmt(pl)}</div><button onclick="aplicarPrecioShopify('${v.sku}')" class="mt-0.5 text-[11px] font-semibold text-sage-700 hover:text-sage-900">→ usar ${fmt(sh)}</button>`; };
   // Fila por variante Shopify.
   const filaDesktop=(v)=>{ const pid=(DB.shopifyMap||{})[v.sku]; const p=pid?productById(pid):null; const sug=(!p)?shopifySuggest(v):null;
     return `<tr class="border-t border-clay-100 ${p?'':'bg-amber-50/40'}">
       <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${v.producto}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · <span class="text-amber-600">borrador</span>':''}</div></td>
       <td class="px-4 py-3 text-center text-clay-500 whitespace-nowrap">${v.talla}</td>
-      <td class="px-4 py-3 text-right tabular-nums text-clay-600 whitespace-nowrap">${fmt(v.precio)}</td>
+      <td class="px-4 py-3 text-right tabular-nums text-clay-700 font-semibold whitespace-nowrap">${fmt(v.precio)}</td>
       <td class="px-4 py-3 min-w-[240px]"><select onchange="setShopMap('${v.sku}',this.value)" class="${selCls}">${optionsFor(pid)}</select>${sug?`<button onclick="setShopMap('${v.sku}','${sug.id}')" class="mt-1 text-[11px] font-medium text-clay-500 hover:text-clay-800">Sugerido: <b>${productName(sug)}</b> — usar</button>`:''}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap">${precioCell(v,p)}</td>
       <td class="px-4 py-3 text-center whitespace-nowrap">${p?pill('Vinculado','green'):pill('Falta','amber')}</td>
     </tr>`; };
   const filaMobile=(v)=>{ const pid=(DB.shopifyMap||{})[v.sku]; const p=pid?productById(pid):null; const sug=(!p)?shopifySuggest(v):null;
-    return `<div class="bg-white border ${p?'border-clay-100':'border-amber-200'} rounded-2xl p-3.5">
+    const pl=p?(Number(p.precioRef)||0):null, sh=Number(v.precio)||0, dif=(p&&pl!==sh);
+    return `<div class="bg-white border ${p?(dif?'border-amber-200':'border-clay-100'):'border-amber-200'} rounded-2xl p-3.5">
       <div class="flex justify-between items-start gap-2">
         <div class="min-w-0"><div class="font-bold truncate">${v.producto}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · borrador':''}</div></div>
-        <div class="text-right shrink-0"><div class="text-sm font-semibold tabular-nums">${fmt(v.precio)}</div><div class="text-[11px] text-clay-400">Talla ${v.talla}</div></div>
+        <div class="text-right shrink-0"><div class="text-sm font-semibold tabular-nums">${fmt(v.precio)}</div><div class="text-[11px] text-clay-400">Shopify · Talla ${v.talla}</div></div>
       </div>
       <div class="mt-2.5"><select onchange="setShopMap('${v.sku}',this.value)" class="${selCls}">${optionsFor(pid)}</select>${sug?`<button onclick="setShopMap('${v.sku}','${sug.id}')" class="mt-1.5 text-[11px] font-medium text-clay-500 hover:text-clay-800">Sugerido: <b>${productName(sug)}</b> — usar</button>`:''}</div>
+      ${p?`<div class="mt-2 text-xs">Precio plataforma: ${dif?`<span class="text-amber-600 font-semibold tabular-nums">${fmt(pl)}</span> <button onclick="aplicarPrecioShopify('${v.sku}')" class="ml-1 font-semibold text-sage-700">→ igualar a ${fmt(sh)}</button>`:`<span class="text-sage-600 tabular-nums">${fmt(pl)} ✓</span>`}</div>`:''}
       <div class="mt-2.5">${p?pill('Vinculado','green'):pill('Falta vincular','amber')}</div>
     </div>`; };
   const tabla = cat.length? `<div class="card overflow-hidden">
-    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm min-w-[720px]">
+    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm min-w-[820px]">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
-        <th class="text-left px-4 py-3">Producto Shopify</th><th class="text-center px-4 py-3">Talla</th><th class="text-right px-4 py-3">Precio</th><th class="text-left px-4 py-3">Producto en la plataforma</th><th class="text-center px-4 py-3">Estado</th>
+        <th class="text-left px-4 py-3">Producto Shopify</th><th class="text-center px-4 py-3">Talla</th><th class="text-right px-4 py-3">Precio Shopify</th><th class="text-left px-4 py-3">Producto en la plataforma</th><th class="text-right px-4 py-3">Precio plataforma</th><th class="text-center px-4 py-3">Estado</th>
       </tr></thead><tbody>${cat.map(filaDesktop).join('')}</tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${cat.map(filaMobile).join('')}</div>
   </div>`
