@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-130';
+const APP_VERSION = '2026.09.10-131';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -720,6 +720,7 @@ function bootFirebaseApp(){
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol, mods:userMods(u)};
     FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; if(!DB.transfers)DB.transfers=[]; if(!DB.caReturns)DB.caReturns=[]; migrarCuentas(); refreshSessionPerms(); rerender(); });
     showApp();
+    iniciarBuzonShopify(); // revisa el buzón de ventas de Shopify cada 60 s mientras la app está abierta
   });
 }
 function doLogin(){
@@ -7157,6 +7158,69 @@ function mostrarResultadoSync(data){
       <button onclick="closeModal()" class="mt-5 bg-clay-700 hover:bg-clay-800 text-white font-semibold px-6 py-2.5 rounded-xl">Entendido</button>
     </div>`);
 }
+/* --------- BUZÓN: IMPORTACIÓN AUTOMÁTICA DE VENTAS DE SHOPIFY ---------
+   Cada venta nueva de Shopify llega al "buzón" seguro (Cloudflare KV) vía webhook.
+   El puente NUNCA toca la base de datos: solo guarda la venta hasta que la app la recoge.
+   Mientras la plataforma está abierta, revisa el buzón cada 60 s y, por cada venta nueva:
+     1) la convierte en venta de Casa Augusta (canal Shopify) → descuenta stockCA,
+     2) reenvía el stock actualizado de Casa Augusta a Shopify (silencioso),
+     3) le avisa al buzón que ya la importó, para que se borre del KV.
+   Si una venta trae un SKU aún NO vinculado, NO se importa ni se borra: queda en el
+   buzón esperando a que se cree el vínculo, y entra sola en el siguiente ciclo. */
+let BUZON_TIMER=null, BUZON_RUNNING=false, BUZON_LAST=0;
+// Versión SILENCIOSA de la sincronización de stock (sin confirmación ni modal): se usa
+// automáticamente después de importar una venta del buzón. La manual sigue igual.
+async function sincronizarStockShopifyAuto(){
+  if(!shopSyncConfigured()) return;
+  const rows=shopifyStockRows(); if(!rows.length) return;
+  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo}));
+  try{
+    const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
+    const data=await res.json().catch(()=>null);
+    if(res.ok && data && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); save(); try{ if(CURRENT==='ca_shopify') renderCAShopify(); }catch(_){} }
+  }catch(e){ /* silencioso: se reintenta en el próximo ciclo */ }
+}
+// Revisa el buzón e importa las ventas nuevas. silent=true por defecto (ciclo automático).
+async function revisarBuzonShopify(silent){
+  if(BUZON_RUNNING) return; if(!DB || !shopSyncConfigured()) return;
+  BUZON_RUNNING=true;
+  try{
+    const base=(DB.shopifySyncUrl||'').replace(/\/+$/,'');
+    const res=await fetch(base+'/pending',{ headers:{'X-Sync-Key':DB.shopifySyncKey} });
+    const data=await res.json().catch(()=>null);
+    if(!res.ok || !data || !data.ok){ if(!silent && typeof toastInfo==='function') toastInfo('No se pudo leer el buzón de ventas. Revisa la configuración del puente.'); return; }
+    const pend=Array.isArray(data.orders)?data.orders:[];
+    BUZON_LAST=Date.now();
+    if(!pend.length){ if(!silent && typeof toastInfo==='function') toastInfo('No hay ventas nuevas de Shopify por importar.'); return; }
+    let importadas=0, sinVinculo=0; const ackIds=[];
+    for(const o of pend){
+      if(shopifyOrderImportado(o.orderId)){ ackIds.push(o.orderId); continue; } // ya estaba: solo limpiar buzón
+      const venta=buildSaleFromShopifyOrder(o);
+      if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
+      else { sinVinculo++; } // sin SKU vinculado: se DEJA en el buzón (no se acusa)
+    }
+    if(importadas){ save(); }
+    // Avisar al buzón SOLO de las que ya quedaron en la plataforma (o duplicadas).
+    if(ackIds.length){
+      try{ await fetch(base+'/ack',{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({orderIds:ackIds}) }); }catch(_){}
+    }
+    if(importadas){
+      if(typeof toastInfo==='function') toastInfo('🛍️ '+importadas+' venta(s) de Shopify importada(s). Actualizando stock…');
+      try{ rerender(); }catch(_){}
+      await sincronizarStockShopifyAuto(); // devolver el stock actualizado a Shopify
+    } else if(!silent && typeof toastInfo==='function'){
+      toastInfo(sinVinculo?('Hay '+sinVinculo+' venta(s) con SKU sin vincular. Vincula el SKU y se importarán solas.'):'No hay ventas nuevas por importar.');
+    }
+    if(sinVinculo && importadas && typeof toastInfo==='function') setTimeout(()=>toastInfo('Nota: '+sinVinculo+' venta(s) quedaron en espera por SKU sin vincular.'),1500);
+  }catch(e){ if(!silent && typeof toastInfo==='function') toastInfo('No se pudo conectar con el buzón de ventas.'); }
+  finally{ BUZON_RUNNING=false; }
+}
+// Arranca el sondeo del buzón (una sola vez por sesión). Primer chequeo a los ~8 s.
+function iniciarBuzonShopify(){
+  if(BUZON_TIMER) return;
+  setTimeout(()=>revisarBuzonShopify(true), 8000);
+  BUZON_TIMER=setInterval(()=>revisarBuzonShopify(true), 60000);
+}
 function renderShopStock(){
   const buf=shopifyStockBuffer();
   const rows=shopifyStockRows();
@@ -7171,6 +7235,7 @@ function renderShopStock(){
         <div class="font-semibold text-clay-800 mb-0.5">El stock de Casa Augusta manda a Shopify</div>
         Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = stock de Casa Augusta <b>menos el colchón</b> de seguridad.
         <div class="text-xs text-clay-500 mt-1.5">Con el botón <b>“Sincronizar ahora”</b> se envía este stock a Shopify al instante (fija el "disponible online" de cada producto, sin pisar cambios recientes).</div>
+        <div class="text-xs text-sage-700 mt-1.5">🔄 <b>Círculo automático activo:</b> cada venta nueva de Shopify entra sola a la plataforma (mientras la tienes abierta), descuenta el stock y devuelve el stock actualizado a Shopify. Con <b>“Revisar ventas Shopify”</b> lo fuerzas al instante.</div>
       </div>
     </div>
   </div>`;
@@ -7193,6 +7258,7 @@ function renderShopStock(){
     </label>
     <div class="flex flex-wrap items-center gap-2 ml-auto">
       ${botonSync}
+      ${cfg?`<button onclick="revisarBuzonShopify(false)" title="Buscar ventas nuevas de Shopify e importarlas ahora" class="text-sm font-semibold text-clay-700 border border-clay-300 hover:bg-clay-50 px-3 py-2 rounded-xl">🛍️ Revisar ventas Shopify</button>`:''}
       ${cfg&&!SHOP_SYNC_RUNNING?`<button onclick="abrirConfigSync()" title="Editar configuración" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-2.5 py-2 rounded-xl">⚙️</button>`:''}
       <button onclick="copyShopifyStockList()" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar lista</button>
     </div>
