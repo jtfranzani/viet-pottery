@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.09.10-131';
+const APP_VERSION = '2026.09.10-132';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -484,7 +484,7 @@ function setSaveState(state){
   else if(state==='saved'){ el.innerHTML='<span style="color:#4d7a4a">●</span><span style="color:#4d7a4a">Guardado</span>'; el.style.opacity='1'; _saveIndT=setTimeout(()=>{el.style.opacity='0';},1800); }
   else if(state==='error'){ el.innerHTML='<span style="color:#dc2626">⚠</span><span style="color:#dc2626">No se pudo guardar</span>'; el.style.opacity='1'; _saveIndT=setTimeout(()=>{el.style.opacity='0';},4000); }
 }
-function save(){ if(window.FB && DB){ try{ setSaveState('saving'); const p=FB.setData(DB); if(p&&p.then){ p.then(()=>setSaveState('saved')).catch(e=>{ console.error('save error',e); setSaveState('error'); if(typeof toastInfo==='function') toastInfo('⚠️ No se pudo guardar en la nube: '+((e&&e.message)||'error')); }); } else { setSaveState('saved'); } }catch(e){ console.error(e); setSaveState('error'); } } }
+function save(){ if(window.FB && DB){ try{ setSaveState('saving'); const p=FB.setData(DB); if(p&&p.then){ p.then(()=>setSaveState('saved')).catch(e=>{ console.error('save error',e); setSaveState('error'); if(typeof toastInfo==='function') toastInfo('⚠️ No se pudo guardar en la nube: '+((e&&e.message)||'error')); }); } else { setSaveState('saved'); } try{ if(typeof programarPushStockShopify==='function') programarPushStockShopify(); }catch(_){} }catch(e){ console.error(e); setSaveState('error'); } } }
 // ¿Tiene foto de entrega? (nuevo formato en blob o el antiguo inline)
 const tieneFotoEntrega = s => !!(s && (s.fotoEntregaId || s.fotoEntrega));
 // Recencia de la entrega (para ordenar de más reciente a más antiguo)
@@ -7136,7 +7136,7 @@ async function sincronizarStockShopify(){
     const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
     const data=await res.json().catch(()=>({ok:false,error:'La respuesta del puente no es válida.'}));
     SHOP_SYNC_RUNNING=false;
-    if(res.ok && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); save(); }
+    if(res.ok && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); try{ _shopPushedSig=shopStockSig(); }catch(_){} save(); }
     renderCAShopify();
     mostrarResultadoSync((res.ok&&data.ok)?data:{ok:false, error:(data&&data.error)||('Error HTTP '+res.status), results:data&&data.results});
   }catch(e){
@@ -7171,14 +7171,36 @@ let BUZON_TIMER=null, BUZON_RUNNING=false, BUZON_LAST=0;
 // Versión SILENCIOSA de la sincronización de stock (sin confirmación ni modal): se usa
 // automáticamente después de importar una venta del buzón. La manual sigue igual.
 async function sincronizarStockShopifyAuto(){
-  if(!shopSyncConfigured()) return;
-  const rows=shopifyStockRows(); if(!rows.length) return;
+  if(!shopSyncConfigured()) return false;
+  const rows=shopifyStockRows(); if(!rows.length) return false;
   const items=rows.map(r=>({sku:r.sku, qty:r.objetivo}));
   try{
     const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
     const data=await res.json().catch(()=>null);
-    if(res.ok && data && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); save(); try{ if(CURRENT==='ca_shopify') renderCAShopify(); }catch(_){} }
+    if(res.ok && data && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); _shopPushedSig=shopStockSig(); save(); try{ if(CURRENT==='ca_shopify') renderCAShopify(); }catch(_){} return true; }
   }catch(e){ /* silencioso: se reintenta en el próximo ciclo */ }
+  return false;
+}
+/* --------- PUSH AUTOMÁTICO DEL STOCK A SHOPIFY (venta/ajuste en la plataforma) ---------
+   La plataforma es la matriz. Cada vez que cambia el stock aquí (una venta presencial,
+   un pedido, un ajuste, una devolución, una transferencia), se reenvía el stock a Shopify
+   SOLO, con un retardo (debounce) de ~15 s para agrupar cambios seguidos. Solo se envía si
+   el stock objetivo cambió de verdad respecto al último envío (evita llamadas inútiles). */
+let _shopPushTimer=null, _shopPushedSig=null;
+// "Firma" del stock objetivo actual: sku:cantidad|sku:cantidad… Si no cambia, no se reenvía.
+function shopStockSig(){ try{ return shopifyStockRows().map(r=>r.sku+':'+r.objetivo).join('|'); }catch(_){ return null; } }
+// Programa un envío con retardo. Se llama desde save() en cada cambio de la base.
+function programarPushStockShopify(){
+  if(!shopSyncConfigured()) return;
+  clearTimeout(_shopPushTimer);
+  _shopPushTimer=setTimeout(()=>pushStockShopifySiCambio(), 15000);
+}
+// Envía solo si el stock objetivo cambió respecto al último envío exitoso.
+async function pushStockShopifySiCambio(){
+  if(!shopSyncConfigured() || SHOP_SYNC_RUNNING) return;
+  const sig=shopStockSig();
+  if(sig===null || sig===_shopPushedSig) return; // sin cambios reales de stock: no molestar a Shopify
+  await sincronizarStockShopifyAuto();
 }
 // Revisa el buzón e importa las ventas nuevas. silent=true por defecto (ciclo automático).
 async function revisarBuzonShopify(silent){
@@ -7236,6 +7258,7 @@ function renderShopStock(){
         Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = stock de Casa Augusta <b>menos el colchón</b> de seguridad.
         <div class="text-xs text-clay-500 mt-1.5">Con el botón <b>“Sincronizar ahora”</b> se envía este stock a Shopify al instante (fija el "disponible online" de cada producto, sin pisar cambios recientes).</div>
         <div class="text-xs text-sage-700 mt-1.5">🔄 <b>Círculo automático activo:</b> cada venta nueva de Shopify entra sola a la plataforma (mientras la tienes abierta), descuenta el stock y devuelve el stock actualizado a Shopify. Con <b>“Revisar ventas Shopify”</b> lo fuerzas al instante.</div>
+        <div class="text-xs text-sage-700 mt-1.5">⬆️ <b>Y al revés también:</b> cuando haces una venta o un ajuste en la plataforma, el stock se envía solo a Shopify en unos ~15 segundos, sin que tengas que apretar nada. El botón <b>“Sincronizar ahora”</b> sigue disponible por si quieres forzarlo.</div>
       </div>
     </div>
   </div>`;
