@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.07.09-129';
+const APP_VERSION = '2026.07.09-130';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -517,6 +517,8 @@ async function bootData(){
   if(!DB.prospectos) DB.prospectos=[]; // Prospectos de clientes (interesados en Casa Augusta)
   if(!DB.shopifyMap) DB.shopifyMap={}; // Vinculación: { skuShopify : idProductoPlataforma }. La plataforma es la matriz.
   if(DB.shopifyStockBuffer==null) DB.shopifyStockBuffer=1; // Colchón: unidades que se reservan y NO se publican en Shopify (protege la venta presencial).
+  if(DB.shopifySyncUrl==null) DB.shopifySyncUrl=''; // URL del puente (Cloudflare Worker) que escribe el stock en Shopify.
+  if(DB.shopifySyncKey==null) DB.shopifySyncKey=''; // Clave compartida con el puente (se guarda en Firestore, no en el HTML público).
   // Migración: distinguir el ORIGEN de la venta (dónde se generó) de la BODEGA (de dónde sale el stock).
   // Una venta es de Casa Augusta SOLO si se generó en ese punto (tipoDespacho==='CA'),
   // no por el solo hecho de descontar stock de Casa Augusta. Las ventas de Pedidos que usan
@@ -7088,6 +7090,73 @@ function copyShopifyStockList(){ const rows=shopifyStockRows(); if(!rows.length)
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
 }
 function shopStockFallbackCopy(txt,cb){ try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); if(cb)cb(); }catch(e){ if(typeof toastInfo==='function') toastInfo('No se pudo copiar automáticamente. Selecciona el texto a mano.'); } }
+// ---- Sincronización automática vía "puente" (Cloudflare Worker) ----
+// La URL y la clave se guardan en Firestore (DB), no en el HTML público: solo las ve quien inicia sesión.
+function shopSyncConfigured(){ return !!(DB.shopifySyncUrl && DB.shopifySyncKey); }
+function abrirConfigSync(){
+  const url=(DB.shopifySyncUrl||'').replace(/"/g,'&quot;');
+  const key=(DB.shopifySyncKey||'').replace(/"/g,'&quot;');
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between">
+      <h3 class="text-lg font-bold">Configurar sincronización con Shopify</h3>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="text-sm text-clay-600 bg-blue-50 border border-blue-100 rounded-xl p-3 leading-snug">Pega aquí los datos del <b>puente</b> que se instaló una sola vez (revisa la guía). Quedan guardados de forma privada en tu cuenta.</div>
+      <label class="block"><span class="text-sm font-medium text-clay-700">URL del puente</span>
+        <input id="cfgSyncUrl" value="${url}" placeholder="https://viet-pottery-sync.tucuenta.workers.dev" class="mt-1 w-full border border-clay-200 rounded-xl px-3 py-2 text-sm font-mono">
+      </label>
+      <label class="block"><span class="text-sm font-medium text-clay-700">Clave secreta (SYNC_KEY)</span>
+        <input id="cfgSyncKey" value="${key}" placeholder="la misma clave que pusiste en Cloudflare" class="mt-1 w-full border border-clay-200 rounded-xl px-3 py-2 text-sm font-mono">
+      </label>
+      <div class="text-xs text-clay-400">La clave debe ser idéntica a la variable <b>SYNC_KEY</b> del puente en Cloudflare.</div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
+      <button onclick="guardarConfigSync()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Guardar</button>
+    </div>`);
+}
+function guardarConfigSync(){
+  const url=(document.getElementById('cfgSyncUrl')||{}).value||'';
+  const key=(document.getElementById('cfgSyncKey')||{}).value||'';
+  DB.shopifySyncUrl=url.trim(); DB.shopifySyncKey=key.trim(); save(); closeModal(); renderCAShopify();
+  if(typeof toastInfo==='function') toastInfo(shopSyncConfigured()?'✅ Sincronización configurada. Ya puedes usar "Sincronizar ahora".':'Guardado. Faltan datos para sincronizar.');
+}
+let SHOP_SYNC_RUNNING=false;
+async function sincronizarStockShopify(){
+  if(SHOP_SYNC_RUNNING) return;
+  if(!shopSyncConfigured()){ abrirConfigSync(); return; }
+  const rows=shopifyStockRows();
+  if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía.'); return; }
+  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo}));
+  if(!confirm('¿Enviar el stock de '+items.length+' productos a Shopify?\n\nSe fijará el "disponible online" (stock de Casa Augusta menos el colchón de '+shopifyStockBuffer()+') en tu tienda.')) return;
+  SHOP_SYNC_RUNNING=true; renderCAShopify();
+  try{
+    const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
+    const data=await res.json().catch(()=>({ok:false,error:'La respuesta del puente no es válida.'}));
+    SHOP_SYNC_RUNNING=false;
+    if(res.ok && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); save(); }
+    renderCAShopify();
+    mostrarResultadoSync((res.ok&&data.ok)?data:{ok:false, error:(data&&data.error)||('Error HTTP '+res.status), results:data&&data.results});
+  }catch(e){
+    SHOP_SYNC_RUNNING=false; renderCAShopify();
+    mostrarResultadoSync({ok:false, error:'No se pudo conectar con el puente. Revisa que la URL sea correcta y que el servicio esté publicado.\n\nDetalle: '+(e&&e.message||e)});
+  }
+}
+function mostrarResultadoSync(data){
+  const okCount=data.actualizados||0, total=data.total||0;
+  const fallidos=(data.results||[]).filter(r=>!r.ok);
+  const head = data.ok
+    ? `<div class="text-4xl">✅</div><div class="text-lg font-bold text-clay-800 mt-2">Stock enviado a Shopify</div><div class="text-sm text-clay-500 mt-1">${okCount} de ${total} productos actualizados.</div>`
+    : `<div class="text-4xl">⚠️</div><div class="text-lg font-bold text-clay-800 mt-2">No se pudo completar</div><div class="text-sm text-clay-600 mt-2 whitespace-pre-line">${(data.error||'Error desconocido')}</div>`;
+  const lista = fallidos.length? `<div class="mt-4 text-left"><div class="text-xs font-semibold text-red-600 uppercase mb-1">No se pudieron actualizar (${fallidos.length}):</div><div class="space-y-1 max-h-48 overflow-auto">${fallidos.map(r=>`<div class="text-xs text-clay-600 flex justify-between gap-2"><span class="font-mono">${r.sku}</span><span class="text-red-500">${r.error||''}</span></div>`).join('')}</div></div>`:'';
+  modal(`
+    <div class="p-6 text-center">
+      ${head}
+      ${lista}
+      <button onclick="closeModal()" class="mt-5 bg-clay-700 hover:bg-clay-800 text-white font-semibold px-6 py-2.5 rounded-xl">Entendido</button>
+    </div>`);
+}
 function renderShopStock(){
   const buf=shopifyStockBuffer();
   const rows=shopifyStockRows();
@@ -7101,7 +7170,7 @@ function renderShopStock(){
       <div class="text-sm text-clay-700 leading-snug">
         <div class="font-semibold text-clay-800 mb-0.5">El stock de Casa Augusta manda a Shopify</div>
         Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = stock de Casa Augusta <b>menos el colchón</b> de seguridad.
-        <div class="text-xs text-clay-500 mt-1.5">La app no puede escribir sola en Shopify. Copia la lista y pídeme <b>“sincroniza el stock a Shopify”</b>: yo empujo cada cantidad a Shopify de forma segura (sin pisar cambios recientes).</div>
+        <div class="text-xs text-clay-500 mt-1.5">Con el botón <b>“Sincronizar ahora”</b> se envía este stock a Shopify al instante (fija el "disponible online" de cada producto, sin pisar cambios recientes).</div>
       </div>
     </div>
   </div>`;
@@ -7110,12 +7179,23 @@ function renderShopStock(){
     ${statCard('A publicar online',totalObjetivo,'unidades','text-blue-700')}
     ${statCard('Reservado (colchón)',reservado,buf+' u. por producto','text-clay-600')}
   </div>`;
+  const cfg=shopSyncConfigured();
+  const ult=DB.shopifyStockSyncFecha?('Última: '+new Date(DB.shopifyStockSyncFecha).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):'';
+  const botonSync = SHOP_SYNC_RUNNING
+    ? `<button disabled class="text-sm font-semibold text-white bg-sage-400 px-4 py-2 rounded-xl inline-flex items-center gap-2 cursor-wait"><svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>Sincronizando…</button>`
+    : (cfg
+      ? `<button onclick="sincronizarStockShopify()" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">🔄 Sincronizar ahora${ult?` <span class="text-[11px] font-normal text-sage-100">· ${ult}</span>`:''}</button>`
+      : `<button onclick="abrirConfigSync()" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl">⚙️ Configurar sincronización</button>`);
   const acciones=`<div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-3">
     <label class="text-sm text-clay-600 flex items-center gap-2">Colchón de seguridad
       <input type="number" min="0" value="${buf}" onchange="setShopifyStockBuffer(this.value)" class="border border-clay-200 rounded-xl px-2.5 py-1.5 text-sm w-20 text-center tabular-nums">
       <span class="text-xs text-clay-400">u. por producto</span>
     </label>
-    <button onclick="copyShopifyStockList()" class="text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl ml-auto">📋 Copiar lista para sincronizar</button>
+    <div class="flex flex-wrap items-center gap-2 ml-auto">
+      ${botonSync}
+      ${cfg&&!SHOP_SYNC_RUNNING?`<button onclick="abrirConfigSync()" title="Editar configuración" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-2.5 py-2 rounded-xl">⚙️</button>`:''}
+      <button onclick="copyShopifyStockList()" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar lista</button>
+    </div>
   </div>`;
   if(!vinc){ return banner+stats+acciones+emptyState({icon:'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', titulo:'Aún no hay SKU vinculados', detalle:'Ve a la pestaña "Vincular SKU" y conecta los productos de Shopify con la plataforma. Aquí aparecerá el stock a publicar.'}); }
   const pillObj=(r)=>{ if(r.objetivo===0) return pill('Agotado online','red'); if(r.stockCA<=buf) return pill('Solo colchón','amber'); return pill(r.objetivo+' disponible','green'); };
