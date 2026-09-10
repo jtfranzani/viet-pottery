@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.09.10-132';
+const APP_VERSION = '2026.09.10-134';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -541,6 +541,22 @@ async function bootData(){
     (DB.sales||[]).forEach(s=>{ if(typeof s.pedidoNum==='string' && /^PED-\d+$/.test(s.pedidoNum)){ s.pedidoNum=''; migp=true; } });
     DB.migPedidoManual=true;
     if(migp||true) save();
+  }
+  // Migración: los pedidos importados de Shopify pasan a vivir en Ventas>Pedidos
+  // (origen distinto de 'CA', tipoDespacho 'Viet'), pero SIGUEN descontando el stock
+  // de Casa Augusta (bodega:'CA'). Antes se guardaban como ventas de Casa Augusta.
+  if(!DB.migShopifyPedidos){
+    let migs=false;
+    (DB.sales||[]).forEach(s=>{
+      if(s.shopifyOrderId && (s.origen==='CA' || s.tipoDespacho==='CA')){
+        s.origen=''; s.tipoDespacho='Viet'; s.bodega='CA'; s.canal='Shopify';
+        // Se limpian los campos específicos de Casa Augusta que ya no aplican al pedido.
+        delete s.caMetodo; delete s.caCurrier; delete s.caSeguimiento; delete s.caEstado;
+        migs=true;
+      }
+    });
+    DB.migShopifyPedidos=true;
+    if(migs||true) save();
   }
   // Migración: mover fotos de entrega antiguas (guardadas dentro del documento principal) a documentos aparte,
   // para liberar espacio y evitar que se supere el límite de tamaño de la base.
@@ -1996,7 +2012,7 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -2013,7 +2029,7 @@ function renderVentas(){
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             ${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
-            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
+            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
           </div>
           <div class="text-right shrink-0">
             <div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div>
@@ -6348,7 +6364,14 @@ const caPagoPill = s => s.pagado ? pill('Pagado','green') : pill('Por cobrar','r
 // Canal de la venta de Casa Augusta: presencial (showroom) o Shopify (tienda online). Las antiguas sin canal = Presencial.
 const caCanal = s => s.canal || 'Presencial';
 const caCanalPill = s => caCanal(s)==='Shopify' ? pill('🛍️ Shopify','blue') : pill('Presencial','gray');
-const caShopifySales = () => caSales().filter(s=>caCanal(s)==='Shopify');
+// Ventas Shopify: ahora se registran como PEDIDOS (Ventas>Pedidos) pero descuentan stock de
+// Casa Augusta. Esta pestaña las lista buscando el canal 'Shopify' en TODAS las ventas
+// (ya no dependen de origen==='CA'), excluyendo las anuladas.
+const caShopifySales = () => (DB.sales||[]).filter(s=>caCanal(s)==='Shopify' && !s.perdido);
+// Pills de la pestaña Shopify basados en el estado de despacho del PEDIDO (no en caEstado),
+// para que funcionen igual con pedidos recién importados y con pedidos ya editados.
+const shopEntregaPill = s => s.estadoDespacho==='entregado' ? pill('Entregado','green') : (s.estadoDespacho==='en_camino' ? pill('En camino','blue') : pill('Pendiente','amber'));
+const shopDespachoLabel = s => s.tipoDespacho && s.tipoDespacho!=='Viet' ? s.tipoDespacho : 'Despacho Viet';
 
 /* --------- VINCULACIÓN SHOPIFY ↔ PLATAFORMA ---------
    La PLATAFORMA es la matriz (única fuente de verdad). No cambiamos ningún SKU:
@@ -6464,7 +6487,9 @@ const SHOPIFY_ORDERS = [
 const SHOPIFY_ORDERS_FECHA = '10-09-2026';
 // ¿Ya está importado este pedido de Shopify? (se guarda shopifyOrderId en la venta)
 function shopifyOrderImportado(orderId){ return (DB.sales||[]).some(x=>x.shopifyOrderId===orderId); }
-// Construye una venta de Casa Augusta (canal Shopify) a partir de un pedido de Shopify.
+// Construye un PEDIDO (Ventas → Pedidos) a partir de un pedido de Shopify.
+// Sigue la misma lógica de un pedido normal (origen no-CA, tipoDespacho 'Viet'),
+// con la única diferencia de que el stock se descuenta de Casa Augusta (bodega:'CA').
 function buildSaleFromShopifyOrder(o){
   const items = (o.items||[]).map(li=>{
     const p = li.sku?productByShopifySku(li.sku):null;
@@ -6473,12 +6498,11 @@ function buildSaleFromShopifyOrder(o){
   }).filter(Boolean);
   if(!items.length) return null;
   const cli = resolveClient(o.cliente, o.ciudad||'Santiago', o.comuna||'', o.direccion||'', o.tel||'', o.email||'');
-  return { id:uid('s'), fecha:o.fecha, clienteNombre:o.cliente, clienteTel:o.tel||'', clienteId:cli?cli.id:'',
+  return { id:uid('s'), fecha:o.fecha, fechaEntrega:o.fecha, clienteNombre:o.cliente, clienteTel:o.tel||'', clienteId:cli?cli.id:'',
     direccion:o.direccion||'', ciudad:o.ciudad||'Santiago', comuna:o.comuna||'',
     items, pagado:!!o.pagado, docTipo:'pendiente', docNumero:'',
-    bodega:'CA', origen:'CA', tipoDespacho:'CA', canal:'Shopify',
-    caMetodo:'currier', caCurrier:'', caSeguimiento:'', caEstado:'pendiente',
-    cuenta:ACCOUNTS[0], costoEnvio:0, fechaEntrega:o.fecha, estadoDespacho:'pendiente', courier:'',
+    bodega:'CA', origen:'', tipoDespacho:'Viet', canal:'Shopify',
+    cuenta:ACCOUNTS[0], costoEnvio:0, estadoDespacho:'pendiente', courier:'',
     notas:'Importado de Shopify '+o.num, pedidoNum:o.num, shopifyOrderId:o.orderId, shopifyNum:o.num };
 }
 // ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
@@ -6956,6 +6980,114 @@ function descargarReporteVentasCA(){
   const tag=CAV_MES!=='todos'?CAV_MES:((CAV_DESDE||CAV_HASTA)?((CAV_DESDE||'')+'_'+(CAV_HASTA||'')):'todas');
   savePdfDoc(doc, 'reporte-ventas-casa-augusta-'+tag+'.pdf');
 }
+// Texto del periodo elegido (para mostrar en el modal y en el PDF detallado)
+function caPeriodoTexto(rows){
+  const fechas=(rows||[]).map(s=>s.fecha||'').filter(Boolean).sort();
+  if(CAV_MES!=='todos') return mesLabel(CAV_MES);
+  if(CAV_DESDE||CAV_HASTA) return (CAV_DESDE||fechas[0]||'inicio')+'  a  '+(CAV_HASTA||fechas[fechas.length-1]||'hoy');
+  return 'Todas las ventas'+(fechas.length?('  ('+fechas[0]+' a '+fechas[fechas.length-1]+')'):'');
+}
+// Modal para elegir qué reporte generar (respeta la fecha/filtros ya elegidos arriba).
+function elegirReporteVentasCA(){
+  const rows=caVentasFiltradas();
+  const periodo=caPeriodoTexto(rows);
+  const total=rows.reduce((a,s)=>a+saleTotal(s),0);
+  modal(`
+    <div class="p-5 sm:p-6">
+      <div class="flex items-start justify-between gap-3 mb-1">
+        <h3 class="text-lg font-bold text-clay-800">Generar reporte PDF</h3>
+        <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl leading-none">✕</button>
+      </div>
+      <p class="text-sm text-clay-500 mb-4">Periodo elegido: <b>${periodo}</b> · ${rows.length} venta${rows.length!==1?'s':''} · ${fmt(total)}</p>
+      <div class="grid gap-3">
+        <button onclick="closeModal();descargarReporteVentasCA()" class="text-left border border-clay-200 hover:border-clay-400 hover:bg-clay-50 rounded-2xl p-4 transition">
+          <div class="flex items-center gap-2 font-semibold text-clay-800">📄 Reporte resumen</div>
+          <div class="text-sm text-clay-500 mt-1">Totales, IVA, indicadores y desglose por producto y por método de entrega. Ideal para revisar el periodo de un vistazo.</div>
+        </button>
+        <button onclick="closeModal();descargarReporteDetalladoCA()" class="text-left border border-clay-200 hover:border-clay-400 hover:bg-clay-50 rounded-2xl p-4 transition">
+          <div class="flex items-center gap-2 font-semibold text-clay-800">📋 Reporte detallado <span class="badge bg-sage-100 text-sage-700 text-[10px]">Nuevo</span></div>
+          <div class="text-sm text-clay-500 mt-1">Lista todas las transacciones del periodo, una por una: fecha, cliente, productos, total, pago, entrega y documento.</div>
+        </button>
+      </div>
+    </div>`);
+}
+// Reporte PDF DETALLADO: una fila por cada transacción del periodo elegido (respeta los filtros).
+function descargarReporteDetalladoCA(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const rows=caVentasFiltradas();
+  if(!rows.length){ toastInfo('No hay ventas para el reporte con los filtros actuales.'); return; }
+  const periodo=caPeriodoTexto(rows);
+  const extraFiltros=[];
+  if(CAV_PAGO==='pagado') extraFiltros.push('Solo pagadas');
+  if(CAV_PAGO==='porcobrar') extraFiltros.push('Solo por cobrar');
+  if(CAV_ENTREGA==='entregado') extraFiltros.push('Solo entregadas');
+  if(CAV_ENTREGA==='pendiente') extraFiltros.push('Solo pendientes');
+  if(CAV_CANAL!=='todos') extraFiltros.push('Canal: '+CAV_CANAL);
+  if((CAV_Q||'').trim()) extraFiltros.push('Búsqueda: "'+CAV_Q.trim()+'"');
+  const totalGen=rows.reduce((a,s)=>a+saleTotal(s),0);
+  const unidadesGen=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
+
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  const M=14, PW=297;
+  const brown=[125,72,54], dark=[74,44,35], sand=[221,176,155];
+  // Encabezado
+  doc.setFillColor(...dark); doc.rect(0,0,PW,30,'F');
+  if(LOGO_DATAURL){ const h=16, w=(LOGO_W&&LOGO_H)?Math.min(38,h*(LOGO_W/LOGO_H)):16; try{ doc.addImage(LOGO_DATAURL,'PNG',M,7,w,h); }catch(e){} }
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Casa Augusta · Detalle de transacciones', PW-M, 14, {align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...sand);
+  doc.text('Periodo: '+periodo, PW-M, 21, {align:'right'});
+  doc.text('Generado: '+todayISO(), PW-M, 26, {align:'right'});
+  let y=40;
+  if(extraFiltros.length){ doc.setFontSize(8); doc.setTextColor(150,120,105); doc.text('Filtros: '+extraFiltros.join('  ·  '), M, y); y+=6; }
+
+  const docLabelPdf=s=>s.docTipo==='pendiente'?'Pendiente':(s.docTipo==='no_aplica'?'—':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||'')));
+  const body=rows.map(s=>{
+    const c=clientById(s.clienteId);
+    const cliente=(c?c.nombre:(s.clienteNombre||'—'))+(s.pedidoNum?('\nN° '+s.pedidoNum):'');
+    const prods=s.items.map(i=>(i.cantidad||0)+'× '+itemLabelCliente(i)).join('\n');
+    const uni=s.items.reduce((x,i)=>x+(i.cantidad||0),0);
+    return [
+      s.fecha||'—',
+      cliente,
+      caCanal(s)==='Shopify'?'Shopify':'Presencial',
+      prods,
+      String(uni),
+      fmt(saleTotal(s)),
+      s.pagado?'Pagado':'Por cobrar',
+      s.caEstado==='entregado'?'Entregado':'Pendiente',
+      docLabelPdf(s),
+    ];
+  });
+  body.push([
+    {content:'TOTAL  ('+rows.length+' venta'+(rows.length!==1?'s':'')+')',colSpan:4,styles:{fontStyle:'bold',halign:'right'}},
+    {content:String(unidadesGen),styles:{fontStyle:'bold',halign:'center'}},
+    {content:fmt(totalGen),styles:{fontStyle:'bold',halign:'right'}},
+    {content:'',colSpan:3,styles:{}},
+  ]);
+  doc.autoTable({
+    startY:y,
+    head:[['Fecha','Cliente','Canal','Productos','Unid.','Total','Pago','Entrega','Documento']],
+    body,
+    styles:{fontSize:8.5,cellPadding:2.5,lineColor:[235,216,203],lineWidth:0.2,textColor:dark,valign:'middle'},
+    headStyles:{fillColor:brown,textColor:[255,255,255],fontStyle:'bold'},
+    columnStyles:{
+      0:{cellWidth:22},
+      2:{cellWidth:22},
+      4:{halign:'center',cellWidth:16},
+      5:{halign:'right',cellWidth:28,fontStyle:'bold'},
+      6:{cellWidth:24},
+      7:{cellWidth:24},
+      8:{cellWidth:30},
+    },
+    margin:{top:14,left:M,right:M},
+    didDrawPage:function(){ doc.setFontSize(8); doc.setTextColor(150,120,105); doc.text('Viet Pottery · Casa Augusta',M,203); doc.text('Pág. '+doc.internal.getNumberOfPages(),PW-M,203,{align:'right'}); }
+  });
+
+  const tag=CAV_MES!=='todos'?CAV_MES:((CAV_DESDE||CAV_HASTA)?((CAV_DESDE||'')+'_'+(CAV_HASTA||'')):'todas');
+  savePdfDoc(doc, 'detalle-ventas-casa-augusta-'+tag+'.pdf');
+}
 function renderCAVentas(){
   const v=document.getElementById('view');
   const allSales=[...caSales()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
@@ -7011,7 +7143,7 @@ function renderCAVentas(){
       <option value="Shopify" ${CAV_CANAL==='Shopify'?'selected':''}>🛍️ Shopify</option>
     </select>
     ${hayFiltro?`<button onclick="limpiarCAVFiltros()" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">✕ Limpiar</button>`:''}
-    <button onclick="descargarReporteVentasCA()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl whitespace-nowrap ml-auto">📄 Reporte PDF</button>
+    <button onclick="elegirReporteVentasCA()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl whitespace-nowrap ml-auto">📄 Reporte PDF</button>
     <div class="text-xs text-clay-400">${rows.length} de ${allSales.length} venta${allSales.length!==1?'s':''}</div>
   </div>`;
   v.innerHTML=`
@@ -7053,10 +7185,10 @@ function renderCAVentas(){
   : `<div class="card p-10 text-center text-clay-500"><div class="text-3xl mb-2">🔍</div>No hay ventas con estos filtros.<div class="text-xs text-clay-400 mt-1">Prueba con otro mes o quita los filtros.</div><button onclick="limpiarCAVFiltros()" class="mt-4 text-sm font-medium text-clay-700 border border-clay-200 hover:bg-clay-50 px-4 py-2 rounded-xl">✕ Limpiar filtros</button></div>`}`;
 }
 
-/* --------- VENTAS SHOPIFY (dentro de Casa Augusta) ---------
-   Muestra SOLO las ventas cuyo canal es Shopify. Son ventas normales de Casa Augusta:
-   descuentan el mismo stock de Casa Augusta (stockCA) y aparecen también en "Registrar venta".
-   Mientras la conexión con Shopify (MCP) no esté activa, se registran a mano marcando el canal Shopify. */
+/* --------- VENTAS SHOPIFY ---------
+   Muestra SOLO las ventas cuyo canal es Shopify. Se registran como PEDIDOS (Ventas>Pedidos),
+   siguiendo la misma lógica de un pedido normal, con la diferencia de que descuentan el stock
+   de Casa Augusta (bodega:'CA'). Esta pestaña es un resumen; el pedido vive en Ventas>Pedidos. */
 let SHOP_MES='todos', SHOP_Q='', SHOP_TAB='ventas', SHOP_VQ='';
 function setShopFiltro(k,val){ if(k==='mes')SHOP_MES=val; renderCAShopify(); }
 function shopSearch(val){ SHOP_Q=val; renderCAShopify(); const el=document.getElementById('shopQ'); if(el){ el.focus(); const t=el.value; el.value=''; el.value=t; } }
@@ -7340,7 +7472,7 @@ function renderCAShopify(){
       <div class="text-2xl leading-none">🛍️</div>
       <div class="text-sm text-clay-700 leading-snug flex-1">
         <div class="font-semibold text-clay-800 mb-0.5">Ventas de la tienda online (Shopify)</div>
-        Aquí ves las ventas hechas por Shopify. Son ventas de Casa Augusta: <b>descuentan el mismo stock de Casa Augusta</b> y también aparecen en "Registrar venta".
+        Aquí ves las ventas hechas por Shopify. Se registran en <b>Ventas → Pedidos</b> (con la misma lógica de un pedido normal), con la diferencia de que <b>descuentan el stock de Casa Augusta</b>.
         <div class="text-xs text-clay-500 mt-1.5">Puedes <b>importar los pedidos de Shopify</b> con el botón de abajo (foto del ${SHOPIFY_ORDERS_FECHA}) o registrar una venta a mano. Los pedidos de prueba vienen desmarcados.</div>
       </div>
     </div>
@@ -7386,7 +7518,7 @@ function renderCAShopify(){
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
-        <td class="px-4 py-3">${caEstadoPill(s)}<div class="text-[11px] text-clay-400 mt-0.5">${caMetodoLabel(s.caMetodo)}</div></td>
+        <td class="px-4 py-3">${shopEntregaPill(s)}<div class="text-[11px] text-clay-400 mt-0.5">${shopDespachoLabel(s)}</div></td>
         <td class="px-4 py-3 whitespace-nowrap text-clay-600">${s.docTipo==='pendiente'?pill('Pendiente','amber'):(s.docTipo==='no_aplica'?'—':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||'')))}</td>
         <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
       </tr>`;}).join('')}
@@ -7394,11 +7526,11 @@ function renderCAShopify(){
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
       ${rows.map(s=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${caMetodoLabel(s.caMetodo)}</div></div>
+          <div class="min-w-0">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${shopDespachoLabel(s)}</div></div>
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
-        <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${caEstadoPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
+        <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${shopEntregaPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
         <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
