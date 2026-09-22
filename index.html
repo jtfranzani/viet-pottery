@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.09.10-134';
+const APP_VERSION = '2026.09.10-136';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -542,21 +542,22 @@ async function bootData(){
     DB.migPedidoManual=true;
     if(migp||true) save();
   }
-  // Migración: los pedidos importados de Shopify pasan a vivir en Ventas>Pedidos
-  // (origen distinto de 'CA', tipoDespacho 'Viet'), pero SIGUEN descontando el stock
-  // de Casa Augusta (bodega:'CA'). Antes se guardaban como ventas de Casa Augusta.
-  if(!DB.migShopifyPedidos){
+  // Normalización PERMANENTE (corre en CADA carga): cualquier pedido de Shopify que haya
+  // quedado guardado como venta de Casa Augusta (origen 'CA') se mueve a Ventas>Pedidos
+  // (origen distinto de 'CA', tipoDespacho 'Viet'), pero SIGUE descontando el stock de
+  // Casa Augusta (bodega:'CA'). Se hace en cada arranque para auto-corregir también los
+  // pedidos que lleguen a futuro y caigan mal clasificados, sin depender de un flag único.
+  {
     let migs=false;
     (DB.sales||[]).forEach(s=>{
-      if(s.shopifyOrderId && (s.origen==='CA' || s.tipoDespacho==='CA')){
+      if((s.shopifyOrderId || s.canal==='Shopify') && (s.origen==='CA' || s.tipoDespacho==='CA')){
         s.origen=''; s.tipoDespacho='Viet'; s.bodega='CA'; s.canal='Shopify';
         // Se limpian los campos específicos de Casa Augusta que ya no aplican al pedido.
         delete s.caMetodo; delete s.caCurrier; delete s.caSeguimiento; delete s.caEstado;
         migs=true;
       }
     });
-    DB.migShopifyPedidos=true;
-    if(migs||true) save();
+    if(migs) save();
   }
   // Migración: mover fotos de entrega antiguas (guardadas dentro del documento principal) a documentos aparte,
   // para liberar espacio y evitar que se supere el límite de tamaño de la base.
@@ -6498,12 +6499,38 @@ function buildSaleFromShopifyOrder(o){
   }).filter(Boolean);
   if(!items.length) return null;
   const cli = resolveClient(o.cliente, o.ciudad||'Santiago', o.comuna||'', o.direccion||'', o.tel||'', o.email||'');
+
+  /* --- Montos de Shopify: envío + descuentos, para que el total cuadre con el de la plataforma ---
+     La plataforma calcula: total = Σ(cantidad×precio×(1−descuento%)) + costoEnvío.
+     Shopify además cobra envío y aplica descuentos, así que aquí los reconstruimos para que la
+     venta entre con producto, descuento y envío correctos (y el total idéntico al de Shopify). */
+  const subBruto = items.reduce((a,i)=>a+ (+i.cantidad||0)*(+i.precio||0), 0); // productos sin descuento
+  // Envío cobrado por Shopify (se aceptan varios nombres de campo por compatibilidad con el buzón).
+  let envio = +o.envio||+o.shipping||+o.costoEnvio||0;
+  // Descuento del pedido en pesos: a nivel pedido + descuentos por línea (si el buzón los manda).
+  const descLineas = (o.items||[]).reduce((a,li)=>a+(+li.descuento||+li.descuentoMonto||0),0);
+  let descTotal = (+o.descuento||+o.discount||+o.totalDescuento||0) + descLineas;
+  // Reconciliación con el total REAL de Shopify: si viene o.total, ajustamos lo que falte para que
+  // (producto − descuento + envío) sea EXACTO. Un resto positivo se atribuye a envío; negativo, a descuento.
+  const totShopify = +o.total||0;
+  if(totShopify>0){
+    const resto = (totShopify - subBruto) - (envio - descTotal);
+    if(resto>0.5) envio += resto;
+    else if(resto<-0.5) descTotal += -resto;
+  }
+  // El descuento total (en pesos) se reparte como % uniforme en las líneas: queda detallado y cuadra.
+  if(descTotal>0.5 && subBruto>0){
+    const pct = Math.min(100, descTotal/subBruto*100);
+    items.forEach(i=>{ i.descuento = +pct.toFixed(4); });
+  }
+
   return { id:uid('s'), fecha:o.fecha, fechaEntrega:o.fecha, clienteNombre:o.cliente, clienteTel:o.tel||'', clienteId:cli?cli.id:'',
     direccion:o.direccion||'', ciudad:o.ciudad||'Santiago', comuna:o.comuna||'',
     items, pagado:!!o.pagado, docTipo:'pendiente', docNumero:'',
     bodega:'CA', origen:'', tipoDespacho:'Viet', canal:'Shopify',
-    cuenta:ACCOUNTS[0], costoEnvio:0, estadoDespacho:'pendiente', courier:'',
-    notas:'Importado de Shopify '+o.num, pedidoNum:o.num, shopifyOrderId:o.orderId, shopifyNum:o.num };
+    cuenta:ACCOUNTS[0], costoEnvio:Math.round(envio), estadoDespacho:'pendiente', courier:'',
+    notas:'Importado de Shopify '+o.num, pedidoNum:o.num, shopifyOrderId:o.orderId, shopifyNum:o.num,
+    shopifyTotal:(totShopify||null) };
 }
 // ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
 function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId)) return false; return (o.items||[]).some(li=>li.sku && productByShopifySku(li.sku)); }
