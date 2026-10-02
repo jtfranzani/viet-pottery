@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-147';
+const APP_VERSION = '2026.10.02-148';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6616,6 +6616,7 @@ function confirmImportShopifyOrders(){
   if(!elegidos.length){ if(typeof toastInfo==='function') toastInfo('No hay pedidos nuevos seleccionados para importar.'); return; }
   let n=0, saltados=0;
   elegidos.forEach(o=>{ const venta=buildSaleFromShopifyOrder(o); if(venta){ DB.sales.push(venta); n++; } else { saltados++; } });
+  if(n>0) SHOP_NUEVOS_OFF=false;   // reaparece el banner de "pedidos nuevos" al importar
   save(); closeModal(); go('ca_shopify');
   if(typeof toastInfo==='function') toastInfo('✅ Se importaron '+n+' pedido(s) de Shopify'+(saltados?(' · '+saltados+' sin vincular, omitido(s)'):'')+'.');
 }
@@ -7773,6 +7774,35 @@ function abrirShopVentaDetalle(id){ marcarShopVentaVista(id); renderCAShopify();
 function abrirShopVentaEdit(id){ marcarShopVentaVista(id); renderCAShopify(); openCASale(id); }
 // Nº de pedido como número (para ordenar: el más reciente arriba)
 function shopPedidoNum(s){ const n=parseInt(String(s&&s.pedidoNum||'').replace(/\D/g,''),10); return isNaN(n)?-1:n; }
+// --- Banner de aviso de pedidos nuevos de Shopify ---
+let SHOP_NUEVOS_OFF=false;                    // se cierra con la ✕ (vuelve si entran pedidos nuevos)
+function cerrarBannerNuevos(){ SHOP_NUEVOS_OFF=true; renderCAShopify(); }
+function marcarTodosShopVistos(){ const m=shopifyVistosMap(); let ch=false; caShopifySales().forEach(s=>{ if(s.id&&!m[s.id]){ m[s.id]=Date.now(); ch=true; } }); if(ch) save(); renderCAShopify(); }
+function verPedidosNuevos(){ SHOP_NUEVOS_OFF=false; const el=document.getElementById('shopVentasLista'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }
+function bannerNuevosShopify(nuevas){
+  if(!nuevas.length || SHOP_NUEVOS_OFF) return '';
+  const n=nuevas.length;
+  const totalN=nuevas.reduce((a,s)=>a+saleTotal(s),0);
+  const chips=nuevas.slice(0,8).map(s=>{ const c=clientById(s.clienteId); const nom=c?c.nombre:(s.clienteNombre||'Cliente'); return `<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-clay-700 bg-white border border-clay-200 rounded-full px-2.5 py-1 whitespace-nowrap">${s.pedidoNum?`<b class="text-clay-400 font-bold">${s.pedidoNum}</b>`:''}${nom} · ${fmt(saleTotal(s))}</span>`; }).join('');
+  const resto=n>8?`<span class="text-xs text-clay-500 self-center">+${n-8} más</span>`:'';
+  const titulo = n===1 ? '¡Tienes 1 pedido nuevo de Shopify!' : '¡Entraron '+n+' pedidos nuevos de Shopify!';
+  const sub = n===1 ? 'Entró un pedido. Revísalo para preparar el despacho.' : 'Suman '+fmt(totalN)+' en ventas por revisar.';
+  return `<div class="card p-4 mb-4 border border-blue-200" style="border-left:5px solid #2563eb">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl leading-none">🔔</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-bold text-blue-900 flex items-center gap-2 flex-wrap">${titulo} <span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">${n===1?'Nuevo':n+' nuevos'}</span></div>
+        <div class="text-sm text-clay-600 mt-0.5">${sub}</div>
+        <div class="flex flex-wrap gap-1.5 mt-2.5">${chips}${resto}</div>
+        <div class="flex flex-wrap gap-2 mt-3">
+          <button onclick="verPedidosNuevos()" class="text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl">Ver pedido${n===1?'':'s'} →</button>
+          <button onclick="marcarTodosShopVistos()" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Marcar como visto${n===1?'':'s'}</button>
+        </div>
+      </div>
+      <button onclick="cerrarBannerNuevos()" title="Cerrar" class="text-clay-400 hover:text-clay-600 text-lg leading-none shrink-0">✕</button>
+    </div>
+  </div>`;
+}
 function renderCAShopify(){
   const v=document.getElementById('view');
   const tabCls=(on)=>`text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl whitespace-nowrap text-center ${on?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}`;
@@ -7804,6 +7834,8 @@ function renderCAShopify(){
   const porCobrar=rows.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
   const unidades=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
   const hayFiltro=(SHOP_MES!=='todos'||q!=='');
+  const nuevas=allSales.filter(shopVentaNueva);          // pedidos de Shopify sin revisar
+  const nuevosBanner=bannerNuevosShopify(nuevas);
   const pend=shopifyOrdersPendientes();
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
@@ -7825,7 +7857,7 @@ function renderCAShopify(){
   }
   const selCls='border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white';
   const filtroBar=`
-  <div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-2">
+  <div id="shopVentasLista" class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-2">
     <input id="shopQ" value="${(SHOP_Q||'').replace(/"/g,'&quot;')}" oninput="shopSearch(this.value)" placeholder="Buscar cliente, producto o N° pedido..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
     <select onchange="setShopFiltro('mes',this.value)" class="${selCls}">
       <option value="todos" ${SHOP_MES==='todos'?'selected':''}>📅 Todos los meses</option>
@@ -7836,6 +7868,7 @@ function renderCAShopify(){
   </div>`;
   v.innerHTML=`
   ${tabBar}
+  ${nuevosBanner}
   ${banner}
   ${importRow}
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
