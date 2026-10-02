@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-143';
+const APP_VERSION = '2026.10.02-144';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -7658,12 +7658,14 @@ function renderShopCarritos(){
     const prod=cartProductosTexto(c);
     const ant=cartAntiguedad(c.createdAt);
     const wa=dig?`https://wa.me/${dig}?text=${encodeURIComponent(buildMsgRecupero(c))}`:'';
+    const waChat=dig?`https://wa.me/${dig}`:'';
     const mail=(!dig&&c.email)?mailtoRecupero(c):'';
     let accion, preview='';
     if(dig){
       accion = `<div class="flex flex-wrap gap-2 mt-3">
            <a href="${wa}" target="_blank" rel="noopener" class="text-sm font-semibold text-white bg-[#25D366] hover:brightness-95 px-4 py-2 rounded-xl inline-flex items-center gap-2">💬 Enviar por WhatsApp</a>
-           <button onclick="copiarMsgRecupero(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar mensaje</button>
+           <a href="${waChat}" target="_blank" rel="noopener" onclick="copiarMsgRecupero(${idx})" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">📋 Copiar y abrir chat</a>
+           <button onclick="copiarMsgRecupero(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Solo copiar</button>
            ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
          </div>`;
       preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecupero(c).replace(/</g,'&lt;')}</div>`;
