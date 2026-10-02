@@ -152,7 +152,7 @@
       <button onclick="toggleSidebar(true)" class="lg:hidden p-2 -ml-2 rounded-lg hover:bg-clay-100">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
-      <h2 id="pageTitle" class="text-lg lg:text-xl font-bold flex-1">Dashboard</h2>
+      <h2 id="pageTitle" class="text-lg lg:text-xl font-bold flex-1 min-w-0 truncate leading-tight">Dashboard</h2>
       <button onclick="openBuscador()" title="Buscar (Ctrl K)" aria-label="Buscar clientes, pedidos o productos" class="flex items-center gap-2 text-sm text-clay-500 bg-white border border-clay-200 hover:border-clay-300 rounded-xl px-3 py-2">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
         <span class="hidden sm:inline">Buscar</span>
@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-140';
+const APP_VERSION = '2026.10.02-143';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -1005,7 +1005,7 @@ function go(view){
   ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios,ca_ventas:renderCAVentas,ca_shopify:renderCAShopify,ca_stock:renderCAStock,ca_entregas:renderCAEntregas,ca_devoluciones:renderCADevoluciones,ca_prospectos:renderCAProspectos})[view]();
 }
 function headerAction(view){
-  const btn=(fn,txt)=>`<button onclick="${fn}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${txt}</button>`;
+  const btn=(fn,txt)=>`<button onclick="${fn}" title="${txt}" aria-label="${txt}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap shrink-0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg><span class="hidden sm:inline">${txt}</span></button>`;
   if(view==='ventas'   && SESSION.rol!=='bodega') return btn('openSale()','Nuevo pedido');
   if(view==='presupuestos' && SESSION.rol!=='bodega') return btn('openQuote()','Nuevo presupuesto');
   if(view==='productos'&& SESSION.rol!=='vendedor') return btn('openProduct()','Nuevo producto');
@@ -7547,25 +7547,40 @@ function renderShopStock(){
    Lee los carritos abandonados desde el Worker (endpoint /abandoned, que consulta la
    Admin API de Shopify con la misma clave X-Sync-Key). Por cada carrito con teléfono
    arma un mensaje de WhatsApp listo para enviar ofreciendo un 5% de descuento adicional. */
-const MSG_RECUPERO_DEFAULT = 'Hola {nombre} 👋 Soy del equipo de Viet Pottery 🌿 Vi que dejaste {productos} en tu carrito y quería ayudarte a completar la compra. Te dejo un *5% de descuento adicional* con el código *{codigo}* 🎁 Puedes retomar tu carrito aquí: {link}\n¿Te ayudo con algo?';
+const MSG_RECUPERO_DEFAULT = '{saludo}, te escribimos del equipo de Viet Pottery.\n\nVimos que dejaste tu carrito a medio camino con:\n\n{productos}\n\nNos encantaría ayudarte a completar tu compra, así que te dejamos un *5% de descuento adicional* con el código:\n\n*{codigo}*\n\nPuedes retomar tu compra desde aquí:\n{link}\n\nQuedamos atentos a cualquier duda. ¡Gracias por preferirnos!\nEquipo Viet Pottery';
 function codigoRecupero(){ return (DB.shopifyCodigoRecupero||'').trim(); }
 function setCodigoRecupero(v){ DB.shopifyCodigoRecupero=(v||'').trim(); save(); renderCAShopify(); }
 function msgRecuperoTpl(){ return (DB.shopifyMsgRecupero&&DB.shopifyMsgRecupero.trim())?DB.shopifyMsgRecupero:MSG_RECUPERO_DEFAULT; }
 // Teléfono chileno → solo dígitos con prefijo país para wa.me
 function waDigits(tel){ let d=(tel||'').replace(/\D/g,''); if(!d) return ''; if(d.length===9 && d[0]==='9') d='56'+d; else if(d.length===8) d='569'+d; else if(d.length===11 && d.slice(0,2)==='56') {} else if(d.length===10 && d.slice(0,2)==='56') d='569'+d.slice(2); return d; }
-function cartProductosTexto(c){ const its=(c.productos||[]); if(!its.length) return 'tus productos'; return its.map(i=>`${i.cantidad>1?i.cantidad+'× ':''}${i.titulo}`).join(', '); }
+// Agrupa líneas repetidas del mismo producto y suma cantidades (evita "X, X, X")
+function cartItemsAgrupados(c){ const map=new Map(); (c.productos||[]).forEach(i=>{ const t=(i.titulo||'').trim(); if(!t) return; map.set(t,(map.get(t)||0)+(+i.cantidad||1)); }); return [...map.entries()].map(([titulo,cantidad])=>({titulo,cantidad})); }
+// Inline (para la tarjeta): "2× Canton Fierro, Base blanca"
+function cartProductosTexto(c){ const its=cartItemsAgrupados(c); if(!its.length) return 'tus productos'; return its.map(i=>`${i.cantidad>1?i.cantidad+'× ':''}${i.titulo}`).join(', '); }
+// Lista con viñetas (para el mensaje de WhatsApp)
+function cartProductosLista(c){ const its=cartItemsAgrupados(c); if(!its.length) return '• tus productos'; return its.map(i=>`• ${i.titulo}${i.cantidad>1?' (x'+i.cantidad+')':''}`).join('\n'); }
 function cartAntiguedad(iso){ if(!iso) return ''; const ms=Date.now()-new Date(iso).getTime(); if(isNaN(ms)) return ''; const h=Math.floor(ms/3600000); if(h<1) return 'hace minutos'; if(h<24) return 'hace '+h+' h'; const d=Math.floor(h/24); return 'hace '+d+(d===1?' día':' días'); }
 function buildMsgRecupero(c){
   const cod=codigoRecupero()||'[TU CÓDIGO DE 5%]';
   const nombre=(c.nombre||'').trim().split(/\s+/)[0]||'';
+  const saludo=nombre?('Hola '+nombre):'Hola';
   return msgRecuperoTpl()
-    .replace(/\{nombre\}/g, nombre?(' '+nombre).trim():'')
-    .replace(/\{productos\}/g, cartProductosTexto(c))
+    .replace(/\{saludo\}/g, saludo)
+    .replace(/\{nombre\}/g, nombre)
+    .replace(/\{productos\}/g, cartProductosLista(c))
     .replace(/\{codigo\}/g, cod)
     .replace(/\{link\}/g, c.url||'');
 }
 function copiarMsgRecupero(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const txt=buildMsgRecupero(c);
   const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje copiado. Pégalo en WhatsApp.'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
+}
+// --- Versión para correo (sin los *asteriscos* de WhatsApp, que en email saldrían literales) ---
+function asuntoRecupero(){ return 'Completa tu compra en Viet Pottery · 5% de descuento'; }
+function buildMsgRecuperoEmail(c){ return buildMsgRecupero(c).replace(/\*/g,''); }
+function mailtoRecupero(c){ if(!c.email) return ''; return 'mailto:'+c.email+'?subject='+encodeURIComponent(asuntoRecupero())+'&body='+encodeURIComponent(buildMsgRecuperoEmail(c)); }
+function copiarMsgRecuperoEmail(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const txt=buildMsgRecuperoEmail(c);
+  const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje copiado. Pégalo en tu correo.'); };
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
 }
 async function cargarCarritosAbandonados(){
@@ -7603,7 +7618,7 @@ function renderShopCarritos(){
       <div class="text-sm text-clay-700 leading-snug flex-1">
         <div class="font-semibold text-clay-800 mb-0.5">Recupera carritos abandonados por WhatsApp</div>
         Son clientes que agregaron productos y <b>no terminaron la compra</b>. Aquí los traemos solos desde Shopify y te armamos un <b>mensaje listo para enviar</b> ofreciendo un <b>5% de descuento adicional</b>.
-        <div class="text-xs text-clay-500 mt-1.5">Solo los carritos que dejaron <b>teléfono</b> se pueden recuperar por WhatsApp. Los que solo dejaron email, Shopify ya les envía un correo automático.</div>
+        <div class="text-xs text-clay-500 mt-1.5">Los carritos con <b>teléfono</b> se recuperan por <b>WhatsApp</b>; los que solo dejaron <b>correo</b>, con el botón <b>📧 Enviar por correo</b> (abre tu email con el mensaje y el código ya escritos).</div>
       </div>
     </div>
   </div>`;
@@ -7643,14 +7658,26 @@ function renderShopCarritos(){
     const prod=cartProductosTexto(c);
     const ant=cartAntiguedad(c.createdAt);
     const wa=dig?`https://wa.me/${dig}?text=${encodeURIComponent(buildMsgRecupero(c))}`:'';
-    const accion = dig
-      ? `<div class="flex flex-wrap gap-2 mt-3">
+    const mail=(!dig&&c.email)?mailtoRecupero(c):'';
+    let accion, preview='';
+    if(dig){
+      accion = `<div class="flex flex-wrap gap-2 mt-3">
            <a href="${wa}" target="_blank" rel="noopener" class="text-sm font-semibold text-white bg-[#25D366] hover:brightness-95 px-4 py-2 rounded-xl inline-flex items-center gap-2">💬 Enviar por WhatsApp</a>
            <button onclick="copiarMsgRecupero(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar mensaje</button>
            ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
-         </div>`
-      : `<div class="mt-3 text-xs bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-amber-700">Sin teléfono en Shopify${c.email?` · solo email: <b>${c.email}</b>`:''}. No se puede recuperar por WhatsApp; Shopify ya le manda correo automático.</div>`;
-    const preview=dig?`<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecupero(c).replace(/</g,'&lt;')}</div>`:'';
+         </div>`;
+      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecupero(c).replace(/</g,'&lt;')}</div>`;
+    } else if(c.email){
+      accion = `<div class="flex flex-wrap gap-2 mt-3">
+           <a href="${mail}" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">📧 Enviar por correo</a>
+           <button onclick="copiarMsgRecuperoEmail(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar correo</button>
+           ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
+         </div>
+         <div class="text-[11px] text-clay-400 mt-1.5">Sin teléfono · se enviará a <b>${c.email}</b></div>`;
+      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecuperoEmail(c).replace(/</g,'&lt;')}</div>`;
+    } else {
+      accion = `<div class="mt-3 text-xs bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-amber-700">Este carrito no dejó teléfono ni correo, así que no se puede contactar directo. Shopify igual le envía su recordatorio automático si corresponde.</div>`;
+    }
     return `<div class="card p-4">
       <div class="flex justify-between items-start gap-3">
         <div class="min-w-0">
@@ -7668,11 +7695,12 @@ function renderShopCarritos(){
 }
 function renderCAShopify(){
   const v=document.getElementById('view');
-  const tabBar=`<div class="flex gap-1 mb-4 bg-clay-100 p-1 rounded-2xl w-full sm:w-auto sm:inline-flex">
-    <button onclick="setShopTab('ventas')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='ventas'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Ventas Shopify</button>
-    <button onclick="setShopTab('vinculacion')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='vinculacion'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Vincular SKU <span class="ml-1 text-[11px] tabular-nums ${shopifyMapCount()===SHOPIFY_CATALOG.length?'text-sage-600':'text-clay-400'}">${shopifyMapCount()}/${SHOPIFY_CATALOG.length}</span></button>
-    <button onclick="setShopTab('stock')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='stock'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Stock → Shopify</button>
-    <button onclick="setShopTab('carritos')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='carritos'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">🛒 Carritos abandonados${(CARRITOS_ABANDONADOS&&CARRITOS_ABANDONADOS.length)?` <span class="ml-1 text-[11px] tabular-nums text-amber-600">${CARRITOS_ABANDONADOS.length}</span>`:''}</button>
+  const tabCls=(on)=>`text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl whitespace-nowrap text-center ${on?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}`;
+  const tabBar=`<div class="grid grid-cols-2 gap-1 mb-4 bg-clay-100 p-1 rounded-2xl sm:inline-flex sm:gap-1">
+    <button onclick="setShopTab('ventas')" class="${tabCls(SHOP_TAB==='ventas')}">Ventas Shopify</button>
+    <button onclick="setShopTab('vinculacion')" class="${tabCls(SHOP_TAB==='vinculacion')}">Vincular SKU <span class="ml-0.5 text-[11px] tabular-nums ${shopifyMapCount()===SHOPIFY_CATALOG.length?'text-sage-600':'text-clay-400'}">${shopifyMapCount()}/${SHOPIFY_CATALOG.length}</span></button>
+    <button onclick="setShopTab('stock')" class="${tabCls(SHOP_TAB==='stock')}">Stock → Shopify</button>
+    <button onclick="setShopTab('carritos')" class="${tabCls(SHOP_TAB==='carritos')}">🛒 <span class="sm:hidden">Carritos</span><span class="hidden sm:inline">Carritos abandonados</span>${(CARRITOS_ABANDONADOS&&CARRITOS_ABANDONADOS.length)?` <span class="ml-0.5 text-[11px] tabular-nums text-amber-600">${CARRITOS_ABANDONADOS.length}</span>`:''}</button>
   </div>`;
   if(SHOP_TAB==='vinculacion'){ v.innerHTML=tabBar+renderShopVinculacion(); return; }
   if(SHOP_TAB==='stock'){ v.innerHTML=tabBar+renderShopStock(); return; }
