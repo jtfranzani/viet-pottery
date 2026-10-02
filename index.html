@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-146';
+const APP_VERSION = '2026.10.02-147';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -7765,6 +7765,14 @@ function renderShopCarritos(){
   }).join('');
   return banner+codInput+resumen+filtro+`<div class="space-y-3">${cards}</div>`;
 }
+/* --- "Nuevo" en ventas de Shopify: una venta queda como nueva hasta que la abres --- */
+function shopifyVistosMap(){ if(!DB.shopifyVistos) DB.shopifyVistos={}; return DB.shopifyVistos; }
+function shopVentaNueva(s){ return !!(s && s.id && !shopifyVistosMap()[s.id]); }
+function marcarShopVentaVista(id){ if(!id) return; const m=shopifyVistosMap(); if(!m[id]){ m[id]=Date.now(); save(); } }
+function abrirShopVentaDetalle(id){ marcarShopVentaVista(id); renderCAShopify(); openCASaleDetail(id); }
+function abrirShopVentaEdit(id){ marcarShopVentaVista(id); renderCAShopify(); openCASale(id); }
+// Nº de pedido como número (para ordenar: el más reciente arriba)
+function shopPedidoNum(s){ const n=parseInt(String(s&&s.pedidoNum||'').replace(/\D/g,''),10); return isNaN(n)?-1:n; }
 function renderCAShopify(){
   const v=document.getElementById('view');
   const tabCls=(on)=>`text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl whitespace-nowrap text-center ${on?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}`;
@@ -7777,7 +7785,13 @@ function renderCAShopify(){
   if(SHOP_TAB==='vinculacion'){ v.innerHTML=tabBar+renderShopVinculacion(); return; }
   if(SHOP_TAB==='stock'){ v.innerHTML=tabBar+renderShopStock(); return; }
   if(SHOP_TAB==='carritos'){ v.innerHTML=tabBar+renderShopCarritos(); return; }
-  const allSales=[...caShopifySales()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  // Orden: por Nº de pedido de Shopify, el más reciente (número más alto) arriba.
+  // Las ventas a mano sin Nº de pedido caen al final, ordenadas por fecha.
+  const allSales=[...caShopifySales()].sort((a,b)=>{
+    const na=shopPedidoNum(a), nb=shopPedidoNum(b);
+    if(na!==nb) return nb-na;
+    return (b.fecha||'').localeCompare(a.fecha||'');
+  });
   const periodos=[...new Set(allSales.map(s=>(s.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const q=(SHOP_Q||'').toLowerCase().trim();
   const rows=allSales.filter(s=>{
@@ -7836,26 +7850,26 @@ function renderCAShopify(){
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Total</th><th class="text-left px-4 py-3">Pago</th><th class="text-left px-4 py-3">Entrega</th><th class="text-left px-4 py-3">Doc</th><th class="px-4 py-3"></th>
       </tr></thead><tbody>
-      ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
+      ${rows.map(s=>{const c=clientById(s.clienteId);const nuevo=shopVentaNueva(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${nuevo?'bg-blue-50/40':''}" onclick="abrirShopVentaDetalle('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
-        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}</td>
+        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}<span class="inline-flex items-center gap-1.5">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">Nuevo</span>`:''}</span></td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
         <td class="px-4 py-3">${shopEntregaPill(s)}<div class="text-[11px] text-clay-400 mt-0.5">${shopDespachoLabel(s)}</div></td>
         <td class="px-4 py-3 whitespace-nowrap text-clay-600">${s.docTipo==='pendiente'?pill('Pendiente','amber'):(s.docTipo==='no_aplica'?'—':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||'')))}</td>
-        <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
+        <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
-      ${rows.map(s=>{const c=clientById(s.clienteId);return `<div class="bg-white border border-clay-100 rounded-2xl p-3.5 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
+      ${rows.map(s=>{const c=clientById(s.clienteId);const nuevo=shopVentaNueva(s);return `<div class="bg-white border ${nuevo?'border-blue-200 ring-1 ring-blue-100':'border-clay-100'} rounded-2xl p-3.5 cursor-pointer" onclick="abrirShopVentaDetalle('${s.id}')">
         <div class="flex justify-between items-start gap-2">
-          <div class="min-w-0">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${shopDespachoLabel(s)}</div></div>
+          <div class="min-w-0">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate flex items-center gap-1.5">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[9px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-1.5 py-0.5 shrink-0">Nuevo</span>`:''}</div><div class="text-xs text-clay-400 mt-0.5">${s.fecha} · ${shopDespachoLabel(s)}</div></div>
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
         <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${shopEntregaPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
   </div>`
