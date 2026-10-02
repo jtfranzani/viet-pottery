@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.09.10-139';
+const APP_VERSION = '2026.10.02-140';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -7288,6 +7288,7 @@ function renderCAVentas(){
    siguiendo la misma lógica de un pedido normal, con la diferencia de que descuentan el stock
    de Casa Augusta (bodega:'CA'). Esta pestaña es un resumen; el pedido vive en Ventas>Pedidos. */
 let SHOP_MES='todos', SHOP_Q='', SHOP_TAB='ventas', SHOP_VQ='';
+let CARRITOS_ABANDONADOS=[], CARRITOS_LOADING=false, CARRITOS_ERROR='', CARRITOS_FETCHED=false;
 function setShopFiltro(k,val){ if(k==='mes')SHOP_MES=val; renderCAShopify(); }
 function shopSearch(val){ SHOP_Q=val; renderCAShopify(); const el=document.getElementById('shopQ'); if(el){ el.focus(); const t=el.value; el.value=''; el.value=t; } }
 function limpiarShopFiltros(){ SHOP_MES='todos'; SHOP_Q=''; renderCAShopify(); }
@@ -7542,15 +7543,140 @@ function renderShopStock(){
   </div>`;
   return banner+stats+acciones+tabla;
 }
+/* --------- CARRITOS ABANDONADOS (recuperación por WhatsApp) ---------
+   Lee los carritos abandonados desde el Worker (endpoint /abandoned, que consulta la
+   Admin API de Shopify con la misma clave X-Sync-Key). Por cada carrito con teléfono
+   arma un mensaje de WhatsApp listo para enviar ofreciendo un 5% de descuento adicional. */
+const MSG_RECUPERO_DEFAULT = 'Hola {nombre} 👋 Soy del equipo de Viet Pottery 🌿 Vi que dejaste {productos} en tu carrito y quería ayudarte a completar la compra. Te dejo un *5% de descuento adicional* con el código *{codigo}* 🎁 Puedes retomar tu carrito aquí: {link}\n¿Te ayudo con algo?';
+function codigoRecupero(){ return (DB.shopifyCodigoRecupero||'').trim(); }
+function setCodigoRecupero(v){ DB.shopifyCodigoRecupero=(v||'').trim(); save(); renderCAShopify(); }
+function msgRecuperoTpl(){ return (DB.shopifyMsgRecupero&&DB.shopifyMsgRecupero.trim())?DB.shopifyMsgRecupero:MSG_RECUPERO_DEFAULT; }
+// Teléfono chileno → solo dígitos con prefijo país para wa.me
+function waDigits(tel){ let d=(tel||'').replace(/\D/g,''); if(!d) return ''; if(d.length===9 && d[0]==='9') d='56'+d; else if(d.length===8) d='569'+d; else if(d.length===11 && d.slice(0,2)==='56') {} else if(d.length===10 && d.slice(0,2)==='56') d='569'+d.slice(2); return d; }
+function cartProductosTexto(c){ const its=(c.productos||[]); if(!its.length) return 'tus productos'; return its.map(i=>`${i.cantidad>1?i.cantidad+'× ':''}${i.titulo}`).join(', '); }
+function cartAntiguedad(iso){ if(!iso) return ''; const ms=Date.now()-new Date(iso).getTime(); if(isNaN(ms)) return ''; const h=Math.floor(ms/3600000); if(h<1) return 'hace minutos'; if(h<24) return 'hace '+h+' h'; const d=Math.floor(h/24); return 'hace '+d+(d===1?' día':' días'); }
+function buildMsgRecupero(c){
+  const cod=codigoRecupero()||'[TU CÓDIGO DE 5%]';
+  const nombre=(c.nombre||'').trim().split(/\s+/)[0]||'';
+  return msgRecuperoTpl()
+    .replace(/\{nombre\}/g, nombre?(' '+nombre).trim():'')
+    .replace(/\{productos\}/g, cartProductosTexto(c))
+    .replace(/\{codigo\}/g, cod)
+    .replace(/\{link\}/g, c.url||'');
+}
+function copiarMsgRecupero(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const txt=buildMsgRecupero(c);
+  const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje copiado. Pégalo en WhatsApp.'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
+}
+async function cargarCarritosAbandonados(){
+  if(CARRITOS_LOADING) return;
+  if(!shopSyncConfigured()){ CARRITOS_ERROR='Primero configura la sincronización (el puente con Shopify).'; renderCAShopify(); return; }
+  CARRITOS_LOADING=true; CARRITOS_ERROR=''; renderCAShopify();
+  try{
+    const base=(DB.shopifySyncUrl||'').replace(/\/+$/,'');
+    const res=await fetch(base+'/abandoned',{ headers:{'X-Sync-Key':DB.shopifySyncKey} });
+    const data=await res.json().catch(()=>null);
+    if(!res.ok || !data || !data.ok){ CARRITOS_ERROR=(data&&data.error)||'No se pudieron leer los carritos abandonados. ¿Ya actualizaste el puente (Worker) con el endpoint /abandoned?'; CARRITOS_ABANDONADOS=[]; }
+    else {
+      const arr=Array.isArray(data.carts)?data.carts:(Array.isArray(data.checkouts)?data.checkouts:[]);
+      CARRITOS_ABANDONADOS=arr.map(c=>({
+        id:c.id||c.name||'',
+        nombre:c.nombre||c.name||c.cliente||((c.firstName||'')+' '+(c.lastName||'')).trim(),
+        telefono:c.telefono||c.phone||c.tel||'',
+        email:c.email||'',
+        url:c.url||c.abandonedCheckoutUrl||c.recoverUrl||'',
+        total:+(c.total||c.totalPrice||0)||0,
+        createdAt:c.createdAt||c.fecha||'',
+        productos:(c.productos||c.items||c.lineItems||[]).map(i=>({ titulo:i.titulo||i.title||i.nombre||'', cantidad:+(i.cantidad||i.quantity||1)||1 }))
+      }));
+    }
+    CARRITOS_FETCHED=true;
+  }catch(e){ CARRITOS_ERROR='No se pudo conectar con el puente. Revisa la URL/clave en ⚙️ Configurar sincronización.'; CARRITOS_ABANDONADOS=[]; }
+  finally{ CARRITOS_LOADING=false; renderCAShopify(); }
+}
+function renderShopCarritos(){
+  const cfg=shopSyncConfigured();
+  const cod=codigoRecupero();
+  const banner=`<div class="card p-4 mb-4 bg-amber-50 border border-amber-100">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl leading-none">🛒</div>
+      <div class="text-sm text-clay-700 leading-snug flex-1">
+        <div class="font-semibold text-clay-800 mb-0.5">Recupera carritos abandonados por WhatsApp</div>
+        Son clientes que agregaron productos y <b>no terminaron la compra</b>. Aquí los traemos solos desde Shopify y te armamos un <b>mensaje listo para enviar</b> ofreciendo un <b>5% de descuento adicional</b>.
+        <div class="text-xs text-clay-500 mt-1.5">Solo los carritos que dejaron <b>teléfono</b> se pueden recuperar por WhatsApp. Los que solo dejaron email, Shopify ya les envía un correo automático.</div>
+      </div>
+    </div>
+  </div>`;
+  if(!cfg){
+    return banner+emptyState({icon:'M13 10V3L4 14h7v7l9-11h-7z', titulo:'Falta conectar el puente con Shopify', detalle:'Los carritos abandonados se leen por el mismo puente (Worker) que ya usas para las ventas. Configúralo una vez y aparecerán aquí.', accion:`<button onclick="abrirConfigSync()" class="bg-sage-700 hover:bg-sage-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">⚙️ Configurar sincronización</button>`});
+  }
+  const codInput=`<div class="card p-3 mb-4">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="text-sm text-clay-700 flex items-center gap-2 flex-1 min-w-[220px]">Código de 5%
+        <input id="codRec" value="${cod.replace(/"/g,'&quot;')}" onchange="setCodigoRecupero(this.value)" placeholder="Ej: VUELVE5" class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 uppercase tabular-nums">
+      </label>
+      <button onclick="cargarCarritosAbandonados()" class="text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 px-4 py-2 rounded-xl inline-flex items-center gap-2">🔄 ${CARRITOS_FETCHED?'Actualizar':'Buscar carritos'}</button>
+    </div>
+    ${cod?'':`<div class="text-[11px] text-amber-600 mt-2">⚠️ Aún no pusiste tu código de 5%. Los mensajes dirán "[TU CÓDIGO DE 5%]" hasta que lo escribas aquí arriba.</div>`}
+  </div>`;
+  if(CARRITOS_LOADING){
+    return banner+codInput+`<div class="card p-10 text-center text-clay-500"><svg class="animate-spin h-6 w-6 mx-auto mb-3 text-amber-500" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>Buscando carritos abandonados en Shopify…</div>`;
+  }
+  if(CARRITOS_ERROR){
+    return banner+codInput+`<div class="card p-5 bg-red-50 border border-red-100 text-sm text-red-700"><b>No se pudieron cargar los carritos.</b><div class="mt-1 text-red-600">${CARRITOS_ERROR}</div></div>`;
+  }
+  if(!CARRITOS_FETCHED){
+    return banner+codInput+emptyState({icon:'M9 2L6 6v14a2 2 0 002 2h8a2 2 0 002-2V6l-3-4z', titulo:'Toca "Buscar carritos"', detalle:'Traeremos los carritos abandonados más recientes desde tu Shopify y te prepararemos un mensaje de WhatsApp por cada cliente con teléfono.'});
+  }
+  if(!CARRITOS_ABANDONADOS.length){
+    return banner+codInput+emptyState({icon:'M5 13l4 4L19 7', titulo:'¡Sin carritos abandonados!', detalle:'Por ahora no hay carritos pendientes de recuperar. Vuelve a revisar más tarde.'});
+  }
+  const conTel=CARRITOS_ABANDONADOS.filter(c=>waDigits(c.telefono)).length;
+  const sinTel=CARRITOS_ABANDONADOS.length-conTel;
+  const resumen=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Carritos',CARRITOS_ABANDONADOS.length,'abandonados','text-amber-600')}
+    ${statCard('Recuperables por WsP',conTel,'tienen teléfono','text-sage-700')}
+    ${statCard('Solo email',sinTel,'recupera por correo','text-clay-500')}
+  </div>`;
+  const cards=CARRITOS_ABANDONADOS.map((c,idx)=>{
+    const dig=waDigits(c.telefono);
+    const prod=cartProductosTexto(c);
+    const ant=cartAntiguedad(c.createdAt);
+    const wa=dig?`https://wa.me/${dig}?text=${encodeURIComponent(buildMsgRecupero(c))}`:'';
+    const accion = dig
+      ? `<div class="flex flex-wrap gap-2 mt-3">
+           <a href="${wa}" target="_blank" rel="noopener" class="text-sm font-semibold text-white bg-[#25D366] hover:brightness-95 px-4 py-2 rounded-xl inline-flex items-center gap-2">💬 Enviar por WhatsApp</a>
+           <button onclick="copiarMsgRecupero(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar mensaje</button>
+           ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
+         </div>`
+      : `<div class="mt-3 text-xs bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-amber-700">Sin teléfono en Shopify${c.email?` · solo email: <b>${c.email}</b>`:''}. No se puede recuperar por WhatsApp; Shopify ya le manda correo automático.</div>`;
+    const preview=dig?`<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecupero(c).replace(/</g,'&lt;')}</div>`:'';
+    return `<div class="card p-4">
+      <div class="flex justify-between items-start gap-3">
+        <div class="min-w-0">
+          <div class="font-bold text-clay-800 truncate">${c.nombre||'Cliente sin nombre'}</div>
+          <div class="text-[11px] text-clay-400">${c.telefono?('📱 '+c.telefono+' · '):''}${ant}</div>
+        </div>
+        <div class="text-right shrink-0"><div class="text-base font-bold text-clay-800 tabular-nums">${fmt(c.total)}</div></div>
+      </div>
+      <div class="mt-2 text-sm text-clay-600">${prod}</div>
+      ${accion}
+      ${preview}
+    </div>`;
+  }).join('');
+  return banner+codInput+resumen+`<div class="space-y-3">${cards}</div>`;
+}
 function renderCAShopify(){
   const v=document.getElementById('view');
   const tabBar=`<div class="flex gap-1 mb-4 bg-clay-100 p-1 rounded-2xl w-full sm:w-auto sm:inline-flex">
     <button onclick="setShopTab('ventas')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='ventas'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Ventas Shopify</button>
     <button onclick="setShopTab('vinculacion')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='vinculacion'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Vincular SKU <span class="ml-1 text-[11px] tabular-nums ${shopifyMapCount()===SHOPIFY_CATALOG.length?'text-sage-600':'text-clay-400'}">${shopifyMapCount()}/${SHOPIFY_CATALOG.length}</span></button>
     <button onclick="setShopTab('stock')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='stock'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">Stock → Shopify</button>
+    <button onclick="setShopTab('carritos')" class="flex-1 sm:flex-none text-sm font-semibold px-4 py-2 rounded-xl ${SHOP_TAB==='carritos'?'bg-white text-clay-800 shadow-sm':'text-clay-500 hover:text-clay-700'}">🛒 Carritos abandonados${(CARRITOS_ABANDONADOS&&CARRITOS_ABANDONADOS.length)?` <span class="ml-1 text-[11px] tabular-nums text-amber-600">${CARRITOS_ABANDONADOS.length}</span>`:''}</button>
   </div>`;
   if(SHOP_TAB==='vinculacion'){ v.innerHTML=tabBar+renderShopVinculacion(); return; }
   if(SHOP_TAB==='stock'){ v.innerHTML=tabBar+renderShopStock(); return; }
+  if(SHOP_TAB==='carritos'){ v.innerHTML=tabBar+renderShopCarritos(); return; }
   const allSales=[...caShopifySales()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   const periodos=[...new Set(allSales.map(s=>(s.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const q=(SHOP_Q||'').toLowerCase().trim();
