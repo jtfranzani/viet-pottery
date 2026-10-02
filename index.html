@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-144';
+const APP_VERSION = '2026.10.02-146';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -7288,7 +7288,16 @@ function renderCAVentas(){
    siguiendo la misma lógica de un pedido normal, con la diferencia de que descuentan el stock
    de Casa Augusta (bodega:'CA'). Esta pestaña es un resumen; el pedido vive en Ventas>Pedidos. */
 let SHOP_MES='todos', SHOP_Q='', SHOP_TAB='ventas', SHOP_VQ='';
-let CARRITOS_ABANDONADOS=[], CARRITOS_LOADING=false, CARRITOS_ERROR='', CARRITOS_FETCHED=false;
+let CARRITOS_ABANDONADOS=[], CARRITOS_LOADING=false, CARRITOS_ERROR='', CARRITOS_FETCHED=false, CARRITOS_OCULTAR_ENVIADOS=false;
+// Clave estable por carrito (token del link de recuperación → id → email/total). Sobrevive a actualizaciones.
+function cartKey(c){ const u=c.url||''; const m=u.match(/\/ac\/([^/?#]+)/)||u.match(/checkouts\/([^/?#]+)/); if(m) return 'tok:'+m[1]; if(c.id) return 'id:'+c.id; return 'px:'+((c.email||'')+'|'+(c.telefono||'')+'|'+(c.total||'')); }
+function carritosEnviadosMap(){ if(!DB.carritosEnviados) DB.carritosEnviados={}; return DB.carritosEnviados; }
+function carritoEnviado(c){ return carritosEnviadosMap()[cartKey(c)]||null; }
+function marcarCarritoEnviado(idx,via){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const m=carritosEnviadosMap(); m[cartKey(c)]={ts:Date.now(),via:via||'manual',nombre:c.nombre||'',total:c.total||0}; save(); renderCAShopify(); if(typeof toastInfo==='function') toastInfo('✓ Marcado como enviado.'); }
+function desmarcarCarritoEnviado(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const m=carritosEnviadosMap(); delete m[cartKey(c)]; save(); renderCAShopify(); }
+function toggleOcultarEnviados(){ CARRITOS_OCULTAR_ENVIADOS=!CARRITOS_OCULTAR_ENVIADOS; renderCAShopify(); }
+// "hace X" a partir de un timestamp (ms)
+function haceDesde(ts){ if(!ts) return ''; const ms=Date.now()-ts; if(isNaN(ms)||ms<0) return ''; const h=Math.floor(ms/3600000); if(h<1) return 'hace minutos'; if(h<24) return 'hace '+h+' h'; const d=Math.floor(h/24); return 'hace '+d+(d===1?' día':' días'); }
 function setShopFiltro(k,val){ if(k==='mes')SHOP_MES=val; renderCAShopify(); }
 function shopSearch(val){ SHOP_Q=val; renderCAShopify(); const el=document.getElementById('shopQ'); if(el){ el.focus(); const t=el.value; el.value=''; el.value=t; } }
 function limpiarShopFiltros(){ SHOP_MES='todos'; SHOP_Q=''; renderCAShopify(); }
@@ -7583,6 +7592,37 @@ function copiarMsgRecuperoEmail(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) 
   const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje copiado. Pégalo en tu correo.'); };
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
 }
+/* --------- VERSIÓN REGIÓN (mensaje más personalizado para despacho a regiones) ---------
+   Pensado para clientas fuera de Santiago: reconoce que compran desde su región, da seguridad
+   sobre el despacho a todo Chile y ofrece coordinar el envío. Mismos tokens que el normal. */
+const MSG_RECUPERO_REGION_DEFAULT = '{saludo}, ¿cómo estás? Te escribe el equipo de Viet Pottery 🌿\n\nVimos que dejaste tu carrito a medio camino con:\n\n{productos}\n\nQueremos que sepas que despachamos a todo Chile, así que no importa en qué región estés: coordinamos el envío contigo y empacamos cada macetero con mucho cuidado para que llegue perfecto hasta tu puerta.\n\nPara que termines tu compra con tranquilidad, te dejamos un *5% de descuento adicional* con el código:\n\n*{codigo}*\n\nRetoma tu compra desde aquí:\n{link}\n\nCualquier duda sobre el envío a tu región, nos escribes y lo vemos juntos. ¡Gracias por preferirnos!\nEquipo Viet Pottery';
+function msgRecuperoRegionTpl(){ return (DB.shopifyMsgRecuperoRegion&&DB.shopifyMsgRecuperoRegion.trim())?DB.shopifyMsgRecuperoRegion:MSG_RECUPERO_REGION_DEFAULT; }
+function buildMsgRecuperoRegion(c){
+  const cod=codigoRecupero()||'[TU CÓDIGO DE 5%]';
+  const nombre=(c.nombre||'').trim().split(/\s+/)[0]||'';
+  const saludo=nombre?('Hola '+nombre):'Hola';
+  return msgRecuperoRegionTpl()
+    .replace(/\{saludo\}/g, saludo)
+    .replace(/\{nombre\}/g, nombre)
+    .replace(/\{productos\}/g, cartProductosLista(c))
+    .replace(/\{codigo\}/g, cod)
+    .replace(/\{link\}/g, c.url||'');
+}
+function copiarMsgRecuperoRegion(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const txt=buildMsgRecuperoRegion(c);
+  const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje región copiado. Pégalo en WhatsApp.'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
+}
+// Versión región para correo (sin asteriscos)
+function buildMsgRecuperoRegionEmail(c){ return buildMsgRecuperoRegion(c).replace(/\*/g,''); }
+function mailtoRecuperoRegion(c){ if(!c.email) return ''; return 'mailto:'+c.email+'?subject='+encodeURIComponent(asuntoRecupero())+'&body='+encodeURIComponent(buildMsgRecuperoRegionEmail(c)); }
+function copiarMsgRecuperoRegionEmail(idx){ const c=CARRITOS_ABANDONADOS[idx]; if(!c) return; const txt=buildMsgRecuperoRegionEmail(c);
+  const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Mensaje región copiado. Pégalo en tu correo.'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
+}
+// Qué versión de mensaje se previsualiza por carrito (idx → 'normal' | 'region')
+let CARRITOS_MSG_VER={};
+function setCartMsgVer(idx,ver){ CARRITOS_MSG_VER[idx]=ver; renderCAShopify(); }
+function cartMsgVer(idx){ return CARRITOS_MSG_VER[idx]==='region'?'region':'normal'; }
 async function cargarCarritosAbandonados(){
   if(CARRITOS_LOADING) return;
   if(!shopSyncConfigured()){ CARRITOS_ERROR='Primero configura la sincronización (el puente con Shopify).'; renderCAShopify(); return; }
@@ -7647,53 +7687,83 @@ function renderShopCarritos(){
     return banner+codInput+emptyState({icon:'M5 13l4 4L19 7', titulo:'¡Sin carritos abandonados!', detalle:'Por ahora no hay carritos pendientes de recuperar. Vuelve a revisar más tarde.'});
   }
   const conTel=CARRITOS_ABANDONADOS.filter(c=>waDigits(c.telefono)).length;
-  const sinTel=CARRITOS_ABANDONADOS.length-conTel;
-  const resumen=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
-    ${statCard('Carritos',CARRITOS_ABANDONADOS.length,'abandonados','text-amber-600')}
+  const enviadosN=CARRITOS_ABANDONADOS.filter(c=>carritoEnviado(c)).length;
+  const pendientesN=CARRITOS_ABANDONADOS.length-enviadosN;
+  const resumen=`<div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Por contactar',pendientesN,'pendientes','text-amber-600')}
     ${statCard('Recuperables por WsP',conTel,'tienen teléfono','text-sage-700')}
-    ${statCard('Solo email',sinTel,'recupera por correo','text-clay-500')}
+    ${statCard('Ya enviados',enviadosN,enviadosN?'marcados':'ninguno aún','text-sage-700')}
+    ${statCard('Total',CARRITOS_ABANDONADOS.length,'abandonados','text-clay-500')}
   </div>`;
-  const cards=CARRITOS_ABANDONADOS.map((c,idx)=>{
+  // Nota de los que marcaste pero ya no aparecen en Shopify (probablemente compraron o expiraron)
+  const liveKeys=new Set(CARRITOS_ABANDONADOS.map(cartKey));
+  const droppedN=Object.keys(carritosEnviadosMap()).filter(k=>!liveKeys.has(k)).length;
+  const filtro=enviadosN?`<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+    <label class="text-xs text-clay-600 inline-flex items-center gap-2 cursor-pointer select-none"><input type="checkbox" ${CARRITOS_OCULTAR_ENVIADOS?'checked':''} onchange="toggleOcultarEnviados()"> Ocultar los ya enviados (${enviadosN})</label>
+    ${droppedN?`<span class="text-[11px] text-clay-400">${droppedN} que marcaste ya no aparece${droppedN===1?'':'n'} (probablemente compró/compraron o expiró).</span>`:''}
+  </div>`:'';
+  // Pendientes primero, enviados al final (conservando el índice real para los botones)
+  let items=CARRITOS_ABANDONADOS.map((c,idx)=>({c,idx,env:carritoEnviado(c)}));
+  if(CARRITOS_OCULTAR_ENVIADOS) items=items.filter(it=>!it.env);
+  items.sort((a,b)=>(a.env?1:0)-(b.env?1:0));
+  const cards=items.map(({c,idx,env})=>{
     const dig=waDigits(c.telefono);
     const prod=cartProductosTexto(c);
     const ant=cartAntiguedad(c.createdAt);
-    const wa=dig?`https://wa.me/${dig}?text=${encodeURIComponent(buildMsgRecupero(c))}`:'';
-    const waChat=dig?`https://wa.me/${dig}`:'';
-    const mail=(!dig&&c.email)?mailtoRecupero(c):'';
+    const ver=cartMsgVer(idx);              // 'normal' | 'region'
+    const esReg=ver==='region';
+    // Selector de versión del mensaje (Normal / Versión región)
+    const verChip=(k,txt)=>`<button onclick="setCartMsgVer(${idx},'${k}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg ${ver===k?'bg-clay-700 text-white':'text-clay-500 bg-clay-100 hover:bg-clay-200'}">${txt}</button>`;
+    const verSel=`<div class="flex items-center gap-1.5 mt-3">
+         <span class="text-[11px] text-clay-400 mr-0.5">Mensaje:</span>
+         ${verChip('normal','Normal')}
+         ${verChip('region','📦 Versión región')}
+       </div>`;
     let accion, preview='';
     if(dig){
-      accion = `<div class="flex flex-wrap gap-2 mt-3">
+      const msg=esReg?buildMsgRecuperoRegion(c):buildMsgRecupero(c);
+      const wa=`https://wa.me/${dig}?text=${encodeURIComponent(msg)}`;
+      const waChat=`https://wa.me/${dig}`;
+      const copyFn=esReg?`copiarMsgRecuperoRegion(${idx})`:`copiarMsgRecupero(${idx})`;
+      accion = verSel + `<div class="flex flex-wrap gap-2 mt-2">
            <a href="${wa}" target="_blank" rel="noopener" class="text-sm font-semibold text-white bg-[#25D366] hover:brightness-95 px-4 py-2 rounded-xl inline-flex items-center gap-2">💬 Enviar por WhatsApp</a>
-           <a href="${waChat}" target="_blank" rel="noopener" onclick="copiarMsgRecupero(${idx})" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">📋 Copiar y abrir chat</a>
-           <button onclick="copiarMsgRecupero(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Solo copiar</button>
+           <a href="${waChat}" target="_blank" rel="noopener" onclick="${copyFn}" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">📋 Copiar y abrir chat</a>
+           <button onclick="${copyFn}" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Solo copiar</button>
            ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
          </div>`;
-      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecupero(c).replace(/</g,'&lt;')}</div>`;
+      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${msg.replace(/</g,'&lt;')}</div>`;
     } else if(c.email){
-      accion = `<div class="flex flex-wrap gap-2 mt-3">
+      const mail=esReg?mailtoRecuperoRegion(c):mailtoRecupero(c);
+      const msgE=esReg?buildMsgRecuperoRegionEmail(c):buildMsgRecuperoEmail(c);
+      const copyFnE=esReg?`copiarMsgRecuperoRegionEmail(${idx})`:`copiarMsgRecuperoEmail(${idx})`;
+      accion = verSel + `<div class="flex flex-wrap gap-2 mt-2">
            <a href="${mail}" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">📧 Enviar por correo</a>
-           <button onclick="copiarMsgRecuperoEmail(${idx})" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar correo</button>
+           <button onclick="${copyFnE}" class="text-sm font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">📋 Copiar correo</button>
            ${c.url?`<a href="${c.url}" target="_blank" rel="noopener" class="text-sm font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-2 rounded-xl">Ver carrito</a>`:''}
          </div>
          <div class="text-[11px] text-clay-400 mt-1.5">Sin teléfono · se enviará a <b>${c.email}</b></div>`;
-      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${buildMsgRecuperoEmail(c).replace(/</g,'&lt;')}</div>`;
+      preview = `<div class="mt-2 text-xs text-clay-500 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2 whitespace-pre-wrap leading-snug">${msgE.replace(/</g,'&lt;')}</div>`;
     } else {
       accion = `<div class="mt-3 text-xs bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-amber-700">Este carrito no dejó teléfono ni correo, así que no se puede contactar directo. Shopify igual le envía su recordatorio automático si corresponde.</div>`;
     }
-    return `<div class="card p-4">
+    const marcaBtn = env
+      ? `<button onclick="desmarcarCarritoEnviado(${idx})" class="text-xs font-semibold text-sage-700 bg-sage-50 border border-sage-200 hover:bg-sage-100 px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5">✓ Enviado${env.ts?(' · '+haceDesde(env.ts)):''} · Desmarcar</button>`
+      : `<button onclick="marcarCarritoEnviado(${idx},'manual')" class="text-xs font-medium text-clay-500 border border-clay-200 hover:bg-clay-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5">Marcar como enviado</button>`;
+    return `<div class="card p-4 ${env?'opacity-70 border border-sage-200':''}">
       <div class="flex justify-between items-start gap-3">
         <div class="min-w-0">
-          <div class="font-bold text-clay-800 truncate">${c.nombre||'Cliente sin nombre'}</div>
+          <div class="font-bold text-clay-800 truncate">${c.nombre||'Cliente sin nombre'}${env?' <span class="ml-1 text-[10px] font-semibold text-sage-700 bg-sage-50 border border-sage-200 rounded-full px-2 py-0.5 align-middle">✓ Enviado</span>':''}</div>
           <div class="text-[11px] text-clay-400">${c.telefono?('📱 '+c.telefono+' · '):''}${ant}</div>
         </div>
         <div class="text-right shrink-0"><div class="text-base font-bold text-clay-800 tabular-nums">${fmt(c.total)}</div></div>
       </div>
       <div class="mt-2 text-sm text-clay-600">${prod}</div>
       ${accion}
+      <div class="mt-2.5">${marcaBtn}</div>
       ${preview}
     </div>`;
   }).join('');
-  return banner+codInput+resumen+`<div class="space-y-3">${cards}</div>`;
+  return banner+codInput+resumen+filtro+`<div class="space-y-3">${cards}</div>`;
 }
 function renderCAShopify(){
   const v=document.getElementById('view');
