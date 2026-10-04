@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.02-151';
+const APP_VERSION = '2026.10.04-154';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6450,7 +6450,8 @@ function shopifyEsRetiro(o){
   const sl=o.shippingLine;
   const partes=[o.metodoEnvio,o.shippingTitle,o.shippingMethod,o.deliveryMethod,o.envioMetodo,o.entrega,(typeof sl==='string'?sl:(sl&&sl.title))].filter(x=>typeof x==='string');
   const txt=partes.join(' ').toLowerCase();
-  return /retiro|retira|pickup|recoge|store pickup|local pickup/.test(txt);
+  // Incluye los nombres de retiro en tienda que usa Shopify (ej: "Tienda Vitacura", "Casa Augusta", "Showroom").
+  return /retiro|retira|pickup|recoge|store pickup|local pickup|tienda|vitacura|casa augusta|showroom|en tienda/.test(txt);
 }
 // Cambiar a mano entre despacho a domicilio y retiro en tienda (para corregir pedidos ya importados).
 function toggleShopDespacho(id){
@@ -7490,6 +7491,9 @@ function mostrarResultadoSync(data){
    Si una venta trae un SKU aún NO vinculado, NO se importa ni se borra: queda en el
    buzón esperando a que se cree el vínculo, y entra sola en el siguiente ciclo. */
 let BUZON_TIMER=null, BUZON_RUNNING=false, BUZON_LAST=0;
+// Pedidos que llegaron al buzón pero NO se pudieron importar (SKU sin vincular). Se avisa una sola vez por pedido
+// aunque el sondeo sea automático/silencioso, para que NINGUNA venta vuelva a quedarse afuera sin aviso.
+let BUZON_AVISADOS={};
 // Versión SILENCIOSA de la sincronización de stock (sin confirmación ni modal): se usa
 // automáticamente después de importar una venta del buzón. La manual sigue igual.
 async function sincronizarStockShopifyAuto(){
@@ -7536,12 +7540,12 @@ async function revisarBuzonShopify(silent){
     const pend=Array.isArray(data.orders)?data.orders:[];
     BUZON_LAST=Date.now();
     if(!pend.length){ if(!silent && typeof toastInfo==='function') toastInfo('No hay ventas nuevas de Shopify por importar.'); return; }
-    let importadas=0, sinVinculo=0; const ackIds=[];
+    let importadas=0, sinVinculo=0; const ackIds=[]; const stuck=[]; // stuck: pedidos que quedan en espera
     for(const o of pend){
       if(shopifyOrderImportado(o.orderId)){ ackIds.push(o.orderId); continue; } // ya estaba: solo limpiar buzón
       const venta=buildSaleFromShopifyOrder(o);
       if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
-      else { sinVinculo++; } // sin SKU vinculado: se DEJA en el buzón (no se acusa)
+      else { sinVinculo++; stuck.push({id:o.orderId, num:o.num||o.orderId}); } // sin SKU vinculado: se DEJA en el buzón (no se acusa)
     }
     if(importadas){ save(); }
     // Avisar al buzón SOLO de las que ya quedaron en la plataforma (o duplicadas).
@@ -7552,10 +7556,19 @@ async function revisarBuzonShopify(silent){
       if(typeof toastInfo==='function') toastInfo('🛍️ '+importadas+' venta(s) de Shopify importada(s). Actualizando stock…');
       try{ rerender(); }catch(_){}
       await sincronizarStockShopifyAuto(); // devolver el stock actualizado a Shopify
-    } else if(!silent && typeof toastInfo==='function'){
-      toastInfo(sinVinculo?('Hay '+sinVinculo+' venta(s) con SKU sin vincular. Vincula el SKU y se importarán solas.'):'No hay ventas nuevas por importar.');
+    } else if(!silent && typeof toastInfo==='function' && !stuck.length){
+      toastInfo('No hay ventas nuevas por importar.');
     }
-    if(sinVinculo && importadas && typeof toastInfo==='function') setTimeout(()=>toastInfo('Nota: '+sinVinculo+' venta(s) quedaron en espera por SKU sin vincular.'),1500);
+    // AVISO que NO depende de silent: si hay pedidos atascados por SKU sin vincular, se avisa.
+    // Cada pedido se avisa una sola vez (BUZON_AVISADOS) para no repetir el aviso en cada sondeo.
+    if(stuck.length && typeof toastInfo==='function'){
+      const nuevos=stuck.filter(s=>!BUZON_AVISADOS[s.id]);
+      if(nuevos.length || !silent){
+        const nums=stuck.map(s=>s.num).join(', ');
+        toastInfo('⚠️ '+stuck.length+' pedido(s) de Shopify ('+nums+') no se importaron: falta vincular el SKU en la plataforma. Vincúlalo y entrarán solos.');
+      }
+      stuck.forEach(s=>{ BUZON_AVISADOS[s.id]=true; });
+    }
   }catch(e){ if(!silent && typeof toastInfo==='function') toastInfo('No se pudo conectar con el buzón de ventas.'); }
   finally{ BUZON_RUNNING=false; }
 }
@@ -7855,6 +7868,21 @@ function abrirShopVentaDetalle(id){ marcarShopVentaVista(id); renderCAShopify();
 function abrirShopVentaEdit(id){ marcarShopVentaVista(id); renderCAShopify(); openCASale(id); }
 // Nº de pedido como número (para ordenar: el más reciente arriba)
 function shopPedidoNum(s){ const n=parseInt(String(s&&s.pedidoNum||'').replace(/\D/g,''),10); return isNaN(n)?-1:n; }
+// Red de seguridad: detecta pedidos de Shopify que faltan en la correlativa (ej: está el #1025 y el
+// #1027, pero no el #1026). Solo marca huecos chicos (hasta 3 seguidos) rodeados por pedidos presentes,
+// para no confundir con pedidos de prueba antiguos ni con rangos que nunca existieron. No depende del
+// puente: aunque el puente omita un pedido, la plataforma VE el hueco y avisa.
+function shopifyPedidosFaltantes(sales){
+  const nums=(sales||[]).map(shopPedidoNum).filter(n=>n>0);
+  if(nums.length<2) return [];
+  const set=new Set(nums); const min=Math.min(...nums), max=Math.max(...nums);
+  const faltan=[]; let run=[];
+  for(let n=min+1; n<=max; n++){
+    if(set.has(n)){ if(run.length && run.length<=3) faltan.push(...run); run=[]; }
+    else { run.push(n); }
+  }
+  return faltan;
+}
 // --- Banner de aviso de pedidos nuevos de Shopify ---
 let SHOP_NUEVOS_OFF=false;                    // se cierra con la ✕ (vuelve si entran pedidos nuevos)
 function cerrarBannerNuevos(){ SHOP_NUEVOS_OFF=true; renderCAShopify(); }
@@ -7917,6 +7945,16 @@ function renderCAShopify(){
   const hayFiltro=(SHOP_MES!=='todos'||q!=='');
   const nuevas=allSales.filter(shopVentaNueva);          // pedidos de Shopify sin revisar
   const nuevosBanner=bannerNuevosShopify(nuevas);
+  const faltantes=shopifyPedidosFaltantes(allSales);
+  const gapBanner = faltantes.length ? `<div class="card p-4 mb-4 bg-amber-50 border border-amber-200">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl leading-none">⚠️</div>
+      <div class="text-sm text-clay-700 leading-snug flex-1">
+        <div class="font-semibold text-amber-800 mb-0.5">Puede faltar ${faltantes.length===1?'un pedido':'pedidos'} de Shopify</div>
+        En la numeración correlativa no ${faltantes.length===1?'aparece el pedido':'aparecen los pedidos'} <b>${faltantes.map(n=>'#'+n).join(', ')}</b>, pero sí los de alrededor. Revísa${faltantes.length===1?'lo':'los'} en Shopify y, si existe${faltantes.length===1?'':'n'}, regístra${faltantes.length===1?'lo':'los'} a mano con el botón de abajo.
+      </div>
+    </div>
+  </div>` : '';
   const pend=shopifyOrdersPendientes();
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
@@ -7950,6 +7988,7 @@ function renderCAShopify(){
   v.innerHTML=`
   ${tabBar}
   ${nuevosBanner}
+  ${gapBanner}
   ${banner}
   ${importRow}
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
