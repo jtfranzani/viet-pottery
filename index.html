@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.04-164';
+const APP_VERSION = '2026.10.05-165';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -7674,10 +7674,18 @@ async function revisarBuzonShopify(silent){
   finally{ BUZON_RUNNING=false; }
 }
 // Arranca el sondeo del buzón (una sola vez por sesión). Primer chequeo a los ~8 s.
+// Cada consulta al buzón cuenta como 1 operación "list" en Cloudflare KV (límite gratis: 1.000 al día).
+// A 1 por minuto se superaba el límite con una sola pestaña abierta (1.440/día) y Cloudflare bloqueaba
+// el puente. Ahora: cada 5 minutos (máx. 288/día) y NUNCA con la pestaña en segundo plano.
+// Al volver a la pestaña se revisa al instante, así no se pierde nada.
+const BUZON_INTERVALO_MS = 5*60*1000;
 function iniciarBuzonShopify(){
   if(BUZON_TIMER) return;
-  setTimeout(()=>revisarBuzonShopify(true), 8000);
-  BUZON_TIMER=setInterval(()=>revisarBuzonShopify(true), 60000);
+  setTimeout(()=>{ if(!document.hidden) revisarBuzonShopify(true); }, 8000);
+  BUZON_TIMER=setInterval(()=>{ if(!document.hidden) revisarBuzonShopify(true); }, BUZON_INTERVALO_MS);
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden && Date.now()-BUZON_LAST > 60000) revisarBuzonShopify(true);
+  });
 }
 function renderShopStock(){
   const buf=shopifyStockBuffer();
