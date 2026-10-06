@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.06-167';
+const APP_VERSION = '2026.10.06-168';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6651,6 +6651,13 @@ const SHOPIFY_CATALOG = [
   {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-S', talla:'S', precio:43000},
   {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-M', talla:'M', precio:70000},
   {producto:'Angkor Machiatto', sku:'VP-PE-AK-MC-L', talla:'L', precio:99000},
+  // Línea Bali (agregada a Shopify en octubre 2026). Estos SKU deben estar escritos en las variantes de Shopify.
+  {producto:'Linea Bali Grafito', sku:'VP-PE-BA-GR-TA', talla:'Tall', precio:82200},
+  {producto:'Linea Bali Grafito', sku:'VP-PE-BA-GR-SL', talla:'Slow', precio:118900},
+  {producto:'Linea Bali Grafito', sku:'VP-PE-BA-GR-PL', talla:'Planter', precio:96000},
+  {producto:'Linea Bali Arena', sku:'VP-PE-BA-AR-TA', talla:'Tall', precio:73000},
+  {producto:'Linea Bali Arena', sku:'VP-PE-BA-AR-SL', talla:'Slow', precio:99000},
+  {producto:'Linea Bali Arena', sku:'VP-PE-BA-AR-PL', talla:'Planter', precio:96000},
   {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-L', talla:'L', precio:42000},
   {producto:'Bowl Lotus Arena', sku:'VP-PE-BL-AR-XL', talla:'XL', precio:75000},
   {producto:'Bowl Lotus Grafito', sku:'VP-PE-BL-GR-L', talla:'L', precio:42000},
@@ -7674,7 +7681,11 @@ async function revisarBuzonShopify(silent){
       if(shopifyOrderImportado(o.orderId, o.num)){ if(shopifyAdoptarVentaManual(o)) adoptadas++; ackIds.push(o.orderId); continue; } // ya estaba (auto o a mano): solo limpiar buzón
       const venta=buildSaleFromShopifyOrder(o);
       if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
-      else { sinVinculo++; stuck.push({id:o.orderId, num:o.num||o.orderId}); } // sin SKU vinculado: se DEJA en el buzón (no se acusa)
+      else { // sin SKU vinculado: se DEJA en el buzón (no se acusa). Se anota qué productos vienen SIN SKU desde Shopify.
+        sinVinculo++;
+        const sinSku=[...new Set((o.items||[]).filter(li=>!li.sku).map(li=>String(li.titulo||li.title||li.nombre||'').trim()).filter(Boolean))];
+        stuck.push({id:o.orderId, num:o.num||o.orderId, sinSku});
+      }
     }
     if(importadas || adoptadas){ save(); }
     if(adoptadas && !importadas){ try{ rerender(); }catch(_){} } // refleja el N° con formato #10XX en la lista
@@ -7695,7 +7706,11 @@ async function revisarBuzonShopify(silent){
       const nuevos=stuck.filter(s=>!BUZON_AVISADOS[s.id]);
       if(nuevos.length || !silent){
         const nums=stuck.map(s=>s.num).join(', ');
-        toastInfo('⚠️ '+stuck.length+' pedido(s) de Shopify ('+nums+') no se importaron: falta vincular el SKU en la plataforma. Vincúlalo y entrarán solos.');
+        const sinSku=[...new Set(stuck.flatMap(s=>s.sinSku||[]))];
+        const motivo = sinSku.length
+          ? ('"'+sinSku.join('", "')+'" no tiene SKU en Shopify. Ponle SKU a esas variantes en Shopify (Productos → variante → SKU) y luego vincúlalas en la pestaña "Vincular SKU".')
+          : 'falta vincular el SKU en la pestaña "Vincular SKU". Vincúlalo y entrarán solos.';
+        toastInfo('⚠️ '+stuck.length+' pedido(s) de Shopify ('+nums+') no se importaron: '+motivo);
       }
       stuck.forEach(s=>{ BUZON_AVISADOS[s.id]=true; });
     }
