@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.06-168';
+const APP_VERSION = '2026.10.06-169';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6724,6 +6724,25 @@ function shopifyPrecioDesalineados(){ let n=0; SHOPIFY_CATALOG.forEach(v=>{ cons
 function aplicarTodosPreciosShopify(){ const pend=shopifyPrecioDesalineados(); if(!pend){ if(typeof toastInfo==='function') toastInfo('Los precios ya están iguales a Shopify.'); return; } if(!confirm('¿Igualar '+pend+' precio(s) de la plataforma a los de Shopify? Se actualiza el precio de referencia de cada producto vinculado. Los SKU no se tocan.')) return; let n=0; SHOPIFY_CATALOG.forEach(v=>{ const pid=(DB.shopifyMap||{})[v.sku]; if(!pid) return; const p=productById(pid); if(p && Number(p.precioRef)!==Number(v.precio)){ p.precioRef=v.precio; n++; } }); save(); renderCAShopify(); if(typeof toastInfo==='function') toastInfo('Se actualizaron '+n+' precio(s) en la plataforma según Shopify.'); }
 // Resolver: dado un SKU de Shopify, devuelve el producto de la PLATAFORMA vinculado (o null).
 function productByShopifySku(sku){ const pid=(DB.shopifyMap||{})[sku]; return pid?productById(pid):null; }
+// Normaliza nombres para comparar: minúsculas, sin acentos, espacios simples.
+function shopNorm(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim(); }
+// Si una línea del pedido viene SIN SKU (producto creado en Shopify sin SKU, o pedido hecho antes de
+// ponerle SKU), la reconoce por nombre de producto + variante contra el catálogo.
+// Ej: "Linea Bali Grafito" + "Bali Tall (diámetro 42 cm/ alto 64 cm)" → VP-PE-BA-GR-TA.
+// Es estricto: solo devuelve un SKU si calza exactamente UNA variante (nunca adivina).
+function shopifySkuPorNombre(li){
+  if(!li) return null;
+  const titulo=shopNorm(li.titulo||li.title||li.producto||li.nombre||'');
+  const variante=shopNorm(li.variante||li.variantTitle||li.variant||li.talla||'');
+  if(!titulo) return null;
+  const cands=SHOPIFY_CATALOG.filter(v=>shopNorm(v.producto)===titulo);
+  if(!cands.length) return null;
+  if(cands.length===1 && !variante) return cands[0].sku;
+  const hit=cands.filter(v=>{ const t=shopNorm(v.talla); if(!t) return false; const re=new RegExp('(^|[^a-z0-9])'+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^a-z0-9]|$)'); return re.test(variante); });
+  return hit.length===1 ? hit[0].sku : null;
+}
+// SKU efectivo de una línea: el que manda Shopify o, si viene vacío, el reconocido por nombre.
+function shopifyLineaSku(li){ return (li && li.sku) ? li.sku : shopifySkuPorNombre(li); }
 // Cuántos SKU de Shopify ya tienen su equivalencia definida.
 const shopifyMapCount = () => SHOPIFY_CATALOG.filter(v=>(DB.shopifyMap||{})[v.sku]).length;
 // Auto-sugerencia: el producto de plataforma con precioRef más cercano (misma talla si aporta señal).
@@ -6781,7 +6800,8 @@ function shopifyAdoptarVentaManual(o){
 // con la única diferencia de que el stock se descuenta de Casa Augusta (bodega:'CA').
 function buildSaleFromShopifyOrder(o){
   const items = (o.items||[]).map(li=>{
-    const p = li.sku?productByShopifySku(li.sku):null;
+    const sku = shopifyLineaSku(li); // SKU de Shopify o, si viene vacío, reconocido por nombre + variante
+    const p = sku?productByShopifySku(sku):null;
     if(!p) return null; // línea sin producto vinculado en la plataforma: no se puede importar
     return {productId:p.id, cantidad:+li.cantidad||1, precio:+li.precio||p.precioRef||0, descuento:0, descripcion:productNameCliente(p)};
   }).filter(Boolean);
@@ -6822,7 +6842,7 @@ function buildSaleFromShopifyOrder(o){
     shopifyTotal:(totShopify||null) };
 }
 // ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
-function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId, o.num)) return false; return (o.items||[]).some(li=>li.sku && productByShopifySku(li.sku)); }
+function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId, o.num)) return false; return (o.items||[]).some(li=>{ const k=shopifyLineaSku(li); return k && productByShopifySku(k); }); }
 function shopifyOrdersPendientes(){ return SHOPIFY_ORDERS.filter(shopifyOrderImportable).length; }
 // Estado de importación de la selección (modal)
 let IMPORT_SEL=null;
@@ -6839,12 +6859,12 @@ function confirmImportShopifyOrders(){
   if(typeof toastInfo==='function') toastInfo('✅ Se importaron '+n+' pedido(s) de Shopify'+(saltados?(' · '+saltados+' sin vincular, omitido(s)'):'')+'.');
 }
 function renderImportShopifyModal(){
-  const filaLinea=(li)=>{ const p=li.sku?productByShopifySku(li.sku):null; const okv=!!p;
+  const filaLinea=(li)=>{ const k=shopifyLineaSku(li); const p=k?productByShopifySku(k):null; const okv=!!p;
     return `<div class="flex items-baseline justify-between gap-2 text-xs ${okv?'text-clay-600':'text-red-600'}">
       <span>${li.cantidad}× ${li.titulo}${li.variante?(' · '+li.variante):''}</span>
       <span class="whitespace-nowrap">${fmt(li.precio)} ${okv?`<span class="text-clay-400">→ ${productName(p)}</span>`:'· <b>sin vínculo</b>'}</span>
     </div>`; };
-  const card=(o)=>{ const importado=shopifyOrderImportado(o.orderId, o.num); const sinVinculo=!o.excluir && !importado && !(o.items||[]).some(li=>li.sku && productByShopifySku(li.sku));
+  const card=(o)=>{ const importado=shopifyOrderImportado(o.orderId, o.num); const sinVinculo=!o.excluir && !importado && !(o.items||[]).some(li=>{ const k=shopifyLineaSku(li); return k && productByShopifySku(k); });
     const bloqueado = importado || o.excluir || sinVinculo;
     const sel = !!(IMPORT_SEL&&IMPORT_SEL[o.orderId]) && !bloqueado;
     let etiqueta='';
@@ -7683,8 +7703,10 @@ async function revisarBuzonShopify(silent){
       if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
       else { // sin SKU vinculado: se DEJA en el buzón (no se acusa). Se anota qué productos vienen SIN SKU desde Shopify.
         sinVinculo++;
-        const sinSku=[...new Set((o.items||[]).filter(li=>!li.sku).map(li=>String(li.titulo||li.title||li.nombre||'').trim()).filter(Boolean))];
-        stuck.push({id:o.orderId, num:o.num||o.orderId, sinSku});
+        const itemsSinSku=(o.items||[]).filter(li=>!li.sku);
+        const sinSku=[...new Set(itemsSinSku.map(li=>String(li.titulo||li.title||li.nombre||'').trim()).filter(Boolean))];
+        const reconocidos=[...new Set(itemsSinSku.map(li=>shopifySkuPorNombre(li)).filter(Boolean))]; // sin SKU pero reconocidos por nombre
+        stuck.push({id:o.orderId, num:o.num||o.orderId, sinSku, reconocidos});
       }
     }
     if(importadas || adoptadas){ save(); }
@@ -7707,9 +7729,11 @@ async function revisarBuzonShopify(silent){
       if(nuevos.length || !silent){
         const nums=stuck.map(s=>s.num).join(', ');
         const sinSku=[...new Set(stuck.flatMap(s=>s.sinSku||[]))];
-        const motivo = sinSku.length
-          ? ('"'+sinSku.join('", "')+'" no tiene SKU en Shopify. Ponle SKU a esas variantes en Shopify (Productos → variante → SKU) y luego vincúlalas en la pestaña "Vincular SKU".')
-          : 'falta vincular el SKU en la pestaña "Vincular SKU". Vincúlalo y entrarán solos.';
+        const reconocidos=[...new Set(stuck.flatMap(s=>s.reconocidos||[]))];
+        let motivo;
+        if(sinSku.length && reconocidos.length) motivo='"'+sinSku.join('", "')+'" viene sin SKU desde Shopify, pero la plataforma lo reconoce por nombre ('+reconocidos.join(', ')+'). Vincula ese SKU en "Vincular SKU" y entrará solo. Ponle también el SKU en Shopify para que sincronice el stock.';
+        else if(sinSku.length) motivo='"'+sinSku.join('", "')+'" no tiene SKU en Shopify y no está en el catálogo de la plataforma. Ponle SKU en Shopify y pide agregarlo al catálogo.';
+        else motivo='falta vincular el SKU en la pestaña "Vincular SKU". Vincúlalo y entrarán solos.';
         toastInfo('⚠️ '+stuck.length+' pedido(s) de Shopify ('+nums+') no se importaron: '+motivo);
       }
       stuck.forEach(s=>{ BUZON_AVISADOS[s.id]=true; });
