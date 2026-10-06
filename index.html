@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.05-165';
+const APP_VERSION = '2026.10.06-166';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -6740,7 +6740,29 @@ const SHOPIFY_ORDERS = [
 ];
 const SHOPIFY_ORDERS_FECHA = '10-09-2026';
 // ¿Ya está importado este pedido de Shopify? (se guarda shopifyOrderId en la venta)
-function shopifyOrderImportado(orderId){ return (DB.sales||[]).some(x=>x.shopifyOrderId===orderId); }
+// Solo los dígitos del N° de pedido ("#1039" y "1039" son el mismo pedido).
+function shopifyNumDigits(n){ return String(n||'').replace(/\D/g,''); }
+// Busca una venta de canal Shopify registrada A MANO con el mismo N° de pedido (sin ID interno de Shopify).
+function shopifyVentaPorNumero(num){
+  const d=shopifyNumDigits(num); if(!d) return null;
+  return (DB.sales||[]).find(x=>caCanal(x)==='Shopify' && !x.perdido && shopifyNumDigits(x.pedidoNum)===d) || null;
+}
+// ¿El pedido ya está en la plataforma? Por ID interno de Shopify (entró por el buzón) o, si no,
+// por N° de pedido (lo registraste a mano con "Registrar venta Shopify"). Así el buzón no insiste.
+function shopifyOrderImportado(orderId, num){
+  if((DB.sales||[]).some(x=>x.shopifyOrderId===orderId)) return true;
+  return !!shopifyVentaPorNumero(num);
+}
+// Si el pedido se registró a mano, se "adopta" como el pedido de Shopify: se le guarda el ID interno
+// y el N° con el formato de Shopify (#1039), para que quede igual que los importados automáticamente.
+function shopifyAdoptarVentaManual(o){
+  if(!o || (DB.sales||[]).some(x=>x.shopifyOrderId===o.orderId)) return false;
+  const s=shopifyVentaPorNumero(o.num); if(!s) return false;
+  s.shopifyOrderId=o.orderId; s.shopifyNum=o.num||s.shopifyNum||''; if(o.num) s.pedidoNum=o.num;
+  if(!s.shopifyEnvio){ const sl=o.shippingLine; const t=o.shippingTitle||o.metodoEnvio||(typeof sl==='string'?sl:(sl&&sl.title))||''; if(t) s.shopifyEnvio=t; }
+  if(!s.shopifyTotal && +o.total>0) s.shopifyTotal=+o.total;
+  return true;
+}
 // Construye un PEDIDO (Ventas → Pedidos) a partir de un pedido de Shopify.
 // Sigue la misma lógica de un pedido normal (origen no-CA, tipoDespacho 'Viet'),
 // con la única diferencia de que el stock se descuenta de Casa Augusta (bodega:'CA').
@@ -6787,7 +6809,7 @@ function buildSaleFromShopifyOrder(o){
     shopifyTotal:(totShopify||null) };
 }
 // ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
-function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId)) return false; return (o.items||[]).some(li=>li.sku && productByShopifySku(li.sku)); }
+function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId, o.num)) return false; return (o.items||[]).some(li=>li.sku && productByShopifySku(li.sku)); }
 function shopifyOrdersPendientes(){ return SHOPIFY_ORDERS.filter(shopifyOrderImportable).length; }
 // Estado de importación de la selección (modal)
 let IMPORT_SEL=null;
@@ -6795,7 +6817,7 @@ function importShopifyOrders(){ IMPORT_SEL={}; SHOPIFY_ORDERS.forEach(o=>{ IMPOR
 function toggleImportOrder(orderId){ if(!IMPORT_SEL) return; IMPORT_SEL[orderId]=!IMPORT_SEL[orderId]; renderImportShopifyModal(); }
 function confirmImportShopifyOrders(){
   if(!IMPORT_SEL) return;
-  const elegidos = SHOPIFY_ORDERS.filter(o=>IMPORT_SEL[o.orderId] && !shopifyOrderImportado(o.orderId));
+  const elegidos = SHOPIFY_ORDERS.filter(o=>IMPORT_SEL[o.orderId] && !shopifyOrderImportado(o.orderId, o.num));
   if(!elegidos.length){ if(typeof toastInfo==='function') toastInfo('No hay pedidos nuevos seleccionados para importar.'); return; }
   let n=0, saltados=0;
   elegidos.forEach(o=>{ const venta=buildSaleFromShopifyOrder(o); if(venta){ DB.sales.push(venta); n++; } else { saltados++; } });
@@ -6809,7 +6831,7 @@ function renderImportShopifyModal(){
       <span>${li.cantidad}× ${li.titulo}${li.variante?(' · '+li.variante):''}</span>
       <span class="whitespace-nowrap">${fmt(li.precio)} ${okv?`<span class="text-clay-400">→ ${productName(p)}</span>`:'· <b>sin vínculo</b>'}</span>
     </div>`; };
-  const card=(o)=>{ const importado=shopifyOrderImportado(o.orderId); const sinVinculo=!o.excluir && !importado && !(o.items||[]).some(li=>li.sku && productByShopifySku(li.sku));
+  const card=(o)=>{ const importado=shopifyOrderImportado(o.orderId, o.num); const sinVinculo=!o.excluir && !importado && !(o.items||[]).some(li=>li.sku && productByShopifySku(li.sku));
     const bloqueado = importado || o.excluir || sinVinculo;
     const sel = !!(IMPORT_SEL&&IMPORT_SEL[o.orderId]) && !bloqueado;
     let etiqueta='';
@@ -7641,14 +7663,15 @@ async function revisarBuzonShopify(silent){
     const pend=Array.isArray(data.orders)?data.orders:[];
     BUZON_LAST=Date.now();
     if(!pend.length){ if(!silent && typeof toastInfo==='function') toastInfo('No hay ventas nuevas de Shopify por importar.'); return; }
-    let importadas=0, sinVinculo=0; const ackIds=[]; const stuck=[]; // stuck: pedidos que quedan en espera
+    let importadas=0, sinVinculo=0, adoptadas=0; const ackIds=[]; const stuck=[]; // stuck: pedidos que quedan en espera
     for(const o of pend){
-      if(shopifyOrderImportado(o.orderId)){ ackIds.push(o.orderId); continue; } // ya estaba: solo limpiar buzón
+      if(shopifyOrderImportado(o.orderId, o.num)){ if(shopifyAdoptarVentaManual(o)) adoptadas++; ackIds.push(o.orderId); continue; } // ya estaba (auto o a mano): solo limpiar buzón
       const venta=buildSaleFromShopifyOrder(o);
       if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
       else { sinVinculo++; stuck.push({id:o.orderId, num:o.num||o.orderId}); } // sin SKU vinculado: se DEJA en el buzón (no se acusa)
     }
-    if(importadas){ save(); }
+    if(importadas || adoptadas){ save(); }
+    if(adoptadas && !importadas){ try{ rerender(); }catch(_){} } // refleja el N° con formato #10XX en la lista
     // Avisar al buzón SOLO de las que ya quedaron en la plataforma (o duplicadas).
     if(ackIds.length){
       try{ await fetch(base+'/ack',{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({orderIds:ackIds}) }); }catch(_){}
