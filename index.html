@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.08-175';
+const APP_VERSION = '2026.10.16-177';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -2100,7 +2100,9 @@ function renderVentas(){
   const despOrder={pendiente:0,en_camino:1,entregado:2};
   const sval=s=>{const k=VENTAS_SORT.key; if(k==='entrega')return s.fechaEntrega||''; if(k==='cliente'){const c=clientById(s.clienteId);return (c?c.nombre:(s.clienteNombre||'')).toLowerCase();} if(k==='total')return saleTotal(s); if(k==='pago')return s.pagado?1:0; if(k==='despacho')return despOrder[s.estadoDespacho]||0; if(k==='doc')return s.docTipo||''; return s.fecha||'';};
   // Las ventas de Casa Augusta (origen==='CA') viven en su propio módulo, NO en Ventas > Pedidos.
-  const pedidoBase=DB.sales.filter(s=>s.origen!=='CA');
+  // Las ventas de Shopify (canal 'Shopify') viven SOLO en Casa Augusta → Shopify, con las mismas
+  // funciones que un pedido (se abren con los mismos modales). Así no se mezclan en esta lista.
+  const pedidoBase=DB.sales.filter(s=>s.origen!=='CA' && caCanal(s)!=='Shopify');
   const rows=[...pedidoBase].sort((a,b)=>{const va=sval(a),vb=sval(b); return (typeof va==='string')? dir*String(va).localeCompare(String(vb)) : dir*(va-vb);});
   const ciudades=distinctCI(pedidoBase.map(s=>s.ciudad));
   const comunas=distinctCI(pedidoBase.map(s=>s.comuna));
@@ -2508,7 +2510,7 @@ function saveSale(){
     if(CONVERT_QUOTE_ID){ const q=(DB.quotes||[]).find(x=>x.id===CONVERT_QUOTE_ID); if(q){ q.estado='ganado'; q.ventaId=EDIT.id; } CONVERT_QUOTE_ID=null; }
   }
   const sid=EDIT.id;
-  save();closeModal();go(CURRENT==='despachos'?'despachos':'ventas');
+  save();closeModal();go((CURRENT==='despachos'||CURRENT==='ca_shopify')?CURRENT:'ventas');
   if(esNueva) openConfirmacion(sid);
   else if(reciénEntregado) openEntrega(sid);
 }
@@ -8175,8 +8177,17 @@ function renderShopCarritos(){
 function shopifyVistosMap(){ if(!DB.shopifyVistos) DB.shopifyVistos={}; return DB.shopifyVistos; }
 function shopVentaNueva(s){ return !!(s && s.id && !shopifyVistosMap()[s.id]); }
 function marcarShopVentaVista(id){ if(!id) return; const m=shopifyVistosMap(); if(!m[id]){ m[id]=Date.now(); save(); } }
-function abrirShopVentaDetalle(id){ marcarShopVentaVista(id); renderCAShopify(); openCASaleDetail(id); }
-function abrirShopVentaEdit(id){ marcarShopVentaVista(id); renderCAShopify(); openCASale(id); }
+// Botón de documento para la lista Shopify: "Emitir SII" si falta, "📧 Enviar boleta/factura" si ya tiene folio.
+function shopDocBtn(s, movil){
+  const base=movil?'flex-1 text-center px-2 py-2':'px-2.5 py-1.5';
+  if(s.docTipo==='pendiente') return `<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" title="Emitir boleta/factura en el SII" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 rounded-lg ${base}">Emitir SII</button>`;
+  if(s.docTipo==='boleta'||s.docTipo==='factura') return `<button onclick="event.stopPropagation();openEmitirSII('${s.id}')" title="Enviar ${s.docTipo} por correo o corregir el folio" class="text-xs font-medium text-sage-700 bg-sage-50 hover:bg-sage-100 border border-sage-200 rounded-lg ${base}">📧 Enviar ${s.docTipo}</button>`;
+  return '';
+}
+// Las ventas de Shopify usan los MISMOS modales que Ventas → Pedidos (detalle y edición completos:
+// fecha de entrega, tipo de despacho, courier, seguimiento, documento, entrega, comprobante, etc.).
+function abrirShopVentaDetalle(id){ marcarShopVentaVista(id); renderCAShopify(); openSaleDetail(id); }
+function abrirShopVentaEdit(id){ marcarShopVentaVista(id); renderCAShopify(); openSale(id); }
 // Nº de pedido como número (para ordenar: el más reciente arriba)
 function shopPedidoNum(s){ const n=parseInt(String(s&&s.pedidoNum||'').replace(/\D/g,''),10); return isNaN(n)?-1:n; }
 // Red de seguridad: detecta pedidos de Shopify que faltan en la correlativa (ej: está el #1025 y el
@@ -8325,7 +8336,7 @@ function renderCAShopify(){
         <td class="px-4 py-3">${caPagoPill(s)}</td>
         <td class="px-4 py-3">${shopEntregaPill(s)}<div class="mt-1"><button onclick="event.stopPropagation();toggleShopDespacho('${s.id}')" title="Cambiar forma de entrega: domicilio → envío a región → retiro en tienda" class="text-[11px] font-medium border rounded-lg px-2 py-0.5 inline-flex items-center gap-1 hover:brightness-95 ${tipoDespachoOf(s)==='Retiro'?'text-sage-700 bg-sage-50 border-sage-200':'text-clay-500 bg-clay-50 border-clay-200'}">${shopDespachoLabel(s)} <span class="opacity-50">⇄</span></button></div></td>
         <td class="px-4 py-3 whitespace-nowrap text-clay-600">${s.docTipo==='pendiente'?pill('Pendiente','amber'):(s.docTipo==='no_aplica'?'—':((s.docTipo==='factura'?'Factura ':'Boleta ')+(s.docNumero||'')))}</td>
-        <td class="px-4 py-3 text-right whitespace-nowrap">${tipoDespachoOf(s)==='Retiro'?`<button onclick="event.stopPropagation();openRetiroMsg('${s.id}')" title="Mensaje de retiro con fecha" class="text-xs font-semibold text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2.5 py-1.5 rounded-lg mr-1 inline-flex items-center gap-1">📅 Retiro</button>`:''}<button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></td>
+        <td class="px-4 py-3 text-right whitespace-nowrap"><span class="inline-flex gap-1">${tipoDespachoOf(s)==='Retiro'?`<button onclick="event.stopPropagation();openRetiroMsg('${s.id}')" title="Mensaje de retiro con fecha" class="text-xs font-semibold text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1">📅 Retiro</button>`:''}${shopDocBtn(s)}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Comprobante</button><button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Editar</button></span></td>
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">
@@ -8336,7 +8347,7 @@ function renderCAShopify(){
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
         <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${shopEntregaPill(s)}<button onclick="event.stopPropagation();toggleShopDespacho('${s.id}')" class="badge inline-flex items-center gap-1 ${tipoDespachoOf(s)==='Retiro'?'bg-sage-50 text-sage-700':'bg-clay-100 text-clay-600'}">${shopDespachoLabel(s)} ⇄</button>${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
-        <div class="mt-3 pt-3 border-t border-clay-100 flex gap-2">${tipoDespachoOf(s)==='Retiro'?`<button onclick="event.stopPropagation();openRetiroMsg('${s.id}')" class="flex-1 text-xs font-semibold text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2 py-2 rounded-lg text-center">📅 Mensaje de retiro</button>`:''}<button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
+        <div class="mt-3 pt-3 border-t border-clay-100 flex flex-wrap gap-2">${tipoDespachoOf(s)==='Retiro'?`<button onclick="event.stopPropagation();openRetiroMsg('${s.id}')" class="flex-1 text-xs font-semibold text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2 py-2 rounded-lg text-center">📅 Mensaje de retiro</button>`:''}${shopDocBtn(s,true)}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
   </div>`
