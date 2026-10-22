@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.16-177';
+const APP_VERSION = '2026.10.22-180';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -638,9 +638,26 @@ const productNameCliente = p => _pnBase(p, modeloNuevo(p.modelo));
 // Proveedor (OC / facturas): SOLO el nombre antiguo original
 const productNameProveedor = p => _pnBase(p, p.modelo);
 const lineTotal = i => i.cantidad*i.precio*(1-(i.descuento||0)/100);
-const saleSubtotal = s => s.items.reduce((a,i)=>a+lineTotal(i),0);   // solo productos (con descuentos)
+/* ---- Devoluciones y cambios vinculados a una venta (nota de crédito interna) ----
+   Una DEVOLUCIÓN resta las unidades devueltas (la venta vale menos). Un CAMBIO resta lo devuelto y
+   suma lo que el cliente se lleva a cambio (la venta solo cambia por la diferencia de precio).
+   itemsNetos(s) entrega los ítems "reales" de la venta y es lo que usan totales, reportes,
+   dashboard, metas y márgenes. Las listas siguen mostrando lo vendido original + una etiqueta. */
+const saleDevoluciones = s => (s && s.id) ? ((DB&&DB.caReturns)||[]).filter(r=>r.ventaId===s.id) : [];
+const saleTieneDevolucion = s => saleDevoluciones(s).length>0;
+function itemsNetos(s){
+  if(!s||!s.items) return [];
+  const devs=saleDevoluciones(s); if(!devs.length) return s.items;
+  const pend={}; devs.forEach(r=>(r.items||[]).forEach(i=>{ pend[i.productId]=(pend[i.productId]||0)+(+i.cantidad||0); }));
+  const base=s.items.map(i=>{ const d=Math.min(+i.cantidad||0, pend[i.productId]||0); if(d>0) pend[i.productId]-=d; return d>0 ? {...i, cantidad:(+i.cantidad||0)-d, cantidadOriginal:+i.cantidad||0, devuelto:d} : i; });
+  const entregas=[]; devs.forEach(r=>{ if(r.clase!=='cambio') return; (r.itemsEntrega||[]).forEach(i=>{ const p=productById(i.productId); entregas.push({productId:i.productId, cantidad:+i.cantidad||0, precio:+i.precio||0, descuento:0, descripcion:p?productNameCliente(p):(i.descripcion||'Producto'), esCambio:true}); }); });
+  return base.concat(entregas);
+}
+// ¿La venta quedó devuelta por completo? (todas las unidades vendidas volvieron y no hubo cambio)
+function saleDevueltaCompleta(s){ if(!saleTieneDevolucion(s)) return false; const n=itemsNetos(s); return n.length>0 && n.every(i=>(+i.cantidad||0)<=0); }
+const saleSubtotal = s => itemsNetos(s).reduce((a,i)=>a+lineTotal(i),0);   // solo productos (con descuentos), neto de devoluciones/cambios
 const saleTotal = s => saleSubtotal(s) + (s.costoEnvio||0);          // total que paga el cliente: productos + envío
-const saleCost  = s => s.items.reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
+const saleCost  = s => itemsNetos(s).reduce((a,i)=>{const p=productById(i.productId);return a+(p?p.costo:0)*i.cantidad;},0);
 // Nombre limpio de un item: usa el catálogo y, si no, limpia la descripción (quita "xN" duplicado).
 const _cleanDesc = i => String(i.descripcion||'').replace(/\s*x\s*\d+\s*$/i,'').trim();
 const itemLabel = i => { const p=productById(i.productId); return p?productName(p):_cleanDesc(i); };            // interno: Nuevo (Antiguo)
@@ -661,10 +678,13 @@ const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1
 function stockOf(productId){
   const p = productById(productId); if(!p) return 0;
   let s = p.stockInicial;
-  DB.sales.forEach(v=>{ if(v.perdido||v.bodega==='CA') return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
+  // Las ventas que salen de Casa Augusta ('CA') o de Casa Planta ('CP') NO restan del central.
+  DB.sales.forEach(v=>{ if(v.perdido||v.bodega==='CA'||v.bodega==='CP') return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
   // Las compras/recepciones asignadas a Casa Augusta (item.bodega==='CA') NO suman al central.
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') s+=i.cantidad; }));
   DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
+  // Devoluciones de la bodega central: lo devuelto reingresa; en un cambio, lo que se lleva el cliente sale.
+  (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='REQ') return; (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) s-=(+i.cantidad||0); }); });
   // Transferencias: central→CA restan del central; CA→central (sentido 'aCentral') suman al central.
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; const dir=(t.sentido==='aCentral')?1:-1; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=dir*i.cantidad; }); });
   return s;
@@ -678,7 +698,8 @@ function stockCA(productId){
   // Recepciones/compras asignadas directamente a Casa Augusta al recibir la OC.
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') s+=i.cantidad; }));
   DB.sales.forEach(v=>{ if(v.bodega!=='CA'||v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
-  (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); });
+  // Devoluciones de la bodega Casa Augusta: lo devuelto reingresa; en un cambio, lo que se lleva el cliente sale.
+  (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='CA') return; (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) s-=(+i.cantidad||0); }); });
   // Ajustes manuales de inventario en Casa Augusta (conteo, merma, regalo, etc.).
   (DB.adjustmentsCA||[]).forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
   return s;
@@ -696,7 +717,6 @@ const NAV = [
   {id:'ca_shopify', label:'Shopify', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M9 2L6 6v14a2 2 0 002 2h8a2 2 0 002-2V6l-3-4zM6 6h12M15 10a3 3 0 01-6 0'},
   {id:'ca_stock',  label:'Stock', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'ca_entregas', label:'Entregas', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
-  {id:'ca_devoluciones', label:'Devoluciones', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8'},
   {id:'ca_prospectos', label:'Potencial Cliente', grupo:'Casa Augusta', roles:['admin','casa_augusta'], icon:'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM19 8v6M22 11h-6'},
   {id:'cp_ventas', label:'Ventas', grupo:'Casa Planta', roles:['admin','casa_planta'], icon:'M3 3h18v4H3zM3 10h12v11H3zM17 10h4v11h-4z'},
   {id:'cp_stock',  label:'Stock',  grupo:'Casa Planta', roles:['admin','casa_planta'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
@@ -707,6 +727,9 @@ const NAV = [
   {id:'abc',       label:'¿Qué da la plata?', grupo:'Ventas', roles:['admin','vendedor'], icon:'M12 2a10 10 0 1010 10A10 10 0 0012 2zm0 4a6 6 0 110 12 6 6 0 010-12zm0 4a2 2 0 100 4 2 2 0 000-4z'},
   {id:'clientes',  label:'Clientes', grupo:'Ventas', roles:['admin','vendedor'], icon:'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87'},
   {id:'despachos', label:'Despachos', grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M1 3h15v13H1zM16 8h4l3 3v5h-7z M5.5 19a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4z'},
+  // Devoluciones de los TRES puntos de venta (Venta/Requinoa, Casa Augusta y Casa Planta) en un solo módulo.
+  // Mantiene el id 'ca_devoluciones' para que los permisos ya asignados sigan funcionando.
+  {id:'ca_devoluciones', label:'Devoluciones', grupo:'Operaciones', roles:['admin','vendedor','bodega','casa_augusta','casa_planta'], icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8'},
   {id:'calendario', label:'Calendario', grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
   {id:'tareas',    label:'Tareas',    grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'},
   {id:'stock',     label:'Bodega Requinoa', grupo:'Inventario', roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
@@ -1004,7 +1027,7 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_shopify:'Casa Augusta · Shopify',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Casa Augusta · Devoluciones',ca_prospectos:'Casa Augusta · Potencial Cliente',cp_ventas:'Casa Planta · Ventas',cp_stock:'Casa Planta · Stock'};
+  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_shopify:'Casa Augusta · Shopify',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Devoluciones',ca_prospectos:'Casa Augusta · Potencial Cliente',cp_ventas:'Casa Planta · Ventas',cp_stock:'Casa Planta · Stock'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
@@ -1145,7 +1168,7 @@ function ventasPorCanalMes(ym){
   const r={}; CANALES_DASH.forEach(c=>{ r[c.key]={n:0, unidades:0, producto:0, envio:0, total:0, costo:0, margen:0}; });
   const suma=(k,s)=>{ const o=r[k]; const prod=saleSubtotal(s), env=+(s.costoEnvio||0), costo=saleCost(s);
     o.n++; o.producto+=prod; o.envio+=env; o.total+=prod+env; o.costo+=costo; o.margen+=prod-costo;
-    o.unidades+=(s.items||[]).reduce((a,i)=>a+(esMacetero(productById(i.productId))?(+i.cantidad||0):0),0); };
+    o.unidades+=itemsNetos(s).reduce((a,i)=>a+(esMacetero(productById(i.productId))?(+i.cantidad||0):0),0); };
   (DB.sales||[]).forEach(s=>{ if(s.perdido || (s.fecha||'').slice(0,7)!==ym) return; suma(canalDeVenta(s),s); });
   (DB.cpSales||[]).forEach(s=>{ if((s.fecha||'').slice(0,7)!==ym) return; suma('cp',s); });
   const tot={n:0, unidades:0, producto:0, envio:0, total:0, costo:0, margen:0};
@@ -1214,7 +1237,7 @@ function renderDashboard(){
   const esAdmin = SESSION.rol==='admin';
   const esVendedor = SESSION.rol!=='bodega';
   // Meta de unidades: cuenta SOLO maceteros (excluye sacos, plantas, fletes, honorarios, etc.).
-  const cuentaMaceteros = s => (s.items||[]).reduce((x,i)=>x+(esMacetero(productById(i.productId))?(+i.cantidad||0):0),0);
+  const cuentaMaceteros = s => itemsNetos(s).reduce((x,i)=>x+(esMacetero(productById(i.productId))?(+i.cantidad||0):0),0);
   const unidadesMes = SALES.filter(inMonth).reduce((a,s)=>a+cuentaMaceteros(s),0) + CP_MES.reduce((a,s)=>a+cuentaMaceteros(s),0);
   const metaMes = (DB.metaUnidades&&DB.metaUnidades[ym])||0;
   const metaPctMes = metaMes?Math.min(100,Math.round(unidadesMes/metaMes*100)):0;
@@ -1411,9 +1434,9 @@ function verMetaMaceteros(monthKey, modo){
   const ventas=[...(DB.sales||[]).filter(s=>!s.perdido && (s.fecha||'').slice(0,7)===mk), ...(DB.cpSales||[]).filter(s=>(s.fecha||'').slice(0,7)===mk)];
   // Maceteros por canal (Pedidos · Casa Augusta · Shopify · Casa Planta), para el desglose.
   const macPorCanal={}; CANALES_DASH.forEach(c=>{ macPorCanal[c.key]=0; });
-  ventas.forEach(s=>{ const k=esVentaCP(s)?'cp':canalDeVenta(s); (s.items||[]).forEach(i=>{ if(esMacetero(productById(i.productId))) macPorCanal[k]+=(+i.cantidad||0); }); });
+  ventas.forEach(s=>{ const k=esVentaCP(s)?'cp':canalDeVenta(s); itemsNetos(s).forEach(i=>{ if(esMacetero(productById(i.productId))) macPorCanal[k]+=(+i.cantidad||0); }); });
   const gMac={}, gOtros={}; let totalMac=0, totalOtros=0, montoOtros=0;
-  ventas.forEach(s=>{ (s.items||[]).forEach(i=>{
+  ventas.forEach(s=>{ itemsNetos(s).forEach(i=>{
     const p=productById(i.productId); const q=+i.cantidad||0;
     const nom=p?productNameCliente(p):(i.descripcion||'Producto');
     const key=p?p.id:('x'+(i.descripcion||''));
@@ -1531,7 +1554,7 @@ function renderReportes(){
   const franN=d.sales.filter(s=>tipoDespachoOf(s)==='Fran').length;
   const currierN=d.sales.filter(s=>tipoDespachoOf(s)==='Currier').length;
   // Desglose por canal de venta: Pedidos (Ventas) vs Casa Augusta.
-  const chan=(list)=>({n:list.length, u:list.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0), m:list.reduce((a,s)=>a+saleSubtotal(s),0)});
+  const chan=(list)=>({n:list.length, u:list.reduce((a,s)=>a+itemsNetos(s).reduce((x,i)=>x+i.cantidad,0),0), m:list.reduce((a,s)=>a+saleSubtotal(s),0)});
   const chPed=chan(d.sales.filter(s=>s.origen!=='CA'));
   const chCA=chan(d.sales.filter(s=>s.origen==='CA'));
   const chTot=chan(d.sales);
@@ -1605,7 +1628,7 @@ function renderReportes(){
   const metaMonth=(d.from.slice(0,7)===d.to.slice(0,7))?d.from.slice(0,7):todayISO().slice(0,7);
   const metaVal=(DB.metaUnidades&&DB.metaUnidades[metaMonth])||0;
   // Cuenta solo ventas reales (excluye pedidos perdidos) y SOLO maceteros (no sacos, plantas, fletes, etc.).
-  const unitsMonth=DB.sales.filter(s=>!s.perdido && (s.fecha||'').slice(0,7)===metaMonth).reduce((a,s)=>a+s.items.reduce((x,i)=>x+(esMacetero(productById(i.productId))?(i.cantidad||0):0),0),0);
+  const unitsMonth=DB.sales.filter(s=>!s.perdido && (s.fecha||'').slice(0,7)===metaMonth).reduce((a,s)=>a+itemsNetos(s).reduce((x,i)=>x+(esMacetero(productById(i.productId))?(i.cantidad||0):0),0),0);
   const metaPct=metaVal?Math.min(100,Math.round(unitsMonth/metaVal*100)):0;
   const metaCard=`<div class="card p-5 sm:col-span-2 cursor-pointer hover:ring-1 hover:ring-clay-200 transition" onclick="verMetaMaceteros('${metaMonth}')" title="Ver el detalle de maceteros vendidos">
     <div class="flex items-center justify-between gap-2">
@@ -1902,8 +1925,10 @@ function openQuoteDetail(id){
         <div class="divide-y divide-clay-100">
           ${q.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
         </div>
+        ${devolucionesBloqueHtml(s)}
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
-          <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+          ${saleTieneDevolucion(s)?`<div class="flex justify-between text-clay-400"><span>Vendido originalmente</span><span>${fmt(s.items.reduce((a,i)=>a+lineTotal(i),0))}</span></div>`:''}
+          <div class="flex justify-between text-clay-500"><span>Subtotal${saleTieneDevolucion(s)?' (neto de devoluciones/cambios)':''}</span><span>${fmt(subtotal)}</span></div>
           ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
           <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
         </div>
@@ -2174,7 +2199,7 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):(s.bodega==='CP'?pill('🌿 Stock Casa Planta','green'):''))}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -2191,7 +2216,7 @@ function renderVentas(){
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             ${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
-            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):'')}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
+            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):(s.bodega==='CP'?pill('🌿 Stock Casa Planta','green'):''))}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
           </div>
           <div class="text-right shrink-0">
             <div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div>
@@ -2255,11 +2280,12 @@ function renderSaleModal(){
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <div class="text-sm font-semibold">Bodega que despacha</div>
-            <div id="bod_hint" class="text-xs text-clay-400 mt-0.5">${s.bodega==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).'}</div>
+            <div id="bod_hint" class="text-xs text-clay-400 mt-0.5">${bodegaHint(s.bodega)}</div>
           </div>
-          <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5 shrink-0">
-            <button type="button" onclick="setSaleBodega('REQ')" id="bod_req" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega!=='CA'?'bg-sage-500 text-white':'text-clay-600'}">Bodega Requinoa</button>
+          <div class="flex items-center gap-1 bg-white border border-clay-200 rounded-lg p-0.5 shrink-0 flex-wrap">
+            <button type="button" onclick="setSaleBodega('REQ')" id="bod_req" class="px-3 py-1 rounded-md text-xs font-medium ${(s.bodega!=='CA'&&s.bodega!=='CP')?'bg-sage-500 text-white':'text-clay-600'}">Bodega Requinoa</button>
             <button type="button" onclick="setSaleBodega('CA')" id="bod_ca" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600'}">Bodega Casa Augusta</button>
+            <button type="button" onclick="setSaleBodega('CP')" id="bod_cp" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega==='CP'?'bg-sage-600 text-white':'text-clay-600'}">Bodega Casa Planta</button>
           </div>
         </div>
       </div>
@@ -2351,12 +2377,16 @@ function lineSubHtml(it){
 }
 // Stock disponible en la bodega elegida (Requinoa central o Casa Augusta),
 // SIN contar el pedido que se está editando (para no restarse a sí mismo).
+// Texto de ayuda según la bodega elegida en el pedido.
+function bodegaHint(b){ return b==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':(b==='CP'?'El stock se descuenta del inventario propio de <b>Casa Planta</b>.':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).'); }
+// Bodega "efectiva" de una venta para el stock: 'CA', 'CP' o '' (Requinoa/central).
+function bodegaDe(s){ return (s&&(s.bodega==='CA'||s.bodega==='CP'))?s.bodega:''; }
 function stockBaseVenta(productId){
   // Los presupuestos muestran la disponibilidad de Casa Augusta (igual que las ventas de CA).
-  const esCA = !!(EDIT && (EDIT.bodega==='CA' || EDIT._presupuesto));
-  let base = esCA ? stockCA(productId) : stockOf(productId);
+  const bod = EDIT ? (EDIT._presupuesto ? 'CA' : bodegaDe(EDIT)) : '';
+  let base = bod==='CA' ? stockCA(productId) : (bod==='CP' ? cpStock(productId) : stockOf(productId));
   if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id);
-    if(orig && !orig.perdido && ((orig.bodega==='CA')===esCA))
+    if(orig && !orig.perdido && bodegaDe(orig)===bod)
       orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); });
   }
   return base;
@@ -2452,13 +2482,14 @@ function setSaleTipoDesp(t){
   if(hint) hint.innerHTML=esRetiro?'El cliente retira su pedido en la tienda. No requiere dirección, courier ni costo de envío. Cuando lo retire, márcalo como <b>Entregado</b>.':(esCurrier?'Envío por currier externo. Indica la empresa/persona y el N° de seguimiento para el tracking. Este pedido se gestiona en la pestaña <b>Currier</b> de Despachos.':'El auto es opcional. Asígnalo solo cuando un día reparte en más de un vehículo; así puedes organizar las entregas y la hoja de ruta por auto.');
 }
 function setSaleBodega(t){
-  if(!EDIT) return; EDIT.bodega = t==='CA' ? 'CA' : '';
+  if(!EDIT) return; EDIT.bodega = (t==='CA'||t==='CP') ? t : '';
   const base='px-3 py-1 rounded-md text-xs font-medium ';
-  const req=document.getElementById('bod_req'), ca=document.getElementById('bod_ca');
-  if(req) req.className=base+(EDIT.bodega!=='CA'?'bg-sage-500 text-white':'text-clay-600');
+  const req=document.getElementById('bod_req'), ca=document.getElementById('bod_ca'), cp=document.getElementById('bod_cp');
+  if(req) req.className=base+(!EDIT.bodega?'bg-sage-500 text-white':'text-clay-600');
   if(ca) ca.className=base+(EDIT.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600');
+  if(cp) cp.className=base+(EDIT.bodega==='CP'?'bg-sage-600 text-white':'text-clay-600');
   const hint=document.getElementById('bod_hint');
-  if(hint) hint.innerHTML = EDIT.bodega==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).';
+  if(hint) hint.innerHTML = bodegaHint(EDIT.bodega);
   refreshStockWarns();
 }
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
@@ -2518,8 +2549,9 @@ function deleteSale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
   confirmModal({titulo:'¿Eliminar esta venta?', mensaje:'Se quitará de tus registros. Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
     const idx=DB.sales.indexOf(s);
+    const devs=quitarDevolucionesDeVenta(id); // sus devoluciones/cambios se van con ella (si no, el stock quedaría doble)
     DB.sales=DB.sales.filter(x=>x.id!==id); registrarShopifyDescartado(s); save(); closeModal(); go(CURRENT==='ca_shopify'?'ca_shopify':'ventas');
-    toastUndo('Venta eliminada', ()=>{ DB.sales.splice(Math.min(idx,DB.sales.length),0,s); quitarShopifyDescartado(s.shopifyOrderId||'', s.shopifyNum||s.pedidoNum||''); save(); if(CURRENT==='ventas') renderVentas(); else go(CURRENT); });
+    toastUndo('Venta eliminada'+(devs.length?(' (y '+devs.length+' devolución/cambio)'):''), ()=>{ DB.sales.splice(Math.min(idx,DB.sales.length),0,s); restaurarDevoluciones(devs); quitarShopifyDescartado(s.shopifyOrderId||'', s.shopifyNum||s.pedidoNum||''); save(); if(CURRENT==='ventas') renderVentas(); else go(CURRENT); });
   }});
 }
 
@@ -3224,7 +3256,7 @@ function openSaleDetail(id, backFecha, backRes){
     <div class="p-4 sm:p-5 border-b border-clay-100 sticky top-0 bg-white z-10">
       ${backFecha?`<button onclick="openDiaEntregas('${backFecha}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al resumen del día</button>`:(backRes?`<button onclick="resBack('${backRes}')" class="text-sm text-clay-600 hover:text-clay-900 font-medium flex items-center gap-1 mb-2">← Volver al detalle</button>`:'')}
       <div class="flex items-center justify-between">
-        <div><h3 class="text-lg font-bold leading-tight">${nombre}</h3><div class="text-xs text-clay-500 mt-0.5">${s.pedidoNum?`<span class="font-semibold text-clay-700">${s.pedidoNum}</span> · `:''}Detalle del pedido · ${s.fecha}</div></div>
+        <div><h3 class="text-lg font-bold leading-tight">${nombre} ${devPillVenta(s)}</h3><div class="text-xs text-clay-500 mt-0.5">${s.pedidoNum?`<span class="font-semibold text-clay-700">${s.pedidoNum}</span> · `:''}Detalle del pedido · ${s.fecha}</div></div>
         <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
       </div>
     </div>
@@ -3255,8 +3287,10 @@ function openSaleDetail(id, backFecha, backRes){
         <div class="divide-y divide-clay-100">
           ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');const pr=productById(i.productId);const costoLinea=(pr?pr.costo:0)*i.cantidad;const ventaLinea=lineTotal(i);const unit=i.cantidad>0?Math.round(ventaLinea/i.cantidad):ventaLinea;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}<br><span class="text-[11px] text-clay-400">${fmt(unit)} c/u${dt>0?' (con descuento)':''}</span>${estado?'<br>'+estado:''}</span><span class="text-right whitespace-nowrap"><span class="font-medium">${fmt(ventaLinea)}</span>${verMargen?`<br><span class="text-[11px] text-clay-400">costo ${fmt(costoLinea)}</span><br><span class="text-[11px] text-sage-600 font-medium">margen ${fmt(ventaLinea-costoLinea)}</span>`:''}</span></div>`;}).join('')}
         </div>
+        ${devolucionesBloqueHtml(s)}
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
-          <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+          ${saleTieneDevolucion(s)?`<div class="flex justify-between text-clay-400"><span>Vendido originalmente</span><span>${fmt(s.items.reduce((a,i)=>a+lineTotal(i),0))}</span></div>`:''}
+          <div class="flex justify-between text-clay-500"><span>Subtotal${saleTieneDevolucion(s)?' (neto de devoluciones/cambios)':''}</span><span>${fmt(subtotal)}</span></div>
           ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
           <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
         </div>
@@ -3533,7 +3567,7 @@ function renderABC(){
   const sales=DB.sales.filter(s=>!s.perdido && abcEnRango(s));
   const agg={};
   if(esProd){
-    sales.forEach(s=>s.items.forEach(i=>{ const p=i.productId?productById(i.productId):null; const key=i.productId||('desc:'+(i.descripcion||'')); const name=p?productName(p):(i.descripcion||'(producto)'); if(!agg[key])agg[key]={key,name,v:0}; agg[key].v+=lineTotal(i); }));
+    sales.forEach(s=>itemsNetos(s).forEach(i=>{ const p=i.productId?productById(i.productId):null; const key=i.productId||('desc:'+(i.descripcion||'')); const name=p?productName(p):(i.descripcion||'(producto)'); if(!agg[key])agg[key]={key,name,v:0}; agg[key].v+=lineTotal(i); }));
   } else {
     sales.forEach(s=>{ const c=clientById(s.clienteId); const key=s.clienteId||('nom:'+(s.clienteNombre||'')); const name=c?c.nombre:(s.clienteNombre||'(cliente)'); if(!agg[key])agg[key]={key,name,v:0}; agg[key].v+=saleSubtotal(s); });
   }
@@ -3623,11 +3657,11 @@ function generateHojaRuta(fecha, auto){
   if(auto) ventas=ventas.filter(s=>s.auto===auto);
   ventas.sort((a,b)=> (a.ciudad||'').localeCompare(b.ciudad||'') || (a.comuna||'').localeCompare(b.comuna||'') );
   if(ventas.length===0){ alert('No hay entregas pendientes para el '+fecha+(auto?' en '+auto:'')+'.'); return; }
-  const totalUnidades=ventas.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.cantidad,0),0);
+  const totalUnidades=ventas.reduce((a,s)=>a+itemsNetos(s).reduce((x,i)=>x+i.cantidad,0),0);
   const comunas=[...new Set(ventas.map(s=>s.comuna||s.ciudad).filter(Boolean))];
   // Resumen de carga: total de cada producto a cargar ese día
   const resumen={};
-  ventas.forEach(s=>s.items.forEach(i=>{
+  ventas.forEach(s=>itemsNetos(s).forEach(i=>{
     const p=productById(i.productId);
     const name=p?productName(p):(i.descripcion||'(producto)');
     const key=p?p.id:name;
@@ -3697,7 +3731,7 @@ function generateHojaRuta(fecha, auto){
 }
 function cargaResumenArr(sales){
   const r={};
-  sales.forEach(s=>s.items.forEach(i=>{const p=productById(i.productId);const name=p?productName(p):(i.descripcion||'producto');const key=p?p.id:name; if(!r[key])r[key]={name,cant:0}; r[key].cant+=i.cantidad;}));
+  sales.forEach(s=>itemsNetos(s).forEach(i=>{const p=productById(i.productId);const name=p?productName(p):(i.descripcion||'producto');const key=p?p.id:name; if(!r[key])r[key]={name,cant:0}; r[key].cant+=i.cantidad;}));
   return Object.values(r).sort((a,b)=>b.cant-a.cant||a.name.localeCompare(b.name));
 }
 function asignarAutoEntrega(saleId, fecha, auto){
@@ -4297,7 +4331,8 @@ function stockMovements(productId){
   const p=productById(productId);
   if(p) moves.push({fecha:'', orden:0, tipo:'Stock inicial', detalle:'Carga base del producto', cantidad:p.stockInicial});
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
-  DB.sales.forEach(s=>{ if(s.bodega==='CA') return; s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
+  DB.sales.forEach(s=>{ if(s.bodega==='CA'||s.bodega==='CP'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
+  (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='REQ') return; const det=devDetalle(r); (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:(r.clase==='cambio'?'Cambio (vuelve)':'Devolución'), detalle:det, cantidad:i.cantidad}); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Cambio (sale)', detalle:det, cantidad:-(+i.cantidad||0)}); }); });
   (DB.adjustments||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:1, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Recibido desde Casa Augusta', cantidad:i.cantidad}); else moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Envío a Casa Augusta', cantidad:-i.cantidad}); } }); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
@@ -7145,7 +7180,7 @@ function caStockMovements(productId){
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Enviado a central (Requínoa)', cantidad:-i.cantidad}); else moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); } }); });
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') moves.push({fecha:c.fecha, orden:0, tipo:'Compra', detalle:(c.proveedor||'Proveedor')+' · recepción directa', cantidad:i.cantidad}); }));
   DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
-  (DB.caReturns||[]).forEach(r=>{ (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Devolución', detalle:r.clienteNombre||r.motivo||'Devolución', cantidad:i.cantidad}); }); });
+  (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='CA') return; const det=devDetalle(r); (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:(r.clase==='cambio'?'Cambio (vuelve)':'Devolución'), detalle:det, cantidad:i.cantidad}); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Cambio (sale)', detalle:det, cantidad:-(+i.cantidad||0)}); }); });
   (DB.adjustmentsCA||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:2, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
   let bal=0; moves.forEach(m=>{ bal+=m.cantidad; m.saldo=bal; });
@@ -7342,7 +7377,7 @@ function descargarReporteVentasCA(){
   const iva=totalConIva-neto;
   const subtotalProd=rows.reduce((a,s)=>a+saleSubtotal(s),0);       // solo productos (con descuento)
   const envios=rows.reduce((a,s)=>a+(s.costoEnvio||0),0);
-  const unidades=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
+  const unidades=rows.reduce((a,s)=>a+itemsNetos(s).reduce((x,i)=>x+(i.cantidad||0),0),0);
   const nVentas=rows.length;
   const ticket=nVentas?totalConIva/nVentas:0;
   const descuentos=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad*i.precio*(i.descuento||0)/100),0),0);
@@ -7634,7 +7669,7 @@ function renderCAVentas(){
       </tr></thead><tbody>
       ${rows.map(s=>{const c=clientById(s.clienteId);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openCASaleDetail('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
-        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}${caCanal(s)==='Shopify'?`<div class="mt-1">${pill('🛍️ Shopify','blue')}</div>`:''}</td>
+        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}${(caCanal(s)==='Shopify'||devPillVenta(s))?`<div class="mt-1 flex flex-wrap gap-1">${caCanal(s)==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}</div>`:''}</td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
@@ -7650,7 +7685,7 @@ function renderCAVentas(){
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
-        <div class="flex flex-wrap gap-1.5 mt-2.5">${caCanal(s)==='Shopify'?pill('🛍️ Shopify','blue'):''}${caPagoPill(s)}${caEstadoPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
+        <div class="flex flex-wrap gap-1.5 mt-2.5">${caCanal(s)==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${caPagoPill(s)}${caEstadoPill(s)}${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
         <div class="mt-3 pt-3 border-t border-clay-100"><button onclick="event.stopPropagation();openCASale('${s.id}')" class="w-full text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
@@ -8265,7 +8300,7 @@ function renderCAShopify(){
   });
   const totalVentas=rows.reduce((a,s)=>a+saleTotal(s),0);
   const porCobrar=rows.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
-  const unidades=rows.reduce((a,s)=>a+s.items.reduce((x,i)=>x+(i.cantidad||0),0),0);
+  const unidades=rows.reduce((a,s)=>a+itemsNetos(s).reduce((x,i)=>x+(i.cantidad||0),0),0);
   const hayFiltro=(SHOP_MES!=='todos'||q!=='');
   const nuevas=allSales.filter(shopVentaNueva);          // pedidos de Shopify sin revisar
   const nuevosBanner=bannerNuevosShopify(nuevas);
@@ -8330,7 +8365,7 @@ function renderCAShopify(){
       </tr></thead><tbody>
       ${rows.map(s=>{const c=clientById(s.clienteId);const nuevo=shopVentaNueva(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${nuevo?'bg-blue-50/40':''}" onclick="abrirShopVentaDetalle('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
-        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}<span class="inline-flex items-center gap-1.5">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">Nuevo</span>`:''}</span>${s.notaCliente?`<div class="mt-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 max-w-[320px] truncate" title="${String(s.notaCliente).replace(/"/g,'&quot;')}">💬 ${s.notaCliente}</div>`:''}</td>
+        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}<span class="inline-flex items-center gap-1.5 flex-wrap">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">Nuevo</span>`:''}${devPillVenta(s)}</span>${s.notaCliente?`<div class="mt-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 max-w-[320px] truncate" title="${String(s.notaCliente).replace(/"/g,'&quot;')}">💬 ${s.notaCliente}</div>`:''}</td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
@@ -8640,7 +8675,9 @@ function saveCASale(){
 }
 function deleteCASale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
-  if(!confirm('¿Eliminar esta venta de Casa Augusta?')) return;
+  const nDev=saleDevoluciones(s).length;
+  if(!confirm('¿Eliminar esta venta de Casa Augusta?'+(nDev?('\n\nTambién se eliminarán sus '+nDev+' devolución(es)/cambio(s) vinculados.'):''))) return;
+  quitarDevolucionesDeVenta(id);
   DB.sales=DB.sales.filter(x=>x.id!==id); registrarShopifyDescartado(s); save(); closeModal(); go(CURRENT==='ca_shopify'?'ca_shopify':'ca_ventas');
   toastInfo('Venta eliminada');
 }
@@ -8777,54 +8814,194 @@ function revertirCAEntrega(id){
   save(); go('ca_entregas');
 }
 
-/* --------- DEVOLUCIONES CASA AUGUSTA --------- */
-let EDITCR=null;
+/* --------- DEVOLUCIONES (los tres puntos de venta) ---------
+   Un solo módulo. Cada devolución indica el PUNTO DE VENTA al que corresponde y el stock vuelve a su bodega:
+     REQ = Venta (pedidos de la bodega central Requinoa) · CA = Casa Augusta · CP = Casa Planta.
+   Se sigue guardando en DB.caReturns (las antiguas, sin punto, cuentan como Casa Augusta). */
+let EDITCR=null, DEV_FILTRO='todos', DEV_ULTIMO_PUNTO='CA';
+const PUNTOS_DEV={ REQ:{label:'Venta', icon:'🏭', stock:'Bodega Requinoa', desc:'Pedidos de Ventas → Pedidos (bodega central)', pill:'blue'},
+                   CA:{label:'Casa Augusta', icon:'🏠', stock:'Casa Augusta', desc:'Ventas del showroom y Shopify', pill:'green'},
+                   CP:{label:'Casa Planta', icon:'🌿', stock:'Casa Planta', desc:'Ventas de la tienda Casa Planta', pill:'gray'} };
+function devPunto(r){ return (r && (r.punto==='REQ'||r.punto==='CP')) ? r.punto : 'CA'; }
+// Bodega a la que entra/sale el stock. Si la devolución está vinculada a un pedido, manda la bodega
+// de ese pedido (guardada en r.bodega); si no, la bodega del punto de venta elegido.
+function devBodega(r){ return (r && (r.bodega==='REQ'||r.bodega==='CA'||r.bodega==='CP')) ? r.bodega : devPunto(r); }
+function devPuntoPill(r){ const p=PUNTOS_DEV[devPunto(r)]; return pill(p.icon+' '+p.label, p.pill); }
+function devClasePill(r){ return r.clase==='cambio' ? pill('🔁 Cambio','blue') : pill(r.tipo==='completa'?'↩︎ Devolución completa':'↩︎ Devolución'+(r.ventaId?' parcial':''), r.tipo==='completa'?'red':'amber'); }
+function devDetalle(r){ return (r.clase==='cambio'?'Cambio':'Devolución')+(r.ventaNum?(' · pedido '+r.ventaNum):'')+(r.clienteNombre?(' · '+r.clienteNombre):'')+(r.motivo?(' · '+r.motivo):''); }
+// Bodega de devolución según la venta vinculada: ventas de Casa Planta → CP; pedidos según su bodega.
+function bodegaDevolucionDeVenta(s, esCP){ if(esCP) return 'CP'; const b=(s&&(s.bodega==='CA'||s.bodega==='CP'))?s.bodega:''; return b||'REQ'; }
+// Al eliminar una venta se quitan sus devoluciones/cambios vinculados (devuelve la lista para poder deshacer).
+function quitarDevolucionesDeVenta(ventaId){ const devs=((DB&&DB.caReturns)||[]).filter(r=>r.ventaId===ventaId); if(devs.length) DB.caReturns=DB.caReturns.filter(r=>r.ventaId!==ventaId); return devs; }
+function restaurarDevoluciones(devs){ if(!devs||!devs.length) return; if(!DB.caReturns) DB.caReturns=[]; devs.forEach(r=>{ if(!DB.caReturns.some(x=>x.id===r.id)) DB.caReturns.push(r); }); }
+// Bloque "Devoluciones y cambios" para el detalle de una venta (Pedidos, Shopify, Casa Augusta, Casa Planta).
+function devolucionesBloqueHtml(s){
+  const devs=saleDevoluciones(s); if(!devs.length) return '';
+  const fila=r=>{ const dev=(r.items||[]).map(i=>{const p=productById(i.productId);return '↩︎ '+i.cantidad+'× '+(p?productNameCliente(p):'producto');}).join(' · ');
+    const ent=(r.itemsEntrega||[]).map(i=>{const p=productById(i.productId);return '🔁 '+i.cantidad+'× '+(p?productNameCliente(p):'producto');}).join(' · ');
+    const monto=r.clase==='cambio' ? ((r.diferencia||0)>0?`<span class="text-red-600 font-medium">cliente paga +${fmt(r.diferencia)}</span>`:((r.diferencia||0)<0?`<span class="text-sage-700 font-medium">a favor del cliente ${fmt(-r.diferencia)}</span>`:'<span class="text-clay-500">cambio parejo</span>')) : `<span class="text-red-600 font-medium">−${fmt(r.monto||0)}</span>`;
+    return `<div class="px-4 py-2.5 text-sm"><div class="flex items-center justify-between gap-2 flex-wrap"><span class="flex items-center gap-2">${devClasePill(r)}<span class="text-clay-500 text-xs">${r.fecha||''}</span></span>${monto}</div><div class="text-clay-700 mt-1">${dev}${ent?`<div class="text-blue-700">${ent} <span class="text-[11px] text-clay-400">se lleva</span></div>`:''}</div>${r.motivo?`<div class="text-xs text-clay-400 mt-0.5">${r.motivo}</div>`:''}</div>`; };
+  return `<div class="border-t border-amber-200 bg-amber-50/60"><div class="px-4 py-2.5 text-xs uppercase tracking-wide text-amber-800 flex items-center justify-between"><span>↩︎ Devoluciones y cambios (${devs.length})</span><button onclick="closeModal();go('ca_devoluciones')" class="text-[11px] normal-case font-medium text-amber-800 hover:underline">Ver módulo →</button></div><div class="divide-y divide-amber-100">${devs.map(fila).join('')}</div></div>`;
+}
+// Etiqueta para listas de pedidos/ventas: ↩︎ devuelto (completo o parcial) o 🔁 cambio.
+function devPillVenta(s){ const devs=saleDevoluciones(s); if(!devs.length) return ''; if(devs.some(r=>r.clase==='cambio') && !devs.some(r=>r.clase!=='cambio')) return pill('🔁 Cambio','blue'); return saleDevueltaCompleta(s) ? pill('↩︎ Devuelto','red') : pill('↩︎ Devolución parcial','amber'); }
+function setDevFiltro(k){ DEV_FILTRO=k; renderCADevoluciones(); }
 function renderCADevoluciones(){
   const v=document.getElementById('view');
-  const rows=[...(DB.caReturns||[])].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-  const totalUn=rows.reduce((a,r)=>a+(r.items||[]).reduce((x,i)=>x+i.cantidad,0),0);
+  const all=[...(DB.caReturns||[])].sort((a,b)=>((b.fecha||'').localeCompare(a.fecha||''))||((b.ts||0)-(a.ts||0)));
+  const rows=DEV_FILTRO==='todos'?all:all.filter(r=>devPunto(r)===DEV_FILTRO);
+  const unidades=l=>l.reduce((a,r)=>a+(r.items||[]).reduce((x,i)=>x+(+i.cantidad||0),0),0);
+  const chip=(k,label,n)=>`<button onclick="setDevFiltro('${k}')" class="text-xs font-semibold border rounded-xl px-3 py-2 inline-flex items-center gap-1.5 ${DEV_FILTRO===k?'bg-clay-700 text-white border-clay-700':'text-clay-600 bg-white border-clay-200 hover:bg-clay-50'}">${label} <span class="tabular-nums opacity-70">${n}</span></button>`;
   v.innerHTML=`
-  <div class="grid grid-cols-2 gap-2.5 sm:gap-4 mb-4">
-    ${statCard('Devoluciones',rows.length,'registradas','')}
-    ${statCard('Unidades reingresadas',totalUn,'al stock de Casa Augusta','text-sage-700')}
+  <div class="card p-4 mb-4 bg-blue-50 border border-blue-100"><div class="flex items-start gap-3"><div class="text-2xl leading-none">↩️</div><div class="text-sm text-clay-700 leading-snug"><div class="font-semibold text-clay-800 mb-0.5">Devoluciones de los tres puntos de venta</div>Registra aquí cualquier producto devuelto e indica de qué punto viene: <b>Venta</b> (pedidos, vuelve a Bodega Requinoa), <b>Casa Augusta</b> o <b>Casa Planta</b>. El stock reingresa automáticamente a la bodega que corresponde.</div></div></div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
+    ${statCard('Devoluciones',rows.length,DEV_FILTRO==='todos'?'registradas':('en '+PUNTOS_DEV[DEV_FILTRO].label),'')}
+    ${statCard('Unidades reingresadas',unidades(rows),DEV_FILTRO==='todos'?'a sus bodegas':('a '+PUNTOS_DEV[DEV_FILTRO].stock),'text-sage-700')}
+    ${statCard('Este mes',all.filter(r=>(r.fecha||'').slice(0,7)===todayISO().slice(0,7)).length,'devoluciones','')}
+    ${statCard('Unidades este mes',unidades(all.filter(r=>(r.fecha||'').slice(0,7)===todayISO().slice(0,7))),'','')}
   </div>
-  ${rows.length? `<div class="card overflow-hidden"><div class="overflow-auto max-h-[68vh]"><table class="w-full text-sm min-w-[560px]">
+  <div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-2">
+    ${chip('todos','Todas',all.length)}
+    ${chip('REQ','🏭 Venta',all.filter(r=>devPunto(r)==='REQ').length)}
+    ${chip('CA','🏠 Casa Augusta',all.filter(r=>devPunto(r)==='CA').length)}
+    ${chip('CP','🌿 Casa Planta',all.filter(r=>devPunto(r)==='CP').length)}
+    <button onclick="openCADevolucion()" class="ml-auto bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">+ Registrar devolución</button>
+  </div>
+  ${rows.length? `<div class="card overflow-hidden"><div class="overflow-auto max-h-[68vh]"><table class="w-full text-sm min-w-[980px]">
     <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
-      <th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-left px-4 py-3">Motivo</th>
+      <th class="text-left px-4 py-3">Fecha</th><th class="text-left px-4 py-3">Tipo</th><th class="text-left px-4 py-3">Punto de venta</th><th class="text-left px-4 py-3">Pedido / cliente</th><th class="text-left px-4 py-3">Productos</th><th class="text-right px-4 py-3">Monto</th><th class="text-left px-4 py-3">Motivo</th><th class="px-4 py-3"></th>
     </tr></thead><tbody>
     ${rows.map(r=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60">
       <td class="px-4 py-3 whitespace-nowrap text-clay-500">${r.fecha}</td>
-      <td class="px-4 py-3">${r.clienteNombre||'—'}</td>
-      <td class="px-4 py-3 text-clay-700">${(r.items||[]).map(i=>{const p=productById(i.productId);return `<div class="whitespace-nowrap"><span class="text-clay-400 font-medium">${i.cantidad}×</span> ${p?productNameCliente(p):'producto'}</div>`;}).join('')}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${devClasePill(r)}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${devPuntoPill(r)}</td>
+      <td class="px-4 py-3">${r.ventaNum?`<div class="text-[11px] font-semibold text-clay-400">${r.ventaNum}</div>`:''}${r.clienteNombre||'—'}${r.ventaId?'':'<div class="text-[11px] text-clay-400">sin pedido vinculado</div>'}</td>
+      <td class="px-4 py-3 text-clay-700">${(r.items||[]).map(i=>{const p=productById(i.productId);return `<div class="whitespace-nowrap"><span class="text-clay-400 font-medium">↩︎ ${i.cantidad}×</span> ${p?productNameCliente(p):'producto'}</div>`;}).join('')}${(r.itemsEntrega||[]).map(i=>{const p=productById(i.productId);return `<div class="whitespace-nowrap text-blue-700"><span class="font-medium">🔁 ${i.cantidad}×</span> ${p?productNameCliente(p):'producto'} <span class="text-[11px] text-clay-400">se lleva</span></div>`;}).join('')}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">${r.clase==='cambio'?((r.diferencia||0)>0?`<span class="text-red-600" title="El cliente paga la diferencia">+${fmt(r.diferencia)}</span>`:((r.diferencia||0)<0?`<span class="text-sage-700" title="A favor del cliente">−${fmt(-r.diferencia)}</span>`:'<span class="text-clay-400">parejo</span>')):(r.monto?`<span class="text-red-600">−${fmt(r.monto)}</span>`:'<span class="text-clay-400">—</span>')}</td>
       <td class="px-4 py-3 text-clay-600">${r.motivo||'—'}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="deleteDevolucion('${r.id}')" title="Eliminar esta devolución (el stock se vuelve a descontar)" class="text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 px-2.5 py-1.5 rounded-lg">Eliminar</button></td>
     </tr>`).join('')}
     </tbody></table></div></div>`
-  : emptyState({icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8', titulo:'Sin devoluciones', detalle:'Cuando un cliente devuelva un producto, regístralo aquí y volverá al stock de Casa Augusta.', accion:`<button onclick="openCADevolucion()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">Registrar devolución</button>`})}`;
+  : emptyState({icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8', titulo:DEV_FILTRO==='todos'?'Sin devoluciones':('Sin devoluciones en '+PUNTOS_DEV[DEV_FILTRO].label), detalle:'Cuando un cliente devuelva un producto, regístralo aquí, elige el punto de venta y volverá al stock correspondiente.', accion:`<button onclick="openCADevolucion()" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-4 py-2 rounded-xl">Registrar devolución</button>`})}`;
+}
+function deleteDevolucion(id){
+  const r=(DB.caReturns||[]).find(x=>x.id===id); if(!r) return;
+  confirmModal({titulo:'¿Eliminar esta devolución?', mensaje:'Las unidades se volverán a descontar del stock de '+PUNTOS_DEV[devPunto(r)].stock+'. Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
+    const idx=DB.caReturns.indexOf(r); DB.caReturns=DB.caReturns.filter(x=>x.id!==id); save(); go('ca_devoluciones');
+    toastUndo('Devolución eliminada', ()=>{ DB.caReturns.splice(Math.min(idx,DB.caReturns.length),0,r); save(); if(CURRENT==='ca_devoluciones') go('ca_devoluciones'); });
+  }});
 }
 function caDevProdOpt(sel){ return productsForPicker(productNameCliente).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)}</option>`).join(''); }
-function openCADevolucion(){
-  EDITCR={fecha:todayISO(), clienteNombre:'', items:[{productId:DB.products[0].id,cantidad:1}], motivo:''};
+function setDevPunto(k){ if(!EDITCR) return; syncCADev(); EDITCR.punto=k; if(EDITCR.ventaId){ EDITCR.ventaId=null; EDITCR.ventaNum=''; EDITCR.lineas=[]; EDITCR.bodega=''; } EDITCR.q=''; renderDevModal(); }
+function setDevClase(k){ if(!EDITCR) return; syncCADev(); EDITCR.clase=k; if(k==='cambio' && !EDITCR.itemsEntrega.length){ const p=DB.products[0]; EDITCR.itemsEntrega.push({productId:p.id,cantidad:1,precio:+p.precioRef||0}); } renderDevModal(); }
+function openCADevolucion(punto){
+  const p0=punto||(DEV_FILTRO!=='todos'?DEV_FILTRO:DEV_ULTIMO_PUNTO)||'CA';
+  EDITCR={fecha:todayISO(), clienteNombre:'', items:[{productId:DB.products[0].id,cantidad:1}], itemsEntrega:[], motivo:'', punto:p0, clase:'devolucion', ventaId:null, ventaNum:'', ventaEsCP:false, lineas:[], bodega:'', q:''};
+  renderDevModal();
+}
+// Ventas donde buscar según el punto de venta elegido.
+function devVentasDelPunto(punto){
+  if(punto==='CP') return (DB.cpSales||[]).map(s=>({s, esCP:true}));
+  return (DB.sales||[]).filter(s=>!s.perdido && (punto==='CA' ? (s.origen==='CA'||caCanal(s)==='Shopify') : (s.origen!=='CA'&&caCanal(s)!=='Shopify'))).map(s=>({s, esCP:false}));
+}
+function devNombreVenta(s){ const c=clientById(s.clienteId); return (c?c.nombre:(s.clienteNombre||s.cliente||'')).trim(); }
+function devNumVenta(s){ return s.pedidoNum||s.shopifyNum||''; }
+function buscarPedidosDev(q){ if(!EDITCR) return; EDITCR.q=q; const box=document.getElementById('dv_resultados'); if(box) box.innerHTML=devResultadosHtml(); }
+function devResultadosHtml(){
+  const q=(EDITCR.q||'').toLowerCase().trim();
+  let lista=devVentasDelPunto(EDITCR.punto);
+  if(q) lista=lista.filter(({s})=>{ const txt=(devNumVenta(s)+' '+devNombreVenta(s)+' '+(s.fecha||'')+' '+(s.items||[]).map(i=>itemLabelCliente(i)).join(' ')).toLowerCase(); return txt.includes(q); });
+  lista.sort((a,b)=>((b.s.fecha||'').localeCompare(a.s.fecha||''))||((b.s.creadoAt||0)-(a.s.creadoAt||0)));
+  const top=lista.slice(0,8);
+  if(!top.length) return `<div class="text-xs text-clay-400 px-1 py-2">No hay pedidos que calcen${q?' con "'+q.replace(/</g,'&lt;')+'"':''}.</div>`;
+  return top.map(({s,esCP})=>`<button type="button" onclick="vincularDev('${s.id}',${esCP?'true':'false'})" class="w-full text-left border border-clay-200 hover:bg-clay-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2 bg-white">
+    <span class="min-w-0"><span class="text-xs text-clay-400">${s.fecha||''}${devNumVenta(s)?' · <b class="text-clay-600">'+devNumVenta(s)+'</b>':''}</span><span class="block text-sm font-medium text-clay-800 truncate">${devNombreVenta(s)||'Sin nombre'}</span><span class="block text-xs text-clay-500 truncate">${(s.items||[]).map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</span></span>
+    <span class="text-sm font-semibold whitespace-nowrap">${fmt(esCP?cpSaleTotal(s):saleTotal(s))}${saleTieneDevolucion(s)?' <span class="text-[10px] text-amber-700" title="Ya tiene devoluciones o cambios">↩︎</span>':''}</span></button>`).join('');
+}
+function vincularDev(id, esCP){
+  const s=esCP?(DB.cpSales||[]).find(x=>x.id===id):(DB.sales||[]).find(x=>x.id===id); if(!s) return;
+  syncCADev();
+  // Líneas del pedido, descontando lo ya devuelto en registros anteriores.
+  const ya={}; saleDevoluciones(s).forEach(r=>(r.items||[]).forEach(i=>{ ya[i.productId]=(ya[i.productId]||0)+(+i.cantidad||0); }));
+  const lineas=[]; (s.items||[]).forEach(i=>{ const vendida=+i.cantidad||0; const yaDev=Math.min(vendida, ya[i.productId]||0); ya[i.productId]=(ya[i.productId]||0)-yaDev; const unit=vendida>0?lineTotal(i)/vendida:(+i.precio||0); lineas.push({productId:i.productId, label:itemLabelCliente(i), vendida, yaDev, max:vendida-yaDev, devolver:0, precio:Math.round(unit)}); });
+  EDITCR.ventaId=s.id; EDITCR.ventaNum=devNumVenta(s); EDITCR.ventaEsCP=!!esCP; EDITCR.lineas=lineas; EDITCR.clienteNombre=devNombreVenta(s); EDITCR.bodega=bodegaDevolucionDeVenta(s, esCP);
+  renderDevModal();
+}
+function desvincularDev(){ if(!EDITCR) return; syncCADev(); EDITCR.ventaId=null; EDITCR.ventaNum=''; EDITCR.lineas=[]; EDITCR.bodega=''; renderDevModal(); }
+function devTodo(){ if(!EDITCR) return; syncCADev(); EDITCR.lineas.forEach(l=>{ l.devolver=l.max; }); renderDevModal(); }
+function onDevLinea(ix,v){ const l=EDITCR.lineas[ix]; if(!l) return; l.devolver=Math.max(0,Math.min(l.max,parseInt(v,10)||0)); const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
+// Productos que el cliente se lleva a cambio.
+function addDevEntrega(){ syncCADev(); const p=DB.products[0]; EDITCR.itemsEntrega.push({productId:p.id,cantidad:1,precio:+p.precioRef||0}); renderDevModal(); }
+function removeDevEntrega(ix){ syncCADev(); EDITCR.itemsEntrega.splice(ix,1); renderDevModal(); }
+function onDevEntregaProd(ix,v){ const p=productById(v); if(!p) return; syncCADev(); EDITCR.itemsEntrega[ix].productId=v; EDITCR.itemsEntrega[ix].precio=+p.precioRef||0; renderDevModal(); }
+function onDevEntregaQty(ix,v){ EDITCR.itemsEntrega[ix].cantidad=Math.max(1,parseInt(v,10)||1); const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
+function onDevEntregaPrecio(ix,v){ EDITCR.itemsEntrega[ix].precio=+v||0; const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
+function devMontos(){
+  let devuelto=0, entregado=0;
+  if(EDITCR.ventaId){ EDITCR.lineas.forEach(l=>{ devuelto+=l.devolver*l.precio; }); }
+  else { EDITCR.items.forEach(i=>{ const p=productById(i.productId); devuelto+=(+i.cantidad||0)*(+(p?p.precioRef:0)||0); }); }
+  if(EDITCR.clase==='cambio') EDITCR.itemsEntrega.forEach(i=>{ entregado+=(+i.cantidad||0)*(+i.precio||0); });
+  return {devuelto:Math.round(devuelto), entregado:Math.round(entregado), diferencia:Math.round(entregado-devuelto)};
+}
+function saleTotalPrevisto(){ const s=EDITCR.ventaEsCP?(DB.cpSales||[]).find(x=>x.id===EDITCR.ventaId):(DB.sales||[]).find(x=>x.id===EDITCR.ventaId); if(!s) return 0; const m=devMontos(); return (EDITCR.ventaEsCP?cpSaleTotal(s):saleTotal(s)) - m.devuelto + (EDITCR.clase==='cambio'?m.entregado:0); }
+function devResumenHtml(){
+  const m=devMontos(); const esCambio=EDITCR.clase==='cambio';
+  const uDev=EDITCR.ventaId?EDITCR.lineas.reduce((a,l)=>a+l.devolver,0):EDITCR.items.reduce((a,i)=>a+(+i.cantidad||0),0);
+  let dif='';
+  if(esCambio){ dif = m.diferencia>0?`<span class="text-red-600 font-semibold">El cliente paga la diferencia: ${fmt(m.diferencia)}</span>`:(m.diferencia<0?`<span class="text-sage-700 font-semibold">Queda a favor del cliente: ${fmt(-m.diferencia)}</span>`:'<span class="text-clay-600 font-semibold">Cambio parejo, sin diferencia</span>'); }
+  return `<div class="flex flex-wrap gap-x-5 gap-y-1 text-sm"><span class="text-clay-500">Vuelven: <b class="text-clay-800">${uDev} u · ${fmt(m.devuelto)}</b></span>${esCambio?`<span class="text-clay-500">Se lleva: <b class="text-clay-800">${EDITCR.itemsEntrega.reduce((a,i)=>a+(+i.cantidad||0),0)} u · ${fmt(m.entregado)}</b></span><span>${dif}</span>`:''}${EDITCR.ventaId?`<span class="text-clay-500">La venta queda en: <b class="text-clay-800">${fmt(Math.max(0, saleTotalPrevisto()))}</b></span>`:''}</div>`;
+}
+function renderDevModal(){
+  const e=EDITCR; if(!e) return;
+  const esCambio=e.clase==='cambio'; const inp='w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white text-sm';
+  const opt=(k)=>{ const p=PUNTOS_DEV[k]; return `<button type="button" onclick="setDevPunto('${k}')" class="flex-1 text-left border rounded-xl p-3 transition ${e.punto===k?'border-clay-700 bg-clay-50 ring-1 ring-clay-700':'border-clay-200 hover:bg-clay-50'}"><div class="text-sm font-semibold text-clay-800">${p.icon} ${p.label}</div><div class="text-[11px] text-clay-500 mt-0.5">${p.desc}</div></button>`; };
+  const clase=(k,icon,t,d)=>`<button type="button" onclick="setDevClase('${k}')" class="flex-1 text-left border rounded-xl p-3 transition ${e.clase===k?(k==='cambio'?'border-blue-600 bg-blue-50 ring-1 ring-blue-600':'border-amber-600 bg-amber-50 ring-1 ring-amber-600'):'border-clay-200 hover:bg-clay-50'}"><div class="text-sm font-semibold text-clay-800">${icon} ${t}</div><div class="text-[11px] text-clay-500 mt-0.5">${d}</div></button>`;
+  const bodegaTxt=PUNTOS_DEV[e.bodega||e.punto].stock;
+  const pedidoBox = e.ventaId
+    ? `<div class="border border-sage-200 bg-sage-50 rounded-xl p-3">
+        <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-sm"><b>Pedido ${e.ventaNum||''}</b> · ${e.clienteNombre||''}<div class="text-xs text-clay-500">El stock ${esCambio?'se mueve en':'vuelve a'} <b>${bodegaTxt}</b> (bodega de este pedido).</div></div><div class="flex gap-2"><button type="button" onclick="devTodo()" class="text-xs font-medium border border-clay-200 bg-white hover:bg-clay-50 px-3 py-1.5 rounded-lg">${esCambio?'Vuelve todo':'Devolver todo'}</button><button type="button" onclick="desvincularDev()" class="text-xs font-medium text-clay-500 hover:text-clay-800 px-2 py-1.5">Quitar pedido</button></div></div>
+        <table class="w-full text-sm mt-2"><thead class="text-[11px] uppercase text-clay-400"><tr><th class="text-left py-1">Producto</th><th class="text-center py-1">Vendida</th><th class="text-center py-1">Ya devuelta</th><th class="text-center py-1 w-28">${esCambio?'Vuelve':'Devolver'}</th></tr></thead><tbody>
+        ${e.lineas.map((l,ix)=>`<tr class="border-t border-sage-100"><td class="py-1.5 pr-2">${l.label}<div class="text-[11px] text-clay-400">${fmt(l.precio)} c/u</div></td><td class="text-center tabular-nums">${l.vendida}</td><td class="text-center tabular-nums text-clay-400">${l.yaDev||'—'}</td><td class="text-center"><input type="number" min="0" max="${l.max}" value="${l.devolver}" oninput="onDevLinea(${ix},this.value)" ${l.max<=0?'disabled':''} class="w-20 text-center border border-clay-200 rounded-lg px-2 py-1 bg-white"></td></tr>`).join('')}
+        </tbody></table>
+        <div class="text-[11px] text-clay-400 mt-1">Puedes devolver una parte o todo. Lo ya devuelto antes no se puede volver a devolver.</div>
+      </div>`
+    : `<div class="border border-clay-200 rounded-xl p-3">
+        <label class="text-xs text-clay-500">Buscar el pedido en <b>${PUNTOS_DEV[e.punto].label}</b> (N°, cliente, producto o fecha)</label>
+        <input id="dv_q" value="${(e.q||'').replace(/"/g,'&quot;')}" oninput="buscarPedidosDev(this.value)" placeholder="Ej: 1043, Juan, Nara…" class="${inp}">
+        <div id="dv_resultados" class="space-y-1.5 mt-2 max-h-56 overflow-auto">${devResultadosHtml()}</div>
+        <div class="text-[11px] text-clay-400 mt-2">Si no encuentras el pedido, puedes registrarlo sin vincular: escribe abajo los productos que vuelven (el stock entra a <b>${PUNTOS_DEV[e.punto].stock}</b>).</div>
+      </div>`;
+  const libreBox = e.ventaId ? '' : `<div>
+        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos que vuelven</label><button type="button" onclick="addCADevItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
+        <div id="dv_items" class="space-y-2">${e.items.map((it,ix)=>caDevRow(it,ix)).join('')}</div>
+      </div>`;
+  const entregaBox = !esCambio ? '' : `<div class="border border-blue-200 bg-blue-50 rounded-xl p-3">
+        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">🔁 Productos que se lleva a cambio</label><button type="button" onclick="addDevEntrega()" class="text-sm text-clay-700 font-medium">+ Agregar</button></div>
+        <div class="space-y-2">${e.itemsEntrega.map((it,ix)=>`<div class="grid grid-cols-12 gap-2 items-center"><select onchange="onDevEntregaProd(${ix},this.value)" class="col-span-6 border border-clay-200 rounded-lg px-2 py-2 text-sm bg-white">${caDevProdOpt(it.productId)}</select><input type="number" min="1" value="${it.cantidad}" oninput="onDevEntregaQty(${ix},this.value)" class="col-span-2 border border-clay-200 rounded-lg px-2 py-2 text-sm text-center bg-white" title="Cantidad"><input type="text" inputmode="numeric" value="${milesIn(it.precio)}" oninput="onDevEntregaPrecio(${ix},moneyInput(this))" class="col-span-3 border border-clay-200 rounded-lg px-2 py-2 text-sm text-right bg-white" title="Precio unitario"><button type="button" onclick="removeDevEntrega(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center">✕</button></div>`).join('')}</div>
+        <div class="text-[11px] text-clay-500 mt-2">El precio viene del catálogo; ajústalo si acordaste otro. Estos productos salen del stock de <b>${bodegaTxt}</b> y se suman a la venta${e.ventaId?' del pedido':''}.</div>
+      </div>`;
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
-      <h3 class="text-lg font-bold">Registrar devolución</h3>
+      <h3 class="text-lg font-bold">Registrar ${esCambio?'cambio':'devolución'}</h3>
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-5 space-y-4">
-      <div class="text-sm text-clay-500">Los productos devueltos vuelven al stock de Casa Augusta.</div>
+      <div><label class="text-sm font-medium">¿Qué es?</label><div class="flex flex-col sm:flex-row gap-2 mt-1.5">${clase('devolucion','↩︎','Devolución','El producto vuelve y la venta se descuenta (completa o parcial).')}${clase('cambio','🔁','Cambio','El producto vuelve y el cliente se lleva otro. La venta solo cambia por la diferencia.')}</div></div>
+      <div><label class="text-sm font-medium">Punto de venta</label><div class="flex flex-col sm:flex-row gap-2 mt-1.5">${opt('REQ')}${opt('CA')}${opt('CP')}</div></div>
+      ${pedidoBox}
+      ${libreBox}
+      ${entregaBox}
       <div class="grid sm:grid-cols-2 gap-3">
-        <div><label class="text-sm font-medium">Fecha</label><input id="dv_fecha" type="date" value="${EDITCR.fecha}" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
-        <div><label class="text-sm font-medium">Cliente (opcional)</label><input id="dv_cli" value="" placeholder="Nombre del cliente" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+        <div><label class="text-sm font-medium">Fecha</label><input id="dv_fecha" type="date" value="${e.fecha}" class="${inp}"></div>
+        <div><label class="text-sm font-medium">Cliente${e.ventaId?'':' (opcional)'}</label><input id="dv_cli" value="${(e.clienteNombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre del cliente" class="${inp}"></div>
       </div>
-      <div>
-        <div class="flex items-center justify-between mb-1.5"><label class="text-sm font-medium">Productos devueltos</label><button onclick="addCADevItem()" class="text-sm text-clay-700 font-medium">+ Agregar línea</button></div>
-        <div id="dv_items" class="space-y-2">${EDITCR.items.map((it,ix)=>caDevRow(it,ix)).join('')}</div>
-      </div>
-      <div><label class="text-sm font-medium">Motivo (opcional)</label><input id="dv_motivo" value="" placeholder="Ej: producto con falla, cambio de modelo..." class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1"></div>
+      <div><label class="text-sm font-medium">Motivo (opcional)</label><input id="dv_motivo" value="${(e.motivo||'').replace(/"/g,'&quot;')}" placeholder="Ej: producto con falla, cambio de modelo, no le gustó el color…" class="${inp}"></div>
+      <div id="dv_resumen" class="bg-clay-50 rounded-xl px-4 py-3">${devResumenHtml()}</div>
     </div>
     <div class="p-5 border-t border-clay-100 flex justify-end gap-2 sticky bottom-0 bg-white">
       <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button>
-      <button onclick="saveCADevolucion()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Registrar devolución</button>
-    </div>`);
+      <button onclick="saveCADevolucion()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl">Registrar ${esCambio?'cambio':'devolución'}</button>
+    </div>`,'xl');
 }
 function caDevRow(it,ix){
   return `<div class="border border-clay-100 rounded-xl p-2.5 bg-clay-50/40"><div class="grid grid-cols-12 gap-2 items-center">
@@ -8833,18 +9010,37 @@ function caDevRow(it,ix){
     <button onclick="removeCADevItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center">✕</button>
   </div></div>`;
 }
-function syncCADev(){ const f=document.getElementById('dv_fecha'); if(f)EDITCR.fecha=f.value; const c=document.getElementById('dv_cli'); if(c)EDITCR.clienteNombre=c.value.trim(); const m=document.getElementById('dv_motivo'); if(m)EDITCR.motivo=m.value; }
-function onCADevProd(ix,v){ EDITCR.items[ix].productId=v; }
-function onCADevQty(ix,v){ EDITCR.items[ix].cantidad=Math.max(1,+v||1); }
+function syncCADev(){ if(!EDITCR) return; const f=document.getElementById('dv_fecha'); if(f)EDITCR.fecha=f.value; const c=document.getElementById('dv_cli'); if(c)EDITCR.clienteNombre=c.value.trim(); const m=document.getElementById('dv_motivo'); if(m)EDITCR.motivo=m.value; const q=document.getElementById('dv_q'); if(q)EDITCR.q=q.value; }
+function onCADevProd(ix,v){ EDITCR.items[ix].productId=v; const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
+function onCADevQty(ix,v){ EDITCR.items[ix].cantidad=Math.max(1,+v||1); const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
 function addCADevItem(){ syncCADev(); EDITCR.items.push({productId:DB.products[0].id,cantidad:1}); document.getElementById('dv_items').innerHTML=EDITCR.items.map((it,ix)=>caDevRow(it,ix)).join(''); }
-function removeCADevItem(ix){ if(EDITCR.items.length<=1)return; syncCADev(); EDITCR.items.splice(ix,1); document.getElementById('dv_items').innerHTML=EDITCR.items.map((it,ix)=>caDevRow(it,ix)).join(''); }
+function removeCADevItem(ix){ if(EDITCR.items.length<=1)return; syncCADev(); EDITCR.items.splice(ix,1); document.getElementById('dv_items').innerHTML=EDITCR.items.map((it,ix)=>caDevRow(it,ix)).join(''); const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
 function saveCADevolucion(){
   syncCADev();
-  const items=EDITCR.items.filter(i=>i.productId&&i.cantidad>0);
-  if(!items.length){ alert('Agrega al menos un producto'); return; }
-  DB.caReturns.push({id:uid('dev'), fecha:EDITCR.fecha||todayISO(), clienteNombre:EDITCR.clienteNombre||'', items:items.map(i=>({productId:i.productId,cantidad:+i.cantidad})), motivo:EDITCR.motivo||'', creadoPor:(SESSION.nombre||SESSION.email)});
-  save(); closeModal(); go('ca_devoluciones');
-  toastInfo('✅ Devolución registrada · stock reingresado a Casa Augusta');
+  const e=EDITCR; if(!e) return; const esCambio=e.clase==='cambio';
+  const punto=(e.punto==='REQ'||e.punto==='CP')?e.punto:'CA'; DEV_ULTIMO_PUNTO=punto;
+  let items=[], tipo='';
+  if(e.ventaId){
+    items=e.lineas.filter(l=>l.devolver>0).map(l=>({productId:l.productId,cantidad:l.devolver,precio:l.precio}));
+    const todo=e.lineas.length>0 && e.lineas.every(l=>l.devolver===l.max);
+    tipo = esCambio ? '' : (todo ? 'completa' : 'parcial');
+  } else {
+    items=e.items.filter(i=>i.productId&&i.cantidad>0).map(i=>{ const p=productById(i.productId); return {productId:i.productId,cantidad:+i.cantidad,precio:+(p?p.precioRef:0)||0}; });
+  }
+  if(!items.length){ alert(esCambio?'Indica qué producto vuelve (cantidad mayor a 0).':'Indica qué producto se devuelve (cantidad mayor a 0).'); return; }
+  let itemsEntrega=[];
+  if(esCambio){
+    itemsEntrega=e.itemsEntrega.filter(i=>i.productId&&(+i.cantidad)>0).map(i=>({productId:i.productId,cantidad:+i.cantidad,precio:+i.precio||0}));
+    if(!itemsEntrega.length){ alert('Indica qué producto se lleva el cliente a cambio.'); return; }
+    const bod=e.bodega||punto; const falt=[];
+    itemsEntrega.forEach(i=>{ const disp=bod==='CA'?stockCA(i.productId):(bod==='CP'?cpStock(i.productId):stockOf(i.productId)); if(i.cantidad>disp) falt.push('• '+productNameCliente(productById(i.productId))+' — disponible '+disp+', se lleva '+i.cantidad); });
+    if(falt.length && !confirm('Stock insuficiente en '+PUNTOS_DEV[bod].stock+' para lo que se lleva:\n\n'+falt.join('\n')+'\n\n¿Registrar igual?')) return;
+  }
+  const m=devMontos(); const bodega=e.bodega||punto;
+  if(!DB.caReturns) DB.caReturns=[];
+  DB.caReturns.push({id:uid('dev'), ts:Date.now(), clase:(esCambio?'cambio':'devolucion'), tipo, punto, bodega, ventaId:e.ventaId||'', ventaNum:e.ventaNum||'', ventaEsCP:!!e.ventaEsCP, fecha:e.fecha||todayISO(), clienteNombre:e.clienteNombre||'', items, itemsEntrega, monto:m.devuelto, montoEntrega:m.entregado, diferencia:(esCambio?m.diferencia:0), motivo:e.motivo||'', creadoPor:(SESSION.nombre||SESSION.email)});
+  save(); closeModal(); EDITCR=null; go('ca_devoluciones');
+  toastInfo(esCambio ? ('🔁 Cambio registrado · stock ajustado en '+PUNTOS_DEV[bodega].stock+(m.diferencia>0?(' · el cliente paga '+fmt(m.diferencia)):(m.diferencia<0?(' · a favor del cliente '+fmt(-m.diferencia)):''))) : ('✅ Devolución '+(tipo||'')+' registrada · stock reingresado a '+PUNTOS_DEV[bodega].stock+(e.ventaId?' · la venta quedó descontada':'')));
 }
 
 /* ===================== PROSPECTOS DE CLIENTES (Casa Augusta) ===================== */
@@ -8950,20 +9146,49 @@ function deleteProspecto(id){
    pantalla de Stock. Usa el mismo catálogo de productos (nombres y precios de referencia) para
    no tener que cargar los maceteros dos veces. */
 let CP_EDIT=null, CP_Q='', CP_MES='todos', CP_SQ='', CP_SOLO_STOCK=false, CP_HIST_TODO=false, CP_AJ=null;
-const cpStock = pid => +(((DB&&DB.cpStock)||{})[pid]||0);
+// Stock GUARDADO de Casa Planta (lo que mueven las ventas de Casa Planta, entradas, salidas y conteos).
+const cpStockGuardado = pid => +(((DB&&DB.cpStock)||{})[pid]||0);
+// Unidades reservadas por PEDIDOS (Ventas → Pedidos) que despachan desde la bodega Casa Planta.
+function cpPedidosQty(pid){ let q=0; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido||v.bodega!=='CP') return; (v.items||[]).forEach(i=>{ if(i.productId===pid) q+=(+i.cantidad||0); }); }); return q; }
+// Devoluciones de la bodega Casa Planta (módulo Devoluciones): lo devuelto reingresa; en un cambio, lo entregado sale.
+function cpDevolucionesQty(pid){ let q=0; ((DB&&DB.caReturns)||[]).forEach(r=>{ if(devBodega(r)!=='CP') return; (r.items||[]).forEach(i=>{ if(i.productId===pid) q+=(+i.cantidad||0); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===pid) q-=(+i.cantidad||0); }); }); return q; }
+// Stock DISPONIBLE de Casa Planta = guardado − pedidos que salen de esta bodega + devoluciones. Es lo que ve toda la app.
+const cpStock = pid => cpStockGuardado(pid) - cpPedidosQty(pid) + cpDevolucionesQty(pid);
 const cpSales = () => ((DB&&DB.cpSales)||[]);
 const cpMovs  = () => ((DB&&DB.cpMovs)||[]);
-const cpSaleTotal = s => (s.items||[]).reduce((a,i)=>a+lineTotal(i),0);
-const cpUnidades  = s => (s.items||[]).reduce((a,i)=>a+(+i.cantidad||0),0);
+const cpSaleTotal = s => itemsNetos(s).reduce((a,i)=>a+lineTotal(i),0);   // neto de devoluciones/cambios
+const cpUnidades  = s => itemsNetos(s).reduce((a,i)=>a+(+i.cantidad||0),0);
 // Aplica un movimiento al stock de Casa Planta y lo deja en el historial con el saldo resultante.
 // delta > 0 suma unidades; delta < 0 resta. Si delta es 0 no hace nada.
 function cpMov(tipo, pid, delta, motivo, saleId, fecha){
   if(!DB.cpStock) DB.cpStock={}; if(!DB.cpMovs) DB.cpMovs=[];
   delta=Math.round(+delta||0); if(!delta) return;
-  const saldo=cpStock(pid)+delta; DB.cpStock[pid]=saldo;
-  DB.cpMovs.push({id:uid('cpm'), ts:Date.now(), fecha:fecha||todayISO(), tipo, productId:pid, cantidad:delta, saldo, motivo:(motivo||'').trim(), saleId:saleId||''});
+  const guardado=cpStockGuardado(pid)+delta; DB.cpStock[pid]=guardado; // el guardado no incluye los pedidos (se restan al mostrar)
+  DB.cpMovs.push({id:uid('cpm'), ts:Date.now(), fecha:fecha||todayISO(), tipo, productId:pid, cantidad:delta, saldo:guardado-cpPedidosQty(pid)+cpDevolucionesQty(pid), motivo:(motivo||'').trim(), saleId:saleId||''});
 }
-const CP_TIPO_MOV={venta:['Venta','red'], venta_anulada:['Venta eliminada','gray'], venta_editada:['Venta editada','gray'], entrada:['Entrada','green'], salida:['Salida','amber'], ajuste:['Ajuste','blue']};
+// Movimientos "virtuales" de las devoluciones registradas en Casa Planta (módulo Devoluciones), para el historial.
+function cpMovsDevoluciones(){
+  const out=[]; ((DB&&DB.caReturns)||[]).forEach(r=>{ if(devBodega(r)!=='CP') return;
+    const ts=r.ts||(r.fecha?new Date(r.fecha+'T12:00:00').getTime():0); const det=devDetalle(r);
+    (r.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(q>0) out.push({id:'dev-'+r.id+'-'+i.productId, ts, fecha:r.fecha||'', tipo:(r.clase==='cambio'?'cambio_vuelve':'devolucion'), productId:i.productId, cantidad:q, motivo:det, virtual:true}); });
+    (r.itemsEntrega||[]).forEach(i=>{ const q=+i.cantidad||0; if(q>0) out.push({id:'devE-'+r.id+'-'+i.productId, ts, fecha:r.fecha||'', tipo:'cambio_sale', productId:i.productId, cantidad:-q, motivo:det, virtual:true}); });
+  }); return out;
+}
+// Movimientos "virtuales" de los pedidos (Ventas → Pedidos) que despachan desde Casa Planta, para el historial.
+function cpMovsPedidos(){
+  const out=[]; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido||v.bodega!=='CP') return;
+    const c=clientById(v.clienteId); const quien=(c?c.nombre:(v.clienteNombre||'')).trim();
+    const ts=v.creadoAt||(v.fecha?new Date(v.fecha+'T12:00:00').getTime():0);
+    (v.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(q>0) out.push({id:'ped-'+v.id+'-'+i.productId, ts, fecha:v.fecha||'', tipo:'pedido', productId:i.productId, cantidad:-q, motivo:'Pedido'+(v.pedidoNum?(' '+v.pedidoNum):'')+(quien?(' · '+quien):''), saleId:v.id, virtual:true}); });
+  }); return out;
+}
+// Historial completo (movimientos reales + pedidos), del más reciente al más antiguo. El saldo se
+// recalcula hacia atrás partiendo del stock disponible ACTUAL, así siempre cuadra con la tabla.
+function cpHistorial(){
+  const todos=[...cpMovs(), ...cpMovsPedidos(), ...cpMovsDevoluciones()].sort((a,b)=>(b.ts||0)-(a.ts||0)); // más reciente primero
+  const acc={}; return todos.map(m=>{ const pid=m.productId; if(acc[pid]==null) acc[pid]=cpStock(pid); const saldo=acc[pid]; acc[pid]=saldo-(+m.cantidad||0); return {...m, saldo}; });
+}
+const CP_TIPO_MOV={venta:['Venta','red'], venta_anulada:['Venta eliminada','gray'], venta_editada:['Venta editada','gray'], entrada:['Entrada','green'], salida:['Salida','amber'], ajuste:['Ajuste','blue'], pedido:['Pedido (despacha CP)','red'], devolucion:['Devolución','green'], cambio_vuelve:['Cambio · vuelve','green'], cambio_sale:['Cambio · sale','amber']};
 const cpBanner = (titulo, texto) => `<div class="card p-4 mb-4 bg-sage-50 border border-sage-100"><div class="flex items-start gap-3"><div class="text-2xl leading-none">🌿</div><div class="text-sm text-clay-700 leading-snug"><div class="font-semibold text-clay-800 mb-0.5">${titulo}</div>${texto}</div></div></div>`;
 
 /* ---------- CASA PLANTA · VENTAS ---------- */
@@ -9012,7 +9237,7 @@ function renderCPVentas(){
       <tbody>${rows.map(s=>`<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer" onclick="openCPSale('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha||''}</td>
         <td class="px-4 py-3 text-clay-700">${itemsHtml(s)}</td>
-        <td class="px-4 py-3 text-clay-600">${s.cliente?`<div class="font-medium text-clay-800">${s.cliente}</div>`:''}${contacto(s)?`<div class="text-xs text-clay-500">${contacto(s)}</div>`:''}${s.nota?`<div class="text-xs text-clay-400 truncate max-w-[260px]" title="${(s.nota||'').replace(/"/g,'&quot;')}">${s.nota}</div>`:((s.cliente||contacto(s))?'':'<span class="text-clay-300">—</span>')}</td>
+        <td class="px-4 py-3 text-clay-600">${s.cliente?`<div class="font-medium text-clay-800">${s.cliente}</div>`:''}${devPillVenta(s)?`<div class="mt-0.5">${devPillVenta(s)}</div>`:''}${contacto(s)?`<div class="text-xs text-clay-500">${contacto(s)}</div>`:''}${s.nota?`<div class="text-xs text-clay-400 truncate max-w-[260px]" title="${(s.nota||'').replace(/"/g,'&quot;')}">${s.nota}</div>`:((s.cliente||contacto(s))?'':'<span class="text-clay-300">—</span>')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(cpSaleTotal(s))}</td>
         <td class="px-4 py-3">${pagoBtn(s)}</td>
         <td class="px-4 py-3 whitespace-nowrap text-clay-600">${docTxt(s)}</td>
@@ -9066,6 +9291,7 @@ function renderCPSaleModal(){
         <div id="cp_items" class="space-y-2">${s.items.map((it,ix)=>cpItemRow(it,ix)).join('')}</div>
         <button onclick="addCPItem()" class="mt-2 text-sm font-medium text-clay-700 border border-dashed border-clay-300 hover:bg-clay-50 px-3 py-2 rounded-xl w-full">+ Agregar producto</button>
       </div>
+      ${esEdit&&saleTieneDevolucion(s)?`<div class="border border-amber-200 rounded-xl overflow-hidden">${devolucionesBloqueHtml(s)}<div class="px-4 py-2 text-[11px] text-clay-500 bg-amber-50/40">El total de la venta ya descuenta estas devoluciones/cambios. Si editas las cantidades vendidas, revisa que las devoluciones sigan teniendo sentido.</div></div>`:''}
       <div class="grid sm:grid-cols-2 gap-3">
         <div><label class="text-xs text-clay-500">Pago</label><select id="cp_pagado" class="${inp}"><option value="true" ${s.pagado!==false?'selected':''}>Pagado</option><option value="false" ${s.pagado===false?'selected':''}>Por cobrar</option></select></div>
         <div><label class="text-xs text-clay-500">Nota (opcional)</label><input id="cp_nota" value="${(s.nota||'').replace(/"/g,'&quot;')}" placeholder="Ej: pagó con transferencia" class="${inp}"></div>
@@ -9117,10 +9343,11 @@ function deleteCPSale(id){
   const quien=s.cliente?(' · '+s.cliente):'';
   confirmModal({titulo:'¿Eliminar esta venta?', mensaje:'Se repone el stock de Casa Planta. Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
     const idx=DB.cpSales.indexOf(s);
+    const devs=quitarDevolucionesDeVenta(id); // sus devoluciones/cambios se van con ella
     DB.cpSales=DB.cpSales.filter(x=>x.id!==id);
     (s.items||[]).forEach(i=>cpMov('venta_anulada', i.productId, +i.cantidad||0, 'Venta eliminada'+quien, s.id, todayISO()));
     save(); CP_EDIT=null; go('cp_ventas');
-    toastUndo('Venta eliminada', ()=>{ DB.cpSales.splice(Math.min(idx,DB.cpSales.length),0,s); (s.items||[]).forEach(i=>cpMov('venta', i.productId, -(+i.cantidad||0), 'Venta restaurada'+quien, s.id, s.fecha)); save(); if(CURRENT==='cp_ventas') go('cp_ventas'); });
+    toastUndo('Venta eliminada'+(devs.length?(' (y '+devs.length+' devolución/cambio)'):''), ()=>{ DB.cpSales.splice(Math.min(idx,DB.cpSales.length),0,s); restaurarDevoluciones(devs); (s.items||[]).forEach(i=>cpMov('venta', i.productId, -(+i.cantidad||0), 'Venta restaurada'+quien, s.id, s.fecha)); save(); if(CURRENT==='cp_ventas') go('cp_ventas'); });
   }});
 }
 
@@ -9144,9 +9371,10 @@ function renderCPStock(){
   const conStock=todos.filter(p=>cpStock(p.id)>0).length;
   const negativos=todos.filter(p=>cpStock(p.id)<0).length;
   const valor=todos.reduce((a,p)=>a+Math.max(0,cpStock(p.id))*(+p.precioRef||0),0);
-  const banner=cpBanner('Inventario propio de Casa Planta','Este stock <b>no lo toca nadie más</b>: solo baja con las ventas de Casa Planta. Aquí lo cargas y ajustas a mano. Puedes escribir la cantidad directamente en la columna <b>Stock</b> (conteo) o usar <b>Ajustar</b> para una entrada o salida con motivo. Todo queda en el historial.');
+  const reservadas=todos.reduce((a,p)=>a+cpPedidosQty(p.id),0); // unidades ya descontadas por pedidos que despachan desde CP
+  const banner=cpBanner('Inventario propio de Casa Planta','Este stock baja solo con las <b>ventas de Casa Planta</b> y con los <b>pedidos</b> (Ventas → Pedidos) que eligen la bodega Casa Planta. Aquí lo cargas y ajustas a mano. Puedes escribir la cantidad directamente en la columna <b>Stock</b> (conteo) o usar <b>Ajustar</b> para una entrada o salida con motivo. Todo queda en el historial.');
   const stats=`<div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
-    ${statCard('Unidades en tienda',unidades,'maceteros','text-sage-700')}
+    ${statCard('Unidades en tienda',unidades,'maceteros disponibles'+(reservadas?(' · '+reservadas+' ya descontadas por pedidos'):''),'text-sage-700')}
     ${statCard('Productos con stock',conStock,'de '+todos.length,'')}
     ${statCard('Valor a precio de venta',fmt(valor),'stock × precio ref.','text-clay-800')}
     ${statCard('Stock negativo',negativos,negativos?'revisa y ajusta':'todo en orden',negativos?'text-red-600':'text-sage-700')}
@@ -9167,7 +9395,7 @@ function renderCPStock(){
         <td class="px-4 py-2.5 text-right whitespace-nowrap"><button onclick="openCPAjuste('${p.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Ajustar</button></td>
       </tr>`;}).join(''):`<tr><td colspan="4" class="px-4 py-10 text-center text-clay-500">No hay productos que calcen con el filtro.</td></tr>`}</tbody></table></div>
   </div>`;
-  const movs=[...cpMovs()].sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const movs=cpHistorial(); // movimientos reales + pedidos que despachan desde Casa Planta, saldo recalculado
   const lista=CP_HIST_TODO?movs:movs.slice(0,30);
   const fechaHora=m=>{ const d=new Date(m.ts||0); const hhmm=isNaN(d)?'':d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); return (m.fecha||'')+(hhmm?(' <span class="text-clay-300">'+hhmm+'</span>'):''); };
   const hist=`<div class="card overflow-hidden">
