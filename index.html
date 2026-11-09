@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.10.22-180';
+const APP_VERSION = '2026.11.09-182';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -519,6 +519,10 @@ async function bootData(){
   if(!DB.cpSales) DB.cpSales=[];   // Casa Planta: ventas propias (no entran a Pedidos ni a Reportes)
   if(!DB.cpMovs) DB.cpMovs=[];     // Casa Planta: historial de movimientos de stock
   if(!DB.shopifyDescartados) DB.shopifyDescartados=[]; // Pedidos de Shopify descartados a propósito (cancelados, pago expirado, duplicados)
+  // Migración (una sola vez): la casilla antigua "No es macetero" guardaba un "sí es macetero" forzado en
+  // cualquier producto editado. Si el nombre dice claramente que NO es macetero (saco, planta, servicio…),
+  // se vuelve a la clasificación automática. Lo que el usuario marque desde ahora se respeta tal cual.
+  if(!DB.migMaceteroV2){ (DB.products||[]).forEach(p=>{ if(p.noMacetero===false && !esMaceteroAuto(p)) delete p.noMacetero; }); DB.migMaceteroV2=1; }
   if(!DB.shopifyMap) DB.shopifyMap={}; // Vinculación: { skuShopify : idProductoPlataforma }. La plataforma es la matriz.
   if(DB.shopifyStockBuffer==null) DB.shopifyStockBuffer=1; // Colchón: unidades que se reservan y NO se publican en Shopify (protege la venta presencial).
   if(DB.shopifySyncUrl==null) DB.shopifySyncUrl=''; // URL del puente (Cloudflare Worker) que escribe el stock en Shopify.
@@ -605,12 +609,25 @@ const clientById = id => DB.clients.find(c=>c.id===id);
 // Todo lo demás (sacos de tierra, plantas, fletes, honorarios, platos, accesorios) SÍ cuenta
 // para la venta en $, pero NO para la meta. Se controla con la casilla "No es macetero" del
 // producto (p.noMacetero); si no está marcada, se deduce por el nombre con palabras clave.
-const _NO_MAC_KW=/(saco|tierra|sustrato|abono|fertil|maceta plast|flete|honorario|servicio|paisaj|plato|pito|poros|planta|rhus|crenata|nigricans|agapat|agapant|olivo|oliv[ao]|mano de obra|obra|arbol|árbol|arbust|env[ií]o|despacho|instalaci)/i;
+const _NO_MAC_KW=/(saco|tierra|sustrato|abono|fertil|perlita|humus|compost|turba|corteza|gravilla|maicillo|piedra|maceta plast|flete|honorario|servicio|paisaj|plato|pito|poros|planta|rhus|crenata|nigricans|agapat|agapant|olivo|oliv[ao]|romero|lavand|buxus|\bboj\b|hiedra|jazm|suculent|cactus|palmer|ficus|helecho|trepador|cubresuelo|rastrer|arbust|\bmata\b|semilla|bulbo|c[eé]sped|pasto|jardiner|jard[ií]n|poda|riego|mantenci|\bd[ií]a\b|\bhora|visita|asesor|dise[ñn]o|proyecto|mano de obra|obra|arbol|árbol|env[ií]o|despacho|transporte|traslado|instalaci|regadera|herramienta|tijera|guante|\bkit\b)/i;
+// Nombre completo del producto para la regla automática (modelo + tamaño + color + descripción).
+function _nombreParaRegla(p){ return [(p.modelo||''),(p.tamano||''),(p.color||''),(p.descripcion||'')].join(' '); }
+// ¿Cuenta como macetero según la regla automática (sin considerar la decisión manual)?
+function esMaceteroAuto(p){ return !!p && !_NO_MAC_KW.test(_nombreParaRegla(p)); }
+// Decisión final: manual (p.noMacetero true/false) manda; si no hay decisión manual, aplica la regla automática.
 function esMacetero(p){
   if(!p) return false;
   if(p.noMacetero===true) return false;
   if(p.noMacetero===false) return true;
-  return !_NO_MAC_KW.test(((p.modelo||'')+' '+(p.color||'')).toString());
+  return esMaceteroAuto(p);
+}
+// Marcar a mano desde la meta/lista: true = "no es macetero", false = "sí es macetero", null = volver a automático.
+function setProductoMacetero(pid, valor, volverA){
+  const p=productById(pid); if(!p) return;
+  if(valor===null) delete p.noMacetero; else p.noMacetero=!!valor;
+  save();
+  if(typeof toastInfo==='function') toastInfo(valor===true?('✕ '+productNameCliente(p)+' ya no cuenta como macetero'):(valor===false?('✓ '+productNameCliente(p)+' cuenta como macetero'):(productNameCliente(p)+': clasificación automática')));
+  if(typeof volverA==='function') volverA();
 }
 // ===== Renombre de modelos =====
 // El nombre ANTIGUO se conserva SIEMPRE en p.modelo (se usa para el proveedor: OC y facturas).
@@ -1442,11 +1459,11 @@ function verMetaMaceteros(monthKey, modo){
     const key=p?p.id:('x'+(i.descripcion||''));
     if(esMacetero(p)){
       totalMac+=q;
-      if(!gMac[key]) gMac[key]={nom, cant:0};
+      if(!gMac[key]) gMac[key]={nom, cant:0, pid:(p?p.id:null)};
       gMac[key].cant+=q;
     } else {
       totalOtros+=q; montoOtros += q*(+i.precio||0)*(1-(i.descuento||0)/100);
-      if(!gOtros[key]) gOtros[key]={nom, cant:0, monto:0};
+      if(!gOtros[key]) gOtros[key]={nom, cant:0, monto:0, pid:(p?p.id:null)};
       gOtros[key].cant+=q; gOtros[key].monto += q*(+i.precio||0)*(1-(i.descuento||0)/100);
     }
   }); });
@@ -1456,11 +1473,11 @@ function verMetaMaceteros(monthKey, modo){
   const cardMac=`<div class="flex-1 min-w-[120px] rounded-xl px-4 py-3 cursor-pointer transition ${esOtros?'bg-clay-50 hover:bg-clay-100':'bg-sage-50 ring-1 ring-sage-300'}" onclick="verMetaMaceteros('${mk}','mac')" title="Ver maceteros vendidos"><div class="text-xs text-clay-500">Maceteros vendidos</div><div class="text-2xl font-extrabold ${esOtros?'text-clay-800':'text-sage-700'}">${totalMac}${meta?` <span class="text-clay-400 text-base font-normal">/ ${meta}</span>`:''}</div></div>`;
   const cardOtros=`<div class="flex-1 min-w-[120px] rounded-xl px-4 py-3 cursor-pointer transition ${esOtros?'bg-clay-100 ring-1 ring-clay-300':'bg-clay-50 hover:bg-clay-100'}" onclick="verMetaMaceteros('${mk}','otros')" title="Ver los otros productos vendidos"><div class="text-xs text-clay-500">Otros productos (no cuentan)</div><div class="text-2xl font-extrabold ${esOtros?'text-clay-800':'text-clay-400'}">${totalOtros}</div></div>`;
   const filas = arr.length
-    ? arr.map(r=>`<tr class="border-t border-clay-100"><td class="px-3 py-2">${r.nom}</td><td class="px-3 py-2 text-right font-semibold">${r.cant}</td>${esOtros?`<td class="px-3 py-2 text-right text-clay-500">${fmt(Math.round(r.monto))}</td>`:''}</tr>`).join('')
-    : `<tr><td colspan="${esOtros?3:2}" class="px-3 py-6 text-center text-clay-400">No hay ${esOtros?'otros productos':'maceteros'} vendidos en ${mesTxt}.</td></tr>`;
+    ? arr.map(r=>`<tr class="border-t border-clay-100"><td class="px-3 py-2">${r.nom}</td><td class="px-3 py-2 text-right font-semibold">${r.cant}</td>${esOtros?`<td class="px-3 py-2 text-right text-clay-500">${fmt(Math.round(r.monto))}</td>`:''}<td class="px-3 py-2 text-right whitespace-nowrap">${r.pid?(esOtros?`<button onclick="setProductoMacetero('${r.pid}',false,()=>verMetaMaceteros('${mk}','otros'))" title="Contarlo como macetero en la meta" class="text-[11px] font-medium text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2 py-1 rounded-lg">✓ Sí es macetero</button>`:`<button onclick="setProductoMacetero('${r.pid}',true,()=>verMetaMaceteros('${mk}','mac'))" title="Sacarlo de la meta: es planta, insumo o servicio" class="text-[11px] font-medium text-clay-600 border border-clay-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200 px-2 py-1 rounded-lg">✕ No es macetero</button>`):''}</td></tr>`).join('')
+    : `<tr><td colspan="${esOtros?4:3}" class="px-3 py-6 text-center text-clay-400">No hay ${esOtros?'otros productos':'maceteros'} vendidos en ${mesTxt}.</td></tr>`;
   const totalCols = esOtros
-    ? `<tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-3 py-2 font-bold">Total otros productos</td><td class="px-3 py-2 text-right font-extrabold">${totalOtros}</td><td class="px-3 py-2 text-right font-extrabold">${fmt(Math.round(montoOtros))}</td></tr></tfoot>`
-    : `<tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-3 py-2 font-bold">Total maceteros</td><td class="px-3 py-2 text-right font-extrabold">${totalMac}</td></tr></tfoot>`;
+    ? `<tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-3 py-2 font-bold">Total otros productos</td><td class="px-3 py-2 text-right font-extrabold">${totalOtros}</td><td class="px-3 py-2 text-right font-extrabold">${fmt(Math.round(montoOtros))}</td><td></td></tr></tfoot>`
+    : `<tfoot><tr class="border-t-2 border-clay-200 bg-clay-50/60"><td class="px-3 py-2 font-bold">Total maceteros</td><td class="px-3 py-2 text-right font-extrabold">${totalMac}</td><td></td></tr></tfoot>`;
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-start justify-between gap-3">
       <div><h3 class="text-lg font-bold">${esOtros?'📦 Otros productos vendidos':'🎯 Maceteros vendidos'} · ${mesTxt}</h3>
@@ -1480,12 +1497,12 @@ function verMetaMaceteros(monthKey, modo){
           return `<button ${puede?`onclick="closeModal();go('${c.view}')"`:'disabled'} class="text-left rounded-xl border border-clay-200 ${puede?'hover:bg-clay-50':''} px-3 py-2.5 ${n?'':'opacity-60'}"><div class="text-xs text-clay-500">${c.icon} ${c.label}</div><div class="text-xl font-extrabold text-clay-800 leading-tight">${n} <span class="text-xs font-normal text-clay-400">· ${share}%</span></div></button>`; }).join('')}</div>
       </div>`}
       <div class="border border-clay-100 rounded-xl overflow-hidden">
-        <table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500"><tr><th class="text-left px-3 py-2 font-medium">${esOtros?'Producto':'Macetero (modelo · tamaño)'}</th><th class="text-right px-3 py-2 font-medium">Cantidad</th>${esOtros?'<th class="text-right px-3 py-2 font-medium">Venta $</th>':''}</tr></thead>
+        <table class="w-full text-sm"><thead class="bg-clay-50 text-clay-500"><tr><th class="text-left px-3 py-2 font-medium">${esOtros?'Producto':'Macetero (modelo · tamaño)'}</th><th class="text-right px-3 py-2 font-medium">Cantidad</th>${esOtros?'<th class="text-right px-3 py-2 font-medium">Venta $</th>':''}<th class="px-3 py-2"></th></tr></thead>
         <tbody>${filas}</tbody>
         ${arr.length?totalCols:''}
         </table>
       </div>
-      <div class="text-[11px] text-clay-400 mt-3">¿Algún producto está mal clasificado? En Productos, edítalo y marca/desmarca la casilla “No es macetero”.</div>
+      <div class="text-[11px] text-clay-400 mt-3">¿Algo mal clasificado? Usa el botón de cada fila (“✕ No es macetero” o “✓ Sí es macetero”): la decisión queda guardada en el producto y vale para todos los meses y reportes. También puedes cambiarla en Productos → editar → “¿Cuenta como macetero?”.</div>
     </div>`, 'xl');
 }
 function geoAgg(sales, level){
@@ -4575,16 +4592,23 @@ function openProduct(id){
       <input id="p_cotiz" type="checkbox" ${p.soloCotizacion?'checked':''} class="mt-0.5 w-4 h-4 accent-clay-700">
       <span><span class="text-sm font-medium">Producto solo para cotizaciones</span><span class="block text-[11px] text-clay-400 mt-0.5">No es stock habitual (se usa puntualmente para una cotización). Aparecerá separado y al final de la lista de Productos, sin mezclarse con tu catálogo.</span></span>
     </label>
-    <label class="sm:col-span-2 flex items-start gap-2.5 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2.5 mt-1 cursor-pointer">
-      <input id="p_nomac" type="checkbox" ${(p.noMacetero===true || (p.noMacetero===undefined && !esMacetero(p)))?'checked':''} class="mt-0.5 w-4 h-4 accent-clay-700">
-      <span><span class="text-sm font-medium">No es macetero</span><span class="block text-[11px] text-clay-400 mt-0.5">Sacos de tierra, plantas, fletes, honorarios, platos, accesorios, etc. Sí cuenta para la venta en $, pero NO para la meta de unidades (maceteros).</span></span>
-    </label>
+    <div class="sm:col-span-2 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2.5 mt-1">
+      <div class="text-sm font-medium">¿Cuenta como macetero para la meta de unidades?</div>
+      <div class="text-[11px] text-clay-400 mt-0.5 mb-2">Plantas, sacos de tierra, servicios, fletes, platos y accesorios sí cuentan para la venta en $, pero <b>no</b> para la meta de maceteros.</div>
+      <select id="p_nomac" class="w-full border border-clay-200 rounded-xl px-3 py-2 bg-white text-sm">
+        <option value="auto" ${p.noMacetero===undefined?'selected':''}>Automático por nombre → ${esMaceteroAuto(p)?'sí cuenta como macetero':'NO cuenta (planta, insumo o servicio)'}</option>
+        <option value="si" ${p.noMacetero===false?'selected':''}>Sí, es macetero (forzar)</option>
+        <option value="no" ${p.noMacetero===true?'selected':''}>No es macetero (forzar)</option>
+      </select>
+    </div>
   </div>
   <div class="p-5 border-t border-clay-100 flex justify-between"><div>${p.id&&SESSION.rol==='admin'?`<button onclick="deleteProduct('${p.id}')" class="text-red-600 text-sm">Eliminar</button>`:''}</div><div class="flex gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveProduct()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Guardar</button></div></div>`);
 }
 let EDITP=null;
 function saveProduct(){
-  Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0,soloCotizacion:!!(document.getElementById('p_cotiz')&&document.getElementById('p_cotiz').checked),noMacetero:!!(document.getElementById('p_nomac')&&document.getElementById('p_nomac').checked)});
+  Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0,soloCotizacion:!!(document.getElementById('p_cotiz')&&document.getElementById('p_cotiz').checked)});
+  // Clasificación para la meta: 'auto' deja que decida la regla por nombre; 'si'/'no' la fuerzan.
+  const nm=(document.getElementById('p_nomac')||{}).value; if(nm==='no') EDITP.noMacetero=true; else if(nm==='si') EDITP.noMacetero=false; else delete EDITP.noMacetero;
   if(!EDITP.modelo){alert('Ingresa el modelo');return;}
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
@@ -5126,7 +5150,7 @@ function adjuntoRow(tipo,label){
 function renderFacturaModal(){
   const f=FINV;
   const sup=DB.suppliers||[];
-  const plazoOpts=[['','Personalizado'],['0','Contado'],['15','15 días'],['30','30 días'],['60','60 días'],['90','90 días']];
+  const plazoOpts=[['','Personalizado'],['0','Contado'],['15','15 días'],['30','30 días'],['45','45 días'],['60','60 días'],['90','90 días']];
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
       <h3 class="text-lg font-bold">${DB.invoices.some(x=>x.id===f.id)?'Editar factura':'Nueva factura de compra'}</h3>
