@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.11.22-187';
+const APP_VERSION = '2026.11.23-190';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -721,36 +721,45 @@ const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1
    Hay tres bodegas: REQ = Bodega Requinoa (central) · CA = Casa Augusta (Vitacura) · CP = Casa Planta (Requínoa).
    Cada pedido tiene una bodega principal (s.bodega: '' = Requinoa, 'CA' o 'CP'). Si una línea no trae
    reparto, todas sus unidades salen de esa bodega (como siempre). Si trae it.rep = {REQ:n, CA:n, CP:n},
-   ese reparto dice cuántas unidades salen de cada bodega: así un mismo pedido puede dividirse. */
+   ese reparto dice cuántas unidades salen de cada bodega: así un mismo pedido puede dividirse.
+   Además existe SIG = Bodega Sigma: NO es una bodega física, es el stock del PROVEEDOR que se anota a mano
+   para sumarlo al stock unificado. Un pedido nunca tiene a Sigma como bodega principal: las unidades que
+   salen de Sigma van en it.rep.SIG y significan "hay que pedirlas al proveedor". */
 const BODEGAS = ['REQ','CA','CP'];
+// Fuentes de stock de un pedido: las tres bodegas propias + Bodega Sigma (proveedor).
+const FUENTES = ['REQ','CA','CP','SIG'];
 const BODEGA_INFO = {
   REQ:{nombre:'Bodega Requinoa', corto:'Requinoa',     lugar:'central',  icon:'🏭'},
   CA: {nombre:'Casa Augusta',    corto:'Casa Augusta', lugar:'Vitacura', icon:'🏠'},
-  CP: {nombre:'Casa Planta',     corto:'Casa Planta',  lugar:'Requínoa', icon:'🌿'} };
+  CP: {nombre:'Casa Planta',     corto:'Casa Planta',  lugar:'Requínoa', icon:'🌿'},
+  SIG:{nombre:'Bodega Sigma',    corto:'Sigma',        lugar:'proveedor', icon:'🚚'} };
 const bodegaPrincipal = s => (s&&(s.bodega==='CA'||s.bodega==='CP')) ? s.bodega : 'REQ';
 // Reparto normalizado de una línea: unidades por bodega (siempre suma la cantidad de la línea).
 function itemReparto(s, it){
-  const total=Math.max(0,+((it||{}).cantidad)||0), main=bodegaPrincipal(s), out={REQ:0,CA:0,CP:0};
+  const total=Math.max(0,+((it||{}).cantidad)||0), main=bodegaPrincipal(s), out={REQ:0,CA:0,CP:0,SIG:0};
   const r=it&&it.rep;
   if(!r||typeof r!=='object'){ out[main]=total; return out; }
   let rest=total;
-  BODEGAS.forEach(b=>{ const q=Math.max(0,Math.min(rest,Math.round(+r[b]||0))); out[b]=q; rest-=q; });
+  FUENTES.forEach(b=>{ const q=Math.max(0,Math.min(rest,Math.round(+r[b]||0))); out[b]=q; rest-=q; });
   if(rest>0) out[main]+=rest;   // lo que no esté repartido sale de la bodega principal
   return out;
 }
-// Unidades de una línea que salen de la bodega b ('REQ' | 'CA' | 'CP').
+// Unidades de una línea que salen de la bodega b ('REQ' | 'CA' | 'CP') o de Bodega Sigma ('SIG').
 function itemQtyBodega(s, it, b){ if(!it.rep) return bodegaPrincipal(s)===b ? (+it.cantidad||0) : 0; return itemReparto(s,it)[b]; }
 // Unidades por bodega de un pedido completo (solo productos que llevan stock: lo "a pedido" no sale de ninguna
 // bodega), y si quedó dividido entre bodegas.
-function saleReparto(s){ const t={REQ:0,CA:0,CP:0}; ((s&&s.items)||[]).forEach(it=>{ if(itemAPedido(it)) return; const r=itemReparto(s,it); BODEGAS.forEach(b=>{ t[b]+=r[b]; }); }); return t; }
+function saleReparto(s){ const t={REQ:0,CA:0,CP:0,SIG:0}; ((s&&s.items)||[]).forEach(it=>{ if(itemAPedido(it)) return; const r=itemReparto(s,it); FUENTES.forEach(b=>{ t[b]+=r[b]; }); }); return t; }
 // Unidades "a pedido" de una venta: se compran para ese pedido, no salen de bodega.
 const saleUnidadesAPedido = s => ((s&&s.items)||[]).reduce((a,it)=>a+(itemAPedido(it)?(+it.cantidad||0):0),0);
 const saleBodegasUsadas = s => { const t=saleReparto(s); return BODEGAS.filter(b=>t[b]>0); };
 const saleEsDividido = s => saleBodegasUsadas(s).length>1;
+// Igual que saleBodegasUsadas pero contando también Bodega Sigma (lo que hay que pedir al proveedor).
+function saleFuentesUsadas(s){ const t=saleReparto(s); return FUENTES.filter(b=>t[b]>0); }
 // Etiqueta de la(s) bodega(s) de un pedido para las listas. Un pedido dividido muestra cuánto sale de cada una.
 function bodegaPillVenta(s){
-  const t=saleReparto(s), us=BODEGAS.filter(b=>t[b]>0);
+  const t=saleReparto(s), us=FUENTES.filter(b=>t[b]>0);
   if(us.length>1) return pill('🔀 Dividido: '+us.map(b=>BODEGA_INFO[b].corto+' '+t[b]).join(' · '),'amber');
+  if(us[0]==='SIG') return pill('🚚 Pedir a Sigma','amber');   // todo el pedido sale del stock del proveedor
   if(s.origen==='CA') return pill('Casa Augusta','green');
   if(!us.length && saleUnidadesAPedido(s)>0) return pill('🛒 A pedido','gray');   // solo productos a pedido: no sale de bodega
   const b=us[0]||bodegaPrincipal(s);
@@ -758,32 +767,75 @@ function bodegaPillVenta(s){
 }
 // Bloque "de qué bodega sale" para el detalle de un pedido: qué preparar en cada bodega y qué es a pedido.
 function preparacionHtml(s){
-  const t=saleReparto(s), us=BODEGAS.filter(b=>t[b]>0), nPed=saleUnidadesAPedido(s); if(!us.length&&!nPed) return '';
+  const t=saleReparto(s), us=FUENTES.filter(b=>t[b]>0), nPed=saleUnidadesAPedido(s); if(!us.length&&!nPed) return '';
   const dividido=us.length>1;
   const fila=b=>{ const det=(s.items||[]).map(i=>{ if(itemAPedido(i)) return ''; const q=itemQtyBodega(s,i,b); return q>0 ? (q+'× '+itemLabel(i)) : ''; }).filter(Boolean).join(' · ');
-    return `<div class="flex items-start gap-2 text-sm"><span class="badge ${dividido?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'} shrink-0 whitespace-nowrap">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} · ${t[b]} u</span><span class="text-clay-600 text-xs leading-5">${det}</span></div>`; };
+    return `<div class="flex items-start gap-2 text-sm"><span class="badge ${(dividido||b==='SIG')?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'} shrink-0 whitespace-nowrap">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} · ${t[b]} u</span><span class="text-clay-600 text-xs leading-5">${det}${b==='SIG'?' <span class="text-amber-700">· hay que pedirlas al proveedor</span>':''}</span></div>`; };
   const filaPed = nPed ? `<div class="flex items-start gap-2 text-sm"><span class="badge bg-clay-100 text-clay-600 shrink-0 whitespace-nowrap">🛒 A pedido · ${nPed} u</span><span class="text-clay-600 text-xs leading-5">${(s.items||[]).filter(itemAPedido).map(i=>(+i.cantidad||0)+'× '+itemLabel(i)).join(' · ')} <span class="text-clay-400">· se compra o se manda a hacer; no sale de bodega</span></span></div>` : '';
   return `<div class="px-4 py-3 border-t border-clay-100 ${dividido?'bg-amber-50/60':''}"><div class="text-[11px] uppercase tracking-wide mb-1.5 ${dividido?'text-amber-700 font-semibold':'text-clay-400'}">${dividido?'🔀 Pedido dividido · qué preparar en cada bodega':(us.length?'📦 Sale de':'🛒 Venta a pedido')}</div><div class="space-y-1.5">${us.map(fila).join('')}${filaPed}</div></div>`;
 }
 // Guarda el reparto de una línea (solo si no sale todo de la bodega principal: así los pedidos simples quedan igual que siempre).
-function setItemRep(s, it, r){ const main=bodegaPrincipal(s), rep={}; BODEGAS.forEach(b=>{ if(r[b]>0) rep[b]=r[b]; }); const ks=Object.keys(rep); if(!ks.length||(ks.length===1&&ks[0]===main)) delete it.rep; else it.rep=rep; }
+function setItemRep(s, it, r){ const main=bodegaPrincipal(s), rep={}; FUENTES.forEach(b=>{ if(r[b]>0) rep[b]=r[b]; }); const ks=Object.keys(rep); if(!ks.length||(ks.length===1&&ks[0]===main)) delete it.rep; else it.rep=rep; }
 // Deja el reparto de un pedido limpio antes de guardarlo: si todo sale de una sola bodega, esa pasa a ser
 // la bodega del pedido y no se guarda reparto; si está dividido, cada línea guarda sus unidades por bodega.
 function normalizarReparto(s){
   if(!s||!s.items) return;
   s.items.forEach(it=>{ if(itemAPedido(it)) delete it.rep; });            // lo "a pedido" no sale de ninguna bodega
   const con=s.items.filter(it=>!itemAPedido(it));                         // líneas que sí llevan stock
-  const reps=con.map(it=>itemReparto(s,it)), tot={REQ:0,CA:0,CP:0};
-  reps.forEach(r=>BODEGAS.forEach(b=>{ tot[b]+=r[b]; }));
-  const usadas=BODEGAS.filter(b=>tot[b]>0);
-  if(usadas.length<=1){ if(usadas.length){ s.bodega = usadas[0]==='REQ' ? '' : usadas[0]; } con.forEach(it=>{ delete it.rep; }); return; }
-  if(tot[bodegaPrincipal(s)]===0){ const b=usadas.slice().sort((x,y)=>tot[y]-tot[x])[0]; s.bodega = b==='REQ' ? '' : b; }
+  const reps=con.map(it=>itemReparto(s,it)), tot={REQ:0,CA:0,CP:0,SIG:0};
+  reps.forEach(r=>FUENTES.forEach(b=>{ tot[b]+=r[b]; }));
+  const usadas=BODEGAS.filter(b=>tot[b]>0);            // bodegas propias que entregan algo
+  // Sin unidades de Sigma y con una sola bodega propia: pedido simple (esa bodega pasa a ser la del pedido, sin reparto).
+  if(!tot.SIG && usadas.length<=1){ if(usadas.length){ s.bodega = usadas[0]==='REQ' ? '' : usadas[0]; } con.forEach(it=>{ delete it.rep; }); return; }
+  // Dividido o con unidades de Sigma: la bodega del pedido tiene que ser una propia que entregue algo (si hay alguna).
+  if(usadas.length && tot[bodegaPrincipal(s)]===0){ const b=usadas.slice().sort((x,y)=>tot[y]-tot[x])[0]; s.bodega = b==='REQ' ? '' : b; }
   con.forEach((it,ix)=>setItemRep(s,it,reps[ix]));
 }
 // Stock de un producto en una bodega, y stock UNIFICADO: lo disponible sumando las tres bodegas
 // (una bodega en negativo —vendido sin stock— no le resta a las otras).
 const stockBodega = (pid,b) => b==='CA' ? stockCA(pid) : (b==='CP' ? cpStock(pid) : stockOf(pid));
 const stockUnificado = pid => BODEGAS.reduce((a,b)=>a+Math.max(0,stockBodega(pid,b)),0);
+/* ---- Bodega Sigma: stock del PROVEEDOR que se suma a mano al stock unificado ----
+   Se anota a mano en Stock unificado, producto por producto, cuando conviene ofrecer lo que tiene el proveedor.
+   DB.sigmaStock = { idProducto : unidades anotadas }. Lo disponible = lo anotado − las unidades que los pedidos ya
+   sacaron de Sigma (it.rep.SIG); así, si un pedido se edita o se anula, Sigma se recompone solo.
+   Solo aplica a productos que llevan stock (lo "a pedido" ya se compra siempre al proveedor). */
+function sigmaPedidosQty(pid){ let n=0; (DB.sales||[]).forEach(v=>{ if(v.perdido) return; (v.items||[]).forEach(i=>{ if(i.productId===pid && i.rep && i.rep.SIG) n+=itemQtyBodega(v,i,'SIG'); }); }); return n; }
+function stockSigma(pid){ const p=productById(pid); if(!p||esAPedido(p)) return 0; return (+((DB.sigmaStock||{})[pid])||0) - sigmaPedidosQty(pid); }
+// Stock de un producto en cualquier fuente (bodega propia o Sigma) y total unificado contando Sigma.
+function stockFuente(pid,b){ return b==='SIG' ? stockSigma(pid) : stockBodega(pid,b); }
+function stockUnificadoTotal(pid){ return stockUnificado(pid)+Math.max(0,stockSigma(pid)); }
+// ¿Puede este usuario anotar el stock de Bodega Sigma? Solo administradores (cambia lo que se ofrece a la venta).
+function sigmaEditable(){ return !!(SESSION && SESSION.rol==='admin'); }
+// Deja en n las unidades de Sigma disponibles de un producto y anota quién y cuándo. Devuelve false si no cambió nada.
+function setStockSigma(pid, n){
+  const p=productById(pid); if(!p||esAPedido(p)) return false;
+  n=Math.max(0,Math.round(+n||0)); const antes=stockSigma(pid); if(n===antes) return false;
+  if(!DB.sigmaStock) DB.sigmaStock={};
+  const usado=sigmaPedidosQty(pid);
+  if(n+usado>0) DB.sigmaStock[pid]=n+usado; else delete DB.sigmaStock[pid];
+  if(!DB.sigmaLog) DB.sigmaLog=[];
+  DB.sigmaLog.push({ts:Date.now(), productId:pid, de:Math.max(0,antes), a:n, quien:(SESSION&&(SESSION.nombre||SESSION.email))||''});
+  if(DB.sigmaLog.length>300) DB.sigmaLog=DB.sigmaLog.slice(-300);
+  return true;
+}
+/* Cuando llega mercadería del proveedor a una bodega propia (recepción de una orden de compra o compra directa),
+   esas unidades cubren primero los pedidos SIN ENTREGAR que estaban esperando a Bodega Sigma: pasan a salir de la
+   bodega donde se recibió. Así no quedan contadas dos veces (como stock libre y como pedido "por pedir") y lo
+   disponible en Sigma no cambia. Devuelve cuántas unidades cubrió. */
+function sigmaCubrirConIngreso(pid, qty, bod){
+  if(!(bod==='REQ'||bod==='CA'||bod==='CP')) return 0;
+  let q=Math.max(0,Math.round(+qty||0)), mov=0; if(!q) return 0;
+  const peds=(DB.sales||[]).filter(s=>!s.perdido && s.estadoDespacho!=='entregado' && (s.items||[]).some(i=>i.productId===pid && i.rep && i.rep.SIG>0))
+    .sort((a,b)=>(a.fechaEntrega||a.fecha||'').localeCompare(b.fechaEntrega||b.fecha||''));   // primero el que se entrega antes
+  peds.forEach(s=>{ if(q<=0) return; let cambio=false;
+    s.items.forEach(it=>{ if(q<=0||it.productId!==pid||!it.rep||!(it.rep.SIG>0)) return;
+      const r=itemReparto(s,it), x=Math.min(q, r.SIG, Math.max(0,itemPendienteQty(s,it))); if(x<=0) return;
+      r.SIG-=x; r[bod]+=x; setItemRep(s,it,r); q-=x; mov+=x; cambio=true; });
+    if(cambio) normalizarReparto(s); });
+  if(mov && DB.sigmaStock && DB.sigmaStock[pid]!=null){ const v=(+DB.sigmaStock[pid]||0)-mov; if(v>0) DB.sigmaStock[pid]=v; else delete DB.sigmaStock[pid]; }
+  return mov;
+}
 
 // Stock de la bodega CENTRAL. Las ventas de Casa Augusta (bodega:'CA') NO restan aquí:
 // salen del stock de Casa Augusta. Las transferencias central→CA sí restan del central.
@@ -2506,25 +2558,25 @@ function bodegaDe(s){ return (s&&(s.bodega==='CA'||s.bodega==='CP'))?s.bodega:''
    siempre: sirve para vender sin stock/venta calzada) y al EDITAR un pedido existente (se respeta lo guardado).
    SALE_BOD_ELEGIDA = la bodega la fijó el usuario (o es un pedido existente): el sistema no la cambia sola. */
 let SALE_REP_AUTO=false, SALE_BOD_ELEGIDA=false;
-// Stock disponible de un producto en una bodega, SIN contar el pedido que se está editando (para no restarse a sí mismo).
+// Stock disponible de un producto en una bodega (o en Bodega Sigma), SIN contar el pedido que se está editando (para no restarse a sí mismo).
 function stockBaseVentaBod(productId, b){
-  let base=stockBodega(productId,b);
+  let base=stockFuente(productId,b);
   if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id);
     if(orig && !orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=itemQtyBodega(orig,i,b); });
   }
   return base;
 }
 function stockBaseVenta(productId){
-  // Los presupuestos muestran la disponibilidad UNIFICADA (lo que hay sumando todas las bodegas).
-  if(EDIT&&EDIT._presupuesto) return stockUnificado(productId);
+  // Los presupuestos muestran la disponibilidad UNIFICADA (lo que hay sumando todas las bodegas y lo anotado en Bodega Sigma).
+  if(EDIT&&EDIT._presupuesto) return stockUnificadoTotal(productId);
   return stockBaseVentaBod(productId, bodegaPrincipal(EDIT));
 }
 // Unidades que este pedido saca de cada bodega para un producto (sumando todas sus líneas).
-function pedidoPorBodega(pid){ const req={REQ:0,CA:0,CP:0}; EDIT.items.forEach(x=>{ if(x.productId!==pid) return; const r=itemReparto(EDIT,x); BODEGAS.forEach(b=>{ req[b]+=r[b]; }); }); return req; }
+function pedidoPorBodega(pid){ const req={REQ:0,CA:0,CP:0,SIG:0}; EDIT.items.forEach(x=>{ if(x.productId!==pid) return; const r=itemReparto(EDIT,x); FUENTES.forEach(b=>{ req[b]+=r[b]; }); }); return req; }
 // Bodegas donde lo pedido de un producto supera lo disponible: [{b, base, req}].
-function faltantesProducto(pid){ if(esAPedido(productById(pid))) return []; const req=pedidoPorBodega(pid); return BODEGAS.map(b=>({b, base:Math.max(0,stockBaseVentaBod(pid,b)), req:req[b]})).filter(f=>f.req>f.base); }
+function faltantesProducto(pid){ if(esAPedido(productById(pid))) return []; const req=pedidoPorBodega(pid); return FUENTES.map(b=>({b, base:Math.max(0,stockBaseVentaBod(pid,b)), req:req[b]})).filter(f=>f.req>f.base); }
 // ¿Queda stock libre de este producto en alguna bodega (descontando lo que ya ocupa este pedido)?
-function haySobranteEnBodega(pid){ const req=pedidoPorBodega(pid); return BODEGAS.some(b=>stockBaseVentaBod(pid,b)-req[b]>0); }
+function haySobranteEnBodega(pid){ const req=pedidoPorBodega(pid); return FUENTES.some(b=>stockBaseVentaBod(pid,b)-req[b]>0); }
 // Advertencia por línea: compara lo pedido (sumando todas las líneas del mismo producto) contra el stock de cada bodega.
 function itemStockWarn(it){
   if(!it||!EDIT) return '';
@@ -2541,24 +2593,26 @@ function itemStockWarn(it){
 }
 function refreshStockWarns(){ if(!EDIT) return; EDIT.items.forEach((it,ix)=>{ const el=document.getElementById('s_warn_'+ix); if(el) el.innerHTML=itemStockWarn(it); }); }
 // Reparte las líneas según el stock: primero la bodega elegida; lo que falte, de las otras (primero la que
-// más cubre del pedido, para involucrar la menor cantidad de bodegas); si no hay stock en ninguna, el
-// faltante queda en la bodega elegida (y se avisa). Respeta lo fijado a mano, salvo que todo=true.
+// más cubre del pedido, para involucrar la menor cantidad de bodegas); si tampoco alcanza, de Bodega Sigma
+// (stock del proveedor, si se anotó); y si no hay en ninguna, el faltante queda en la bodega elegida (y se
+// avisa). Respeta lo fijado a mano, salvo que todo=true.
 function repartirSegunStock(todo){
   if(!EDIT||EDIT._presupuesto) return;
   const main=bodegaPrincipal(EDIT), disp={};
-  const D=pid=>disp[pid]||(disp[pid]={REQ:stockBaseVentaBod(pid,'REQ'),CA:stockBaseVentaBod(pid,'CA'),CP:stockBaseVentaBod(pid,'CP')});
+  const D=pid=>disp[pid]||(disp[pid]={REQ:stockBaseVentaBod(pid,'REQ'),CA:stockBaseVentaBod(pid,'CA'),CP:stockBaseVentaBod(pid,'CP'),SIG:stockBaseVentaBod(pid,'SIG')});
   if(todo) EDIT.items.forEach(it=>{ delete it._repManual; });
   EDIT.items.forEach(it=>{ if(itemAPedido(it)){ delete it.rep; delete it._repManual; delete it._repAbierto; } });   // lo "a pedido" no se reparte
   const lineas=EDIT.items.filter(it=>!itemAPedido(it));
-  lineas.forEach(it=>{ if(!it._repManual) return; const r=itemReparto(EDIT,it), d=D(it.productId); BODEGAS.forEach(b=>{ d[b]-=r[b]; }); });
+  lineas.forEach(it=>{ if(!it._repManual) return; const r=itemReparto(EDIT,it), d=D(it.productId); FUENTES.forEach(b=>{ d[b]-=r[b]; }); });
   const plan=[];
-  lineas.forEach(it=>{ if(it._repManual) return; const d=D(it.productId), Q=Math.max(0,+it.cantidad||0), a=Math.max(0,Math.min(Q,d[main])); d[main]-=a; const r={REQ:0,CA:0,CP:0}; r[main]=a; plan.push({it,r,falta:Q-a}); });
+  lineas.forEach(it=>{ if(it._repManual) return; const d=D(it.productId), Q=Math.max(0,+it.cantidad||0), a=Math.max(0,Math.min(Q,d[main])); d[main]-=a; const r={REQ:0,CA:0,CP:0,SIG:0}; r[main]=a; plan.push({it,r,falta:Q-a}); });
   const otras=BODEGAS.filter(b=>b!==main), cubre={};
   otras.forEach(b=>{ const usado={}; cubre[b]=0; plan.forEach(p=>{ if(p.falta<=0) return; const pid=p.it.productId, av=Math.max(0,D(pid)[b])-(usado[pid]||0), x=Math.max(0,Math.min(p.falta,av)); usado[pid]=(usado[pid]||0)+x; cubre[b]+=x; }); });
   otras.sort((x,y)=>cubre[y]-cubre[x]);
   plan.forEach(p=>{ const d=D(p.it.productId);
     const sola=p.falta>0 ? otras.find(b=>d[b]>=p.falta) : null;   // si una sola bodega cubre lo que falta de la línea, sale todo de esa
     (sola?[sola]:otras).forEach(b=>{ if(p.falta<=0) return; const x=Math.max(0,Math.min(p.falta,d[b])); if(x>0){ p.r[b]+=x; d[b]-=x; p.falta-=x; } });
+    if(p.falta>0){ const x=Math.max(0,Math.min(p.falta,d.SIG)); if(x>0){ p.r.SIG+=x; d.SIG-=x; p.falta-=x; } }   // lo que no hay en las bodegas propias sale de Bodega Sigma (proveedor)
     if(p.falta>0){ p.r[main]+=p.falta; p.falta=0; }
     setItemRep(EDIT,p.it,p.r); });
 }
@@ -2580,29 +2634,32 @@ function itemRepHtml(it, ix){
   if(!EDIT||EDIT._presupuesto||!it) return '';
   if(itemAPedido(it)) return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-500"><span class="badge bg-clay-100 text-clay-600">🛒 A pedido</span><span>Se compra o se manda a hacer para este pedido: no lleva stock ni sale de una bodega.</span></div>`;
   const r=itemReparto(EDIT,it), disp=b=>Math.max(0,stockBaseVentaBod(it.productId,b));
+  const fts=(disp('SIG')>0||r.SIG>0) ? FUENTES : BODEGAS;   // Bodega Sigma solo se muestra si tiene stock anotado para este producto
   if(it._repAbierto){
-    return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-600 bg-white border border-sage-200 rounded-lg px-2 py-1.5"><span class="font-semibold">📦 Sale de:</span>${BODEGAS.map(b=>`<label class="inline-flex items-center gap-1">${BODEGA_INFO[b].corto}<input id="rep_${ix}_${b}" type="number" min="0" max="${+it.cantidad||0}" value="${r[b]}" oninput="onRepInput(${ix},'${b}',this.value)" class="w-12 border border-clay-200 rounded-md px-1 py-0.5 text-center text-xs"><span class="text-clay-400">de ${disp(b)}</span></label>`).join('<span class="text-clay-300">·</span>')}<button type="button" onclick="cerrarRep(${ix})" class="ml-auto font-semibold text-sage-700 underline">Listo</button></div>`;
+    return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-600 bg-white border border-sage-200 rounded-lg px-2 py-1.5"><span class="font-semibold">📦 Sale de:</span>${fts.map(b=>`<label class="inline-flex items-center gap-1">${BODEGA_INFO[b].corto}<input id="rep_${ix}_${b}" type="number" min="0" max="${+it.cantidad||0}" value="${r[b]}" oninput="onRepInput(${ix},'${b}',this.value)" class="w-12 border border-clay-200 rounded-md px-1 py-0.5 text-center text-xs"><span class="text-clay-400">de ${disp(b)}</span></label>`).join('<span class="text-clay-300">·</span>')}<button type="button" onclick="cerrarRep(${ix})" class="ml-auto font-semibold text-sage-700 underline">Listo</button></div>`;
   }
-  const usadas=BODEGAS.filter(b=>r[b]>0);
-  const chips=usadas.map(b=>`<span class="badge ${usadas.length>1?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'}">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].corto} ${r[b]}</span>`).join('');
-  return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-500"><span>📦 Sale de:</span>${chips}<button type="button" onclick="abrirRep(${ix})" class="underline hover:text-clay-800">cambiar</button><span class="text-clay-400 sm:ml-auto">Stock: ${BODEGAS.map(b=>BODEGA_INFO[b].corto+' '+disp(b)).join(' · ')}</span></div>`;
+  const usadas=fts.filter(b=>r[b]>0);
+  const chips=usadas.map(b=>`<span class="badge ${(usadas.length>1||b==='SIG')?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'}" ${b==='SIG'?'title="Stock del proveedor: hay que pedirlo"':''}>${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].corto} ${r[b]}</span>`).join('');
+  return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-500"><span>📦 Sale de:</span>${chips}<button type="button" onclick="abrirRep(${ix})" class="underline hover:text-clay-800">cambiar</button><span class="text-clay-400 sm:ml-auto">Stock: ${fts.map(b=>BODEGA_INFO[b].corto+' '+disp(b)).join(' · ')}</span></div>`;
 }
 function abrirRep(ix){ const it=EDIT&&EDIT.items[ix]; if(!it) return; it._repAbierto=true; refreshRepRows(); }
 function cerrarRep(ix){ const it=EDIT&&EDIT.items[ix]; if(!it) return; delete it._repAbierto; refreshRepRows(); }
 // El usuario fija a mano cuántas unidades salen de una bodega: el resto se reacomoda en las otras dos.
 function onRepInput(ix,b,v){
   const it=EDIT&&EDIT.items[ix]; if(!it) return;
-  const Q=Math.max(0,+it.cantidad||0), main=bodegaPrincipal(EDIT), r={REQ:0,CA:0,CP:0};
+  const Q=Math.max(0,+it.cantidad||0), main=bodegaPrincipal(EDIT), r={REQ:0,CA:0,CP:0,SIG:0};
   // Stock libre de cada bodega para ESTA línea (sin contar lo que ocupan otras líneas del mismo producto).
   const libre=x=>{ let d=stockBaseVentaBod(it.productId,x); EDIT.items.forEach((o,j)=>{ if(j!==ix&&o.productId===it.productId) d-=itemReparto(EDIT,o)[x]; }); return Math.max(0,d); };
   r[b]=Math.max(0,Math.min(Q,Math.round(+v||0)));
-  // El resto se reacomoda solo en las otras dos: primero la bodega principal (o la de más stock) hasta donde alcance; si falta, queda en esa.
+  // El resto se reacomoda solo en las otras bodegas propias: primero la principal (o la de más stock) hasta donde alcance;
+  // después Bodega Sigma (si tiene stock anotado); y si todavía falta, queda en la primera.
   const otras=BODEGAS.filter(x=>x!==b).sort((x,y)=>((y===main)-(x===main))||(libre(y)-libre(x)));
   let resto=Q-r[b];
   otras.forEach(x=>{ const q=Math.min(resto,libre(x)); r[x]=q; resto-=q; });
+  if(resto>0 && b!=='SIG'){ const q=Math.min(resto,libre('SIG')); r.SIG=q; resto-=q; }
   if(resto>0) r[otras[0]]+=resto;
   setItemRep(EDIT,it,r); it._repManual=true;
-  otras.forEach(x=>{ const el=document.getElementById('rep_'+ix+'_'+x); if(el) el.value=r[x]; });
+  otras.concat(b!=='SIG'?['SIG']:[]).forEach(x=>{ const el=document.getElementById('rep_'+ix+'_'+x); if(el) el.value=r[x]; });
   if(SALE_REP_AUTO) repartirSegunStock();
   refreshRepRows(ix); refreshStockWarns(); refreshRepResumen();
 }
@@ -2611,19 +2668,19 @@ function refreshRepResumen(){ const el=document.getElementById('bod_resumen'); i
 // Resumen bajo "Bodega que despacha": avisa si el pedido quedó dividido y cuánto preparar en cada bodega.
 function repResumenHtml(){
   if(!EDIT||EDIT._presupuesto) return '';
-  const t=saleReparto(EDIT), usadas=BODEGAS.filter(b=>t[b]>0), main=bodegaPrincipal(EDIT);
+  const t=saleReparto(EDIT), usadas=FUENTES.filter(b=>t[b]>0), main=bodegaPrincipal(EDIT);
   const con=EDIT.items.filter(it=>!itemAPedido(it)), nPed=saleUnidadesAPedido(EDIT);   // líneas con stock · unidades a pedido
   const ped = nPed ? ` <span class="whitespace-nowrap">· 🛒 ${nPed} u a pedido</span>` : '';
   if(!con.length) return nPed ? `<div class="mt-2 text-[11px] text-clay-500">🛒 Pedido solo con productos <b>a pedido</b> (${nPed} u): se compran para este pedido y no descuentan stock de ninguna bodega.</div>` : '';
   const btn = SALE_REP_AUTO ? `<span class="text-[11px] font-medium text-sage-700 whitespace-nowrap" title="Toma primero de la bodega del pedido y completa con las otras según el stock">⚡ Reparto automático</span>` : `<button type="button" onclick="repartirPedido()" class="text-[11px] font-medium text-sage-700 underline whitespace-nowrap" title="Toma primero de la bodega elegida y completa con las otras según el stock">⚡ Repartir según stock</button>`;
   if(usadas.length<=1){
     const txt = SALE_REP_AUTO ? (SALE_BOD_ELEGIDA ? 'Si esta bodega no tiene stock suficiente, el sistema completa con las otras.' : 'Bodega propuesta según el stock. Si eliges otra, todo el pedido sale de esa.') : 'Todo el pedido sale de esta bodega. Si no alcanza el stock, puedes completar con las otras.';
-    return `<div class="mt-2 flex items-center justify-between gap-2 flex-wrap"><span class="text-[11px] text-clay-400">${(usadas.length&&usadas[0]!==main)?('Este pedido sale de <b>'+BODEGA_INFO[usadas[0]].nombre+'</b>.'):txt}${ped}</span>${btn}</div>`;
+    return `<div class="mt-2 flex items-center justify-between gap-2 flex-wrap"><span class="text-[11px] text-clay-400">${(usadas.length&&usadas[0]!==main)?('Este pedido sale de <b>'+BODEGA_INFO[usadas[0]].nombre+'</b>'+(usadas[0]==='SIG'?' (stock del proveedor): hay que pedirlo.':'.')):txt}${ped}</span>${btn}</div>`;
   }
   // ¿Alguna bodega podría entregar por sí sola todo lo que lleva stock?
   const sola=BODEGAS.find(b=>{ const usado={}; return con.every(it=>{ const pid=it.productId; usado[pid]=(usado[pid]||0)+(+it.cantidad||0); return stockBaseVentaBod(pid,b)>=usado[pid]; }); });
   return `<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-    <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-xs text-amber-900"><b>🔀 Pedido dividido entre bodegas.</b> Preparar: ${usadas.map(b=>`${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} <b>${t[b]} u</b>`).join(' · ')}${ped}</div>${btn}</div>
+    <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-xs text-amber-900"><b>🔀 Pedido dividido entre bodegas.</b> Preparar: ${usadas.map(b=>`${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} <b>${t[b]} u</b>${b==='SIG'?' (pedir al proveedor)':''}`).join(' · ')}${ped}</div>${btn}</div>
     ${sola?`<div class="text-[11px] text-amber-800 mt-1">💡 <b>${BODEGA_INFO[sola].nombre}</b> tiene stock para todo el pedido. <button type="button" onclick="setSaleBodega('${sola}')" class="underline font-semibold">Sacar todo de ${BODEGA_INFO[sola].nombre}</button></div>`:''}
   </div>`;
 }
@@ -2752,7 +2809,7 @@ function saveSale(){
   // Reparto entre bodegas: se quitan las marcas de edición y se deja limpio (si todo sale de una bodega, queda como pedido simple).
   (EDIT.items||[]).forEach(it=>{ delete it._repManual; delete it._repAbierto; });
   normalizarReparto(EDIT);
-  const repFinal=saleReparto(EDIT), bodFinal=BODEGAS.filter(b=>repFinal[b]>0);
+  const repFinal=saleReparto(EDIT), bodFinal=FUENTES.filter(b=>repFinal[b]>0);
   if(EDIT.estadoDespacho==='entregado'){ if(!EDIT.entregadoAt) EDIT.entregadoAt=Date.now(); (EDIT.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else if(EDIT.estadoDespacho==='pendiente' && !saleHayEntregaParcial(EDIT)){ (EDIT.items||[]).forEach(i=>{ delete i.entregadoQty; }); }
   // Si la venta sale de la bodega Casa Augusta, sincroniza los campos del módulo CA
@@ -2779,7 +2836,8 @@ function saveSale(){
   save();closeModal();go((CURRENT==='despachos'||CURRENT==='ca_shopify'||CURRENT==='stock_uni')?CURRENT:'ventas');
   if(esNueva) openConfirmacion(sid);
   else if(reciénEntregado) openEntrega(sid);
-  if(bodFinal.length>1) toastInfo('🔀 Pedido dividido · preparar '+bodFinal.map(b=>repFinal[b]+' u en '+BODEGA_INFO[b].nombre).join(' y '));
+  if(bodFinal.length>1) toastInfo('🔀 Pedido dividido · preparar '+bodFinal.map(b=>repFinal[b]+' u en '+BODEGA_INFO[b].nombre).join(' y ')+(repFinal.SIG?' (pedir al proveedor)':''), repFinal.SIG?9000:0);
+  else if(bodFinal[0]==='SIG') toastInfo('🚚 Este pedido sale de Bodega Sigma: hay que pedir '+repFinal.SIG+' u al proveedor.', 9000);
 }
 function deleteSale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
@@ -4697,7 +4755,8 @@ function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!
    El total unificado suma lo DISPONIBLE en cada bodega; una bodega en negativo (vendido sin stock) no le
    resta a las otras y se muestra como "faltan N". Debajo van los pedidos y ventas con su movimiento de
    stock: cuántas unidades salen de cada bodega y qué falta por preparar en cada una.
-   No guarda datos propios: todo se calcula con el stock de cada bodega y los pedidos registrados. */
+   No guarda datos propios: todo se calcula con el stock de cada bodega y los pedidos registrados.
+   Excepción: Bodega Sigma (stock del proveedor), que se anota a mano AQUÍ MISMO y también suma al total. */
 let UNI_Q='', UNI_FIL='con', UNI_BOD='', UNI_ORD='nombre', UNI_PED_EST='prep', UNI_PED_ORI='', UNI_PED_BOD='';
 const UNI_ORIGEN={ shopify:{label:'Shopify', icon:'🛍️', pill:'blue'}, ca:{label:'Casa Augusta', icon:'🏠', pill:'green'}, cp:{label:'Casa Planta', icon:'🌿', pill:'green'}, viet:{label:'Viet Pottery', icon:'🪴', pill:'gray'} };
 // Bodegas que el usuario puede ajustar (según los módulos de stock a los que tiene acceso).
@@ -4705,16 +4764,17 @@ function uniBodegasAjustables(){ if(!SESSION) return []; return BODEGAS.filter(b
 // Una fila por producto: stock real de cada bodega (st), disponible (disp, nunca negativo), total y faltantes.
 function uniFilas(){
   return productsForPicker(productName).map(p=>{
-    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id)}, disp={}, ped=esAPedido(p); let total=0, nBod=0, falta=0;
-    // "falta" = vendido sin stock; no aplica a los productos a pedido (no llevan stock)
-    BODEGAS.forEach(b=>{ disp[b]=Math.max(0,st[b]); total+=disp[b]; if(disp[b]>0) nBod++; if(st[b]<0 && !ped) falta+=-st[b]; });
+    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id), SIG:stockSigma(p.id)}, disp={}, ped=esAPedido(p); let total=0, nBod=0, falta=0;
+    // "falta" = vendido sin stock en una bodega propia; no aplica a los productos a pedido (no llevan stock) ni a Sigma
+    FUENTES.forEach(b=>{ disp[b]=Math.max(0,st[b]); total+=disp[b]; if(disp[b]>0) nBod++; if(b!=='SIG' && st[b]<0 && !ped) falta+=-st[b]; });
     return {p, st, disp, total, nBod, falta, ped};
   });
 }
 // Unidades que faltan por entregar de un pedido, por bodega (lo "a pedido" no sale de bodega: va aparte).
 function salePendientePorBodega(s){
-  const t={REQ:0,CA:0,CP:0};
-  (s.items||[]).forEach(i=>{ if(itemAPedido(i)) return; let p=Math.max(0,itemPendienteQty(s,i)); if(!p) return; const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(p,r[b]); t[b]+=x; p-=x; }); });
+  const t={REQ:0,CA:0,CP:0,SIG:0};
+  // Lo que falta por entregar se atribuye primero a Sigma (lo último en llegar es lo que hay que pedir) y después a las bodegas propias.
+  (s.items||[]).forEach(i=>{ if(itemAPedido(i)) return; let p=Math.max(0,itemPendienteQty(s,i)); if(!p) return; const r=itemReparto(s,i); ['SIG'].concat(BODEGAS).forEach(b=>{ const x=Math.min(p,r[b]); t[b]+=x; p-=x; }); });
   return t;
 }
 // Pedidos y ventas de los cuatro orígenes (Shopify, Casa Augusta, Casa Planta y Viet Pottery) con su reparto por bodega.
@@ -4723,8 +4783,8 @@ function uniPedidos(){
   (DB.sales||[]).forEach(s=>{ if(s.perdido) return; const pend=s.estadoDespacho!=='entregado';
     // PED = unidades "a pedido" (se compran para ese pedido; no salen de bodega)
     const pedPend=pend?(s.items||[]).reduce((a,i)=>a+(itemAPedido(i)?Math.max(0,itemPendienteQty(s,i)):0),0):0;
-    out.push({s, cp:false, ori:(caCanal(s)==='Shopify'?'shopify':(s.origen==='CA'?'ca':'viet')), pend, rep:{...saleReparto(s), PED:saleUnidadesAPedido(s)}, prep:(pend?{...salePendientePorBodega(s), PED:pedPend}:{REQ:0,CA:0,CP:0,PED:0}), fecha:(s.fechaEntrega||s.fecha||'')}); });
-  (DB.cpSales||[]).forEach(s=>{ let u=0, up=0; (s.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(itemAPedido(i)) up+=q; else u+=q; }); out.push({s, cp:true, ori:'cp', pend:false, rep:{REQ:0,CA:0,CP:u,PED:up}, prep:{REQ:0,CA:0,CP:0,PED:0}, fecha:(s.fecha||'')}); });
+    out.push({s, cp:false, ori:(caCanal(s)==='Shopify'?'shopify':(s.origen==='CA'?'ca':'viet')), pend, rep:{...saleReparto(s), PED:saleUnidadesAPedido(s)}, prep:(pend?{...salePendientePorBodega(s), PED:pedPend}:{REQ:0,CA:0,CP:0,SIG:0,PED:0}), fecha:(s.fechaEntrega||s.fecha||'')}); });
+  (DB.cpSales||[]).forEach(s=>{ let u=0, up=0; (s.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(itemAPedido(i)) up+=q; else u+=q; }); out.push({s, cp:true, ori:'cp', pend:false, rep:{REQ:0,CA:0,CP:u,SIG:0,PED:up}, prep:{REQ:0,CA:0,CP:0,SIG:0,PED:0}, fecha:(s.fecha||'')}); });
   return out;
 }
 function uniFiltro(v){ UNI_FIL=v; renderStockUnificado(); }
@@ -4738,14 +4798,73 @@ function uniBuscar(v){
   document.querySelectorAll('#unitbl tbody tr[data-text]').forEach(tr=>{ const ok=!q||(tr.dataset.text||'').includes(q); tr.style.display=ok?'':'none'; if(ok) n++; });
   const c=document.getElementById('uniCount'); if(c) c.textContent=n+' producto'+(n!==1?'s':'');
 }
-function renderStockUnificado(){
-  const v=document.getElementById('view');
-  const filas=uniFilas();
-  const tot={REQ:0,CA:0,CP:0}, nProd={REQ:0,CA:0,CP:0}, faltaB={REQ:0,CA:0,CP:0}; let total=0, conStock=0, multi=0, faltaN=0, nPed=0;
-  filas.forEach(f=>{ BODEGAS.forEach(b=>{ tot[b]+=f.disp[b]; if(f.disp[b]>0) nProd[b]++; if(f.st[b]<0 && !f.ped) faltaB[b]+=-f.st[b]; }); total+=f.total; if(f.total>0) conStock++; if(f.nBod>1) multi++; if(f.falta>0) faltaN++; if(f.ped) nPed++; });
+// Productos que se están viendo según el filtro, la bodega y el orden elegidos (lo usan la pantalla y el PDF).
+function uniVisibles(filas){
   let vis=filas.filter(f=> UNI_FIL==='todos' ? true : (UNI_FIL==='ped' ? f.ped : (UNI_FIL==='multi' ? f.nBod>1 : (UNI_FIL==='falta' ? f.falta>0 : f.total>0))));
   if(UNI_BOD) vis=vis.filter(f=> f.ped ? f.disp[UNI_BOD]>0 : f.st[UNI_BOD]!==0);
   if(UNI_ORD==='total') vis=vis.slice().sort((a,b)=>b.total-a.total);
+  return vis;
+}
+/* ----- Stock unificado imprimible (PDF) para revisar el stock -----
+   Imprime lo mismo que se está viendo (filtro, bodega, búsqueda y orden).
+   · Con una bodega elegida: planilla de conteo de esa bodega (stock del sistema · conteo físico · diferencia).
+   · Con todas las bodegas: hoja apaisada con el stock del sistema de cada bodega y, al lado, un espacio para
+     anotar el conteo. Bodega Sigma va solo como dato (es stock del proveedor, no se cuenta). */
+function descargarStockUnificado(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const { jsPDF }=window.jspdf;
+  const q=(UNI_Q||'').toLowerCase().trim();
+  const filas=uniVisibles(uniFilas()).filter(f=>!q || ((f.p.sku||'')+' '+productName(f.p)).toLowerCase().includes(q));
+  if(!filas.length){ toastInfo('No hay productos con este filtro para imprimir.'); return; }
+  const b=UNI_BOD, una=!!b;
+  const doc=new jsPDF({orientation: una?'portrait':'landscape'});
+  const W=doc.internal.pageSize.getWidth();
+  const nom=f=>productName(f.p)+(f.ped?'  (a pedido)':'')+(f.p.soloCotizacion?'  (solo cotización)':'');
+  const num=(f,x)=>{ const n=f.st[x]; return n>0 ? String(n) : ((n<0 && !f.ped) ? '0' : '—'); };   // igual que en pantalla: sin stock = —
+  const suma=x=>filas.reduce((a,f)=>a+f.disp[x],0), totalU=filas.reduce((a,f)=>a+f.total,0);
+  const negrita=(t,al)=>({content:String(t),styles:{fontStyle:'bold',halign:al||'center'}});
+  let head, body, columnStyles, unidades;
+  if(una){
+    const sig=b==='SIG';
+    head=[['SKU','Producto', sig?'Anotado\nen Sigma':'Stock\nsistema', sig?'Confirmado\nproveedor':'Conteo\nfísico','Diferencia']];
+    body=filas.map(f=>[f.p.sku||'', nom(f), num(f,b), '', '']);
+    unidades=suma(b);
+    body.push([{content:'TOTAL',colSpan:2,styles:{fontStyle:'bold',halign:'right'}}, negrita(unidades), '', '']);
+    columnStyles={0:{cellWidth:32,fontSize:8},2:{halign:'center',cellWidth:24},3:{cellWidth:30},4:{cellWidth:26}};
+  } else {
+    head=[[{content:'SKU',rowSpan:2},{content:'Producto',rowSpan:2},{content:'Total',rowSpan:2,styles:{halign:'center'}},{content:'Casa Augusta',colSpan:2,styles:{halign:'center'}},{content:'Casa Planta',colSpan:2,styles:{halign:'center'}},{content:'Bodega Requinoa',colSpan:2,styles:{halign:'center'}},{content:'Sigma\nproveedor',rowSpan:2,styles:{halign:'center',fontSize:8}}],
+          ['sistema','conteo','sistema','conteo','sistema','conteo'].map(t=>({content:t,styles:{halign:'center',fontStyle:'normal',fontSize:8}}))];
+    body=filas.map(f=>[f.p.sku||'', nom(f), (f.ped&&f.total<=0)?'—':String(f.total), num(f,'CA'), '', num(f,'CP'), '', num(f,'REQ'), '', num(f,'SIG')]);
+    unidades=totalU;
+    body.push([{content:'TOTAL',colSpan:2,styles:{fontStyle:'bold',halign:'right'}}, negrita(totalU), negrita(suma('CA')), '', negrita(suma('CP')), '', negrita(suma('REQ')), '', negrita(suma('SIG'))]);
+    columnStyles={0:{cellWidth:34,fontSize:8},2:{halign:'center',cellWidth:18,fontStyle:'bold'},3:{halign:'center',cellWidth:19},4:{cellWidth:22},5:{halign:'center',cellWidth:19},6:{cellWidth:22},7:{halign:'center',cellWidth:19},8:{cellWidth:22},9:{halign:'center',cellWidth:22}};
+  }
+  const filtroTxt={con:'Con stock',todos:'Todos los productos',multi:'En 2 o más bodegas',falta:'Vendido sin stock',ped:'A pedido'}[UNI_FIL]||'Con stock';
+  const ahora=new Date(), dd=n=>String(n).padStart(2,'0'), fechaTxt=dd(ahora.getDate())+'-'+dd(ahora.getMonth()+1)+'-'+ahora.getFullYear()+' '+dd(ahora.getHours())+':'+dd(ahora.getMinutes());
+  const sub=fechaTxt+'  ·  '+filtroTxt+'  ·  '+(una?BODEGA_INFO[b].nombre:'Todas las bodegas')+(q?'  ·  Búsqueda: "'+UNI_Q.trim().slice(0,24)+'"':'')+'  ·  '+filas.length+' producto'+(filas.length!==1?'s':'')+'  ·  '+unidades+' u';
+  doc.autoTable({
+    head, body, columnStyles,
+    styles:{fontSize:9,cellPadding:2.4,minCellHeight:8.5,lineColor:[235,216,203],lineWidth:0.2,textColor:[74,44,35],valign:'middle'},
+    headStyles:{fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold',lineColor:[150,100,82],lineWidth:0.2},
+    margin:{top:36,left:14,right:14,bottom:12},
+    rowPageBreak:'avoid',
+    didDrawPage:function(){
+      doc.setFillColor(74,44,35); doc.rect(0,0,W,30,'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — '+(una?('Revisión de stock · '+BODEGA_INFO[b].nombre):'Stock unificado · Revisión de stock'),14,11.5);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(221,176,155);
+      doc.text(sub,14,18.5);
+      doc.text('Revisó: ______________________        Fecha de revisión: ____ / ____ / ______',14,25.5);
+      doc.setTextColor(255,255,255); doc.text('Pág. '+doc.internal.getNumberOfPages(),W-14,11.5,{align:'right'});
+    }
+  });
+  savePdfDoc(doc, 'stock-unificado'+(una?('-'+BODEGA_INFO[b].corto.toLowerCase().replace(/\s+/g,'-')):'')+'-'+todayISO()+'.pdf');
+}
+function renderStockUnificado(){
+  const v=document.getElementById('view');
+  const filas=uniFilas();
+  const tot={REQ:0,CA:0,CP:0,SIG:0}, nProd={REQ:0,CA:0,CP:0,SIG:0}, faltaB={REQ:0,CA:0,CP:0}; let total=0, conStock=0, multi=0, faltaN=0, nPed=0;
+  filas.forEach(f=>{ FUENTES.forEach(b=>{ tot[b]+=f.disp[b]; if(f.disp[b]>0) nProd[b]++; if(b!=='SIG' && f.st[b]<0 && !f.ped) faltaB[b]+=-f.st[b]; }); total+=f.total; if(f.total>0) conStock++; if(f.nBod>1) multi++; if(f.falta>0) faltaN++; if(f.ped) nPed++; });
+  const vis=uniVisibles(filas);
   // ---- Aviso: maceteros vendidos sin stock (saldo negativo de una bodega) y botón para regularizar lo ya entregado ----
   // Cada saldo negativo se separa en: "colgando" (pedidos ya entregados → se regulariza) y "por comprar" (pedidos sin entregar).
   const colg=uniSaldosColgando(), colgU=colg.reduce((a,f)=>a+f.colgando,0), colgPend=colg.reduce((a,f)=>a+f.porEntregar,0);
@@ -4755,26 +4874,34 @@ function renderStockUnificado(){
     <div class="text-sm text-amber-900 leading-snug min-w-0">⚠️ <b>${colgU} u de maceteros</b> quedaron como "vendidas sin stock" por pedidos <b>ya entregados</b>: se registraron saliendo de una bodega que no los tenía.${colgPend?` Otras ${colgPend} u son de pedidos por entregar (por comprar) y se compensan al recibir la compra.`:''}</div>
     ${puedeReg?`<button onclick="openUniRegularizar()" class="bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold px-4 py-2 rounded-xl whitespace-nowrap">Regularizar…</button>`:''}
   </div>` : '';
-  const card=(titulo,valor,sub,activo,fn,color)=>`<div onclick="${fn}" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition ${activo?'ring-2 ring-sage-500':''}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${titulo}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${valor}</div><div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div></div>`;
+  const card=(titulo,valor,sub,activo,fn,color,extra)=>`<div onclick="${fn}" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition ${activo?'ring-2 ring-sage-500':''} ${extra||''}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${titulo}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${valor}</div><div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div></div>`;
   const subBod=b=>nProd[b]+' producto'+(nProd[b]!==1?'s':'')+(regB[b]?` · <span class="text-red-600">${regB[b]} u vendidas sin stock</span>`:'')+(compB[b]?` · <span class="text-amber-700" title="Maceteros de pedidos sin entregar que esta bodega no tiene: hay que comprarlos o traerlos">${compB[b]} u por comprar</span>`:'');
   const chip=(val,label,n,col)=>`<button onclick="uniFiltro('${val}')" class="text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap ${UNI_FIL===val?'bg-clay-700 text-white border-clay-700':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${label} <span class="${UNI_FIL===val?'opacity-80':(col||'text-clay-400')}">${n}</span></button>`;
   const th=(b)=>`<th class="text-center px-3 py-3 whitespace-nowrap ${UNI_BOD===b?'text-clay-800':''}">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre}<div class="normal-case font-normal text-[10px] text-clay-400">(${BODEGA_INFO[b].lugar})</div></th>`;
   const celda=(f,b)=>{ const n=f.st[b]; if(n>0) return `<span class="font-semibold text-clay-800">${n}</span>`; if(n<0 && !f.ped){ const c=colgMap[f.p.id+'|'+b]||{colgando:-n,porEntregar:0};
       return `<span class="text-clay-300">0</span>`+(c.colgando>0?`<div class="text-[10px] font-medium text-red-600 leading-tight" title="Vendidas desde esta bodega sin stock, en pedidos ya entregados: usa Regularizar. No restan al total">faltan ${c.colgando}</div>`:'')+(c.porEntregar>0?`<div class="text-[10px] font-medium text-amber-700 leading-tight" title="Pedidos sin entregar: esta bodega no las tiene, hay que comprarlas o traerlas">por comprar ${c.porEntregar}</div>`:''); }
     return '<span class="text-clay-300">—</span>'; };
+  // Bodega Sigma (proveedor): se anota a mano tocando la celda. Lo "a pedido" no lleva stock, así que no aplica.
+  const puedeSig=sigmaEditable(), sigUlt={}; (DB.sigmaLog||[]).forEach(l=>{ sigUlt[l.productId]=l; });
+  const sigCuando=pid=>{ const l=sigUlt[pid]; if(!l) return ''; const d=new Date(l.ts); return 'Anotado el '+String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+(l.quien?' por '+String(l.quien).replace(/"/g,''):'')+'. '; };
+  const celdaSig=f=>{ if(f.ped) return '<span class="text-clay-300" title="Producto a pedido: no lleva stock">—</span>';
+    const n=f.disp.SIG;
+    if(!puedeSig) return n>0 ? `<span class="font-semibold text-clay-800" title="${sigCuando(f.p.id)}Stock del proveedor">${n}</span>` : '<span class="text-clay-300">—</span>';
+    return `<button type="button" onclick="event.stopPropagation();uniSigmaEditar('${f.p.id}',this)" title="${n>0?sigCuando(f.p.id):''}Toca para anotar las unidades que tiene el proveedor y que quieres sumar al stock total" class="min-w-[46px] px-2 py-1 rounded-lg border border-dashed ${n>0?'border-sage-500 bg-sage-50 font-semibold text-clay-800':'border-clay-300 text-clay-400 hover:border-sage-500 hover:text-sage-700'}">${n>0?n:'+'}</button>`; };
   const tabla=`<div class="card overflow-hidden mb-4">
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
       <input id="uniQ" value="${(UNI_Q||'').replace(/"/g,'&quot;')}" oninput="uniBuscar(this.value)" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
-      <select onchange="UNI_BOD='';uniBodega(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white"><option value="">Todas las bodegas</option>${['CA','CP','REQ'].map(b=>`<option value="${b}" ${UNI_BOD===b?'selected':''}>${BODEGA_INFO[b].nombre}</option>`).join('')}</select>
+      <select onchange="UNI_BOD='';uniBodega(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white"><option value="">Todas las bodegas</option>${['CA','CP','REQ','SIG'].map(b=>`<option value="${b}" ${UNI_BOD===b?'selected':''}>${BODEGA_INFO[b].nombre}</option>`).join('')}</select>
       <div class="flex items-center gap-1.5 flex-wrap">${chip('con','Con stock',conStock)}${chip('todos','Todos',filas.length)}${chip('multi','En 2 o más bodegas',multi)}${faltaN?chip('falta','Vendido sin stock',faltaN,'text-red-600'):''}${nPed?chip('ped','A pedido',nPed):''}</div>
       <div id="uniCount" class="text-xs text-clay-400 ml-auto">${vis.length} productos</div>
+      <button onclick="descargarStockUnificado()" title="Descargar en PDF lo que estás viendo, para imprimirlo y revisar el stock" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50 whitespace-nowrap"><span>🖨️</span> Descargar PDF</button>
     </div>
-    <div class="overflow-auto max-h-[62vh]"><table class="w-full text-sm min-w-[720px]" id="unitbl">
+    <div class="overflow-auto max-h-[62vh]"><table class="w-full text-sm min-w-[860px]" id="unitbl">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3"><button onclick="uniOrden('nombre')" class="uppercase font-semibold ${UNI_ORD==='nombre'?'text-clay-800':'text-clay-500 hover:text-clay-700'}">Producto${UNI_ORD==='nombre'?' ↑':''}</button></th>
         <th class="text-left px-3 py-3">SKU</th>
         <th class="text-center px-3 py-3 bg-sage-100 text-sage-800 whitespace-nowrap"><button onclick="uniOrden('total')" class="uppercase font-semibold">Stock total${UNI_ORD==='total'?' ↓':''}</button><div class="normal-case font-normal text-[10px]">(unificado)</div></th>
-        ${th('CA')}${th('CP')}${th('REQ')}
+        ${th('CA')}${th('CP')}${th('REQ')}${th('SIG')}
       </tr></thead><tbody>
       ${vis.length?vis.map(f=>{const p=f.p;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-text="${((p.sku||'')+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openUniDetalle('${p.id}')">
         <td class="px-4 py-2.5 font-medium">${productName(p)}${f.ped?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle" title="Venta calzada o mandado a hacer: no lleva stock">🛒 A pedido</span>':''}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</td>
@@ -4783,13 +4910,14 @@ function renderStockUnificado(){
         <td class="px-3 py-2.5 text-center">${celda(f,'CA')}</td>
         <td class="px-3 py-2.5 text-center">${celda(f,'CP')}</td>
         <td class="px-3 py-2.5 text-center">${celda(f,'REQ')}</td>
-      </tr>`;}).join(''):`<tr><td colspan="6" class="px-4 py-10 text-center text-clay-500">No hay productos con este filtro.</td></tr>`}
+        <td class="px-3 py-2.5 text-center" ${puedeSig&&!f.ped?'onclick="event.stopPropagation()"':''}>${celdaSig(f)}</td>
+      </tr>`;}).join(''):`<tr><td colspan="7" class="px-4 py-10 text-center text-clay-500">No hay productos con este filtro.</td></tr>`}
       </tbody></table></div>
   </div>`;
   // ---- Pedidos y ventas: movimiento de stock por bodega ----
   const peds=uniPedidos(), pendientes=peds.filter(x=>x.pend);
-  const porPrep={REQ:{u:0,n:0},CA:{u:0,n:0},CP:{u:0,n:0},PED:{u:0,n:0}};
-  pendientes.forEach(x=>['REQ','CA','CP','PED'].forEach(b=>{ if(x.prep[b]>0){ porPrep[b].u+=x.prep[b]; porPrep[b].n++; } }));
+  const porPrep={REQ:{u:0,n:0},CA:{u:0,n:0},CP:{u:0,n:0},SIG:{u:0,n:0},PED:{u:0,n:0}};
+  pendientes.forEach(x=>['REQ','CA','CP','SIG','PED'].forEach(b=>{ if(x.prep[b]>0){ porPrep[b].u+=x.prep[b]; porPrep[b].n++; } }));
   const M=x=> UNI_PED_EST==='prep' ? x.prep : x.rep;   // por preparar: lo que falta entregar; últimas ventas: todo el movimiento del pedido
   let base = UNI_PED_EST==='prep' ? pendientes.slice().sort((a,b)=>(a.fecha||'9999').localeCompare(b.fecha||'9999')) : peds.slice().sort((a,b)=>(b.s.fecha||'').localeCompare(a.s.fecha||''));
   if(UNI_PED_BOD) base=base.filter(x=>M(x)[UNI_PED_BOD]>0);
@@ -4798,9 +4926,9 @@ function renderStockUnificado(){
   const totalLista=lista.length; if(UNI_PED_EST!=='prep') lista=lista.slice(0,60);
   const tabEst=(val,label)=>`<button onclick="uniPedEstado('${val}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold ${UNI_PED_EST===val?'bg-clay-700 text-white':'text-clay-600 hover:bg-clay-100'}">${label}</button>`;
   const chipOri=k=>`<button onclick="uniPedOrigen('${k}')" class="text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap ${UNI_PED_ORI===k?'bg-sage-600 text-white border-sage-600':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${UNI_ORIGEN[k].icon} ${UNI_ORIGEN[k].label} <span class="${UNI_PED_ORI===k?'opacity-80':'text-clay-400'}">${nOri[k]||0}</span></button>`;
-  const chipPrep=b=>{ const ped=b==='PED', tit=ped?'🛒 A pedido · por comprar o mandar a hacer':(BODEGA_INFO[b].icon+' Preparar en '+BODEGA_INFO[b].nombre);
+  const chipPrep=b=>{ const ped=b==='PED', tit=ped?'🛒 A pedido · por comprar o mandar a hacer':(b==='SIG'?'🚚 Pedir a Bodega Sigma (proveedor)':(BODEGA_INFO[b].icon+' Preparar en '+BODEGA_INFO[b].nombre));
     return `<button onclick="uniPedBodega('${b}')" title="${ped?'Productos a pedido (venta calzada o mandados a hacer) de pedidos sin entregar':('Ver solo lo que sale de '+BODEGA_INFO[b].nombre)}" class="flex-1 min-w-[150px] text-left border rounded-xl px-3 py-2 ${UNI_PED_BOD===b?'border-sage-600 bg-sage-50 ring-1 ring-sage-600':'border-clay-200 bg-white hover:bg-clay-50'}"><div class="text-[11px] text-clay-500">${tit}</div><div class="text-base font-bold ${porPrep[b].u?'text-clay-800':'text-clay-300'}">${porPrep[b].u} u <span class="text-xs font-normal text-clay-400">· ${porPrep[b].n} pedido${porPrep[b].n!==1?'s':''}</span></div></button>`; };
-  const movHtml=x=>{ const m=M(x), us=BODEGAS.filter(b=>m[b]>0); if(!us.length && !(m.PED>0)) return '<span class="text-clay-300">—</span>';
+  const movHtml=x=>{ const m=M(x), us=FUENTES.filter(b=>m[b]>0); if(!us.length && !(m.PED>0)) return '<span class="text-clay-300">—</span>';
     const bod=us.map(b=>`<div class="badge ${us.length>1?'bg-amber-100 text-amber-800':'bg-sage-50 text-sage-800 border border-sage-100'} whitespace-nowrap mb-0.5">${BODEGA_INFO[b].icon} −${m[b]} unidad${m[b]!==1?'es':''} | ${BODEGA_INFO[b].nombre}</div>`);
     if(m.PED>0) bod.push(`<div class="badge bg-clay-100 text-clay-600 whitespace-nowrap mb-0.5" title="Se compra para este pedido: no sale de bodega">🛒 ${m.PED} a pedido</div>`);
     return bod.join('<br>'); };
@@ -4812,7 +4940,7 @@ function renderStockUnificado(){
         <div><div class="font-semibold">Pedidos y ventas · de qué bodega sale cada uno</div><div class="text-xs text-clay-400">${UNI_PED_EST==='prep'?'Unidades que faltan por entregar, según la bodega que las prepara.':'Últimos movimientos de los cuatro puntos de venta.'}</div></div>
         <div class="flex items-center gap-1 bg-clay-100/70 p-1 rounded-xl">${tabEst('prep','Por preparar '+pendientes.length)}${tabEst('todas','Últimas ventas')}</div>
       </div>
-      ${UNI_PED_EST==='prep'?`<div class="flex flex-wrap gap-2 mt-3">${['CA','CP','REQ'].concat(porPrep.PED.u?['PED']:[]).map(chipPrep).join('')}</div>`:''}
+      ${UNI_PED_EST==='prep'?`<div class="flex flex-wrap gap-2 mt-3">${['CA','CP','REQ'].concat(porPrep.SIG.u?['SIG']:[]).concat(porPrep.PED.u?['PED']:[]).map(chipPrep).join('')}</div>`:''}
       <div class="flex flex-wrap gap-1.5 mt-3">${['shopify','ca','cp','viet'].map(chipOri).join('')}</div>
     </div>
     ${lista.length?`<div class="overflow-auto max-h-[60vh]"><table class="w-full text-sm min-w-[860px]">
@@ -4829,16 +4957,17 @@ function renderStockUnificado(){
       :`<div class="p-8 text-center text-sm text-clay-500">${UNI_PED_EST==='prep'?'No hay pedidos por preparar con este filtro. 🎉':'No hay ventas con este filtro.'}</div>`}
   </div>`;
   v.innerHTML=`
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
-    ${card('Stock total unificado',total+' u',conStock+' productos con stock',!UNI_BOD,"UNI_BOD='';renderStockUnificado()",'text-sage-700')}
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-4 mb-4">
+    ${card('Stock total unificado',total+' u',conStock+' productos con stock'+(tot.SIG?' · incluye '+tot.SIG+' u de Sigma':''),!UNI_BOD,"UNI_BOD='';renderStockUnificado()",'text-sage-700','col-span-2 lg:col-span-1')}
     ${card('🏠 Casa Augusta <span class="text-clay-400">(Vitacura)</span>',tot.CA+' u',subBod('CA'),UNI_BOD==='CA',"uniBodega('CA')")}
     ${card('🌿 Casa Planta <span class="text-clay-400">(Requínoa)</span>',tot.CP+' u',subBod('CP'),UNI_BOD==='CP',"uniBodega('CP')")}
     ${card('🏭 Bodega Requinoa <span class="text-clay-400">(central)</span>',tot.REQ+' u',subBod('REQ'),UNI_BOD==='REQ',"uniBodega('REQ')")}
+    ${card('🚚 Bodega Sigma <span class="text-clay-400">(proveedor)</span>',tot.SIG+' u',nProd.SIG+' producto'+(nProd.SIG!==1?'s':'')+' · se anota a mano',UNI_BOD==='SIG',"uniBodega('SIG')")}
   </div>
   ${avisoColgando}
   ${tabla}
   ${pedidos}
-  <div class="text-xs text-clay-400 mt-3 px-1">💡 El <b>stock total</b> suma lo disponible en las tres bodegas. <b>"faltan N"</b> son maceteros vendidos desde una bodega sin stock en pedidos ya entregados (se corrige con <b>Regularizar</b>); <b>"por comprar N"</b> son de pedidos sin entregar. Ninguno resta al total. Lo que no es macetero (plantas, tierra, platos, servicios) y los maceteros mandados a hacer (fierro, greda) son <b>a pedido</b>: no llevan stock. Toca un producto para ver sus movimientos o ajustar; toca un pedido para abrirlo.</div>`;
+  <div class="text-xs text-clay-400 mt-3 px-1">💡 El <b>stock total</b> suma lo disponible en las tres bodegas, más lo que anotes en <b>Bodega Sigma</b> (stock del proveedor${sigmaEditable()?': toca la celda de esa columna para anotarlo; si el producto no aparece en la lista, usa el filtro <b>Todos</b>':''}). Lo de Sigma baja solo cuando un pedido lo usa, y ese pedido queda marcado <b>"Pedir a Sigma"</b>. <b>"faltan N"</b> son maceteros vendidos desde una bodega sin stock en pedidos ya entregados (se corrige con <b>Regularizar</b>); <b>"por comprar N"</b> son de pedidos sin entregar. Ninguno resta al total. Lo que no es macetero (plantas, tierra, platos, servicios) y los maceteros mandados a hacer (fierro, greda) son <b>a pedido</b>: no llevan stock. Toca un producto para ver sus movimientos o ajustar; toca un pedido para abrirlo.</div>`;
   uniBuscar(UNI_Q);
 }
 /* ---- Regularizar "vendido sin stock" ----
@@ -4851,8 +4980,8 @@ function renderStockUnificado(){
 // Unidades AÚN POR ENTREGAR de cada producto en cada bodega: { REQ:{idProducto:n}, CA:{…}, CP:{…} }.
 // Lo "a pedido" no cuenta (no sale de bodega), salvo que se pida con conAPedido=true: ahí se anota en la bodega del pedido.
 function pendientesPorBodega(conAPedido){
-  const pend={REQ:{},CA:{},CP:{}};
-  (DB.sales||[]).forEach(s=>{ if(s.perdido) return; (s.items||[]).forEach(i=>{ if(!conAPedido && itemAPedido(i)) return; let q=Math.max(0,itemPendienteQty(s,i)); if(!q) return; const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(q,r[b]); if(x>0){ pend[b][i.productId]=(pend[b][i.productId]||0)+x; q-=x; } }); }); });
+  const pend={REQ:{},CA:{},CP:{},SIG:{}};   // SIG = unidades por entregar que esperan al proveedor (Bodega Sigma)
+  (DB.sales||[]).forEach(s=>{ if(s.perdido) return; (s.items||[]).forEach(i=>{ if(!conAPedido && itemAPedido(i)) return; let q=Math.max(0,itemPendienteQty(s,i)); if(!q) return; const r=itemReparto(s,i); ['SIG'].concat(BODEGAS).forEach(b=>{ const x=Math.min(q,r[b]); if(x>0){ pend[b][i.productId]=(pend[b][i.productId]||0)+x; q-=x; } }); }); });
   return pend;
 }
 function uniSaldosColgando(){
@@ -4900,19 +5029,75 @@ function regularizarSaldosColgando(){
     save(); if(CURRENT==='stock_uni') go('stock_uni');
   });
 }
+/* ---- Bodega Sigma: anotar a mano el stock del proveedor ----
+   En la tabla se toca la celda de Sigma, se escribe la cantidad y Enter (Esc cancela). También desde la ficha del
+   producto y desde "Ajustar stock" (sirve para productos que no están en la lista). Guarda, deja "Deshacer" y
+   vuelve a dibujar la vista sin perder el lugar. Al cambiar el total unificado, el stock se reenvía solo a Shopify. */
+// Vuelve a dibujar Stock unificado manteniendo la posición de la tabla.
+function uniRepintar(){ const t=document.getElementById('unitbl'), y=(t&&t.parentNode)?t.parentNode.scrollTop:0; renderStockUnificado(); const t2=document.getElementById('unitbl'); if(t2&&t2.parentNode) t2.parentNode.scrollTop=y; }
+function uniSigmaEditar(pid, el){
+  if(!sigmaEditable()||!el||!el.parentNode) return; const td=el.parentNode, act=Math.max(0,stockSigma(pid));
+  td.innerHTML=`<input type="number" min="0" step="1" inputmode="numeric" value="${act||''}" placeholder="0" class="w-16 border border-sage-500 rounded-lg px-1.5 py-1 text-center text-sm font-semibold" onclick="event.stopPropagation()" onkeydown="if(event.key==='Enter'){ this.blur(); } else if(event.key==='Escape'){ this.dataset.cancelar='1'; this.blur(); }" onblur="uniSigmaGuardar('${pid}',this)">`;
+  const inp=td.querySelector('input'); if(inp){ inp.focus(); if(inp.select) inp.select(); }
+}
+function uniSigmaGuardar(pid, inp){
+  if(!inp||inp.dataset.hecho) return; inp.dataset.hecho='1';
+  const n=Math.max(0,Math.round(+inp.value||0));
+  if(inp.dataset.cancelar==='1' || n===Math.max(0,stockSigma(pid))){ if(CURRENT==='stock_uni') uniRepintar(); return; }
+  sigmaAnotar(pid, n);
+}
+// Guarda la cantidad anotada (desde la tabla o desde la ficha) y deja la opción de deshacer.
+function sigmaAnotar(pid, n){
+  const p=productById(pid); if(!p||!sigmaEditable()) return false;
+  const antes=Math.max(0,stockSigma(pid)); if(!setStockSigma(pid,n)) return false;
+  save(); if(CURRENT==='stock_uni') uniRepintar();
+  toastUndo('🚚 Bodega Sigma · '+productName(p)+': '+antes+' → '+Math.max(0,stockSigma(pid))+' u', ()=>{ setStockSigma(pid,antes); save(); if(CURRENT==='stock_uni') uniRepintar(); });
+  return true;
+}
+// Ficha de Bodega Sigma de un producto: anotar la cantidad, ver cuánto han usado los pedidos y los últimos cambios.
+function openSigma(pid){
+  const p=productById(pid); if(!p) return; const act=Math.max(0,stockSigma(pid)), usado=sigmaPedidosQty(pid), propio=stockUnificado(pid), edita=sigmaEditable(), ped=esAPedido(p);
+  const log=(DB.sigmaLog||[]).filter(l=>l.productId===pid).slice(-5).reverse();
+  const fecha=ts=>{ const d=new Date(ts); return String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+' '+horaHM(ts); };
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between">
+      <div><h3 class="text-lg font-bold">🚚 Bodega Sigma <span class="text-clay-400 font-normal text-sm">(proveedor)</span></h3><div class="text-xs text-clay-400">${productName(p)}${p.sku?' · '+p.sku:''}</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      ${ped?`<div class="text-sm text-clay-700 bg-clay-50 rounded-xl px-3 py-2.5">Este producto es <b>a pedido</b> (no lleva stock): ya se compra al proveedor cada vez que se vende, así que no necesita stock en Sigma.</div>`:`
+      <div class="text-sm text-clay-600 bg-clay-50 rounded-xl px-3 py-2.5 leading-snug">Anota cuántas unidades tiene el <b>proveedor</b> y quieres sumar a lo que se puede vender. Se suman al <b>stock total unificado</b> y a lo que se publica en <b>Shopify</b>. Cuando un pedido las use, bajan solas y el pedido queda marcado <b>"Pedir a Sigma"</b>.</div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="border border-clay-100 rounded-xl p-2.5"><div class="text-[11px] text-clay-500">Stock propio</div><div class="text-xl font-bold text-clay-800">${propio}</div></div>
+        <div class="border border-sage-200 bg-sage-50 rounded-xl p-2.5"><div class="text-[11px] text-clay-500">Bodega Sigma</div><div class="text-xl font-bold text-sage-700">${act}</div></div>
+        <div class="border border-clay-100 rounded-xl p-2.5"><div class="text-[11px] text-clay-500">Total unificado</div><div class="text-xl font-bold text-clay-800">${propio+act}</div></div>
+      </div>
+      ${edita?`<label class="block"><span class="text-sm font-medium">Unidades disponibles en Sigma</span>
+        <input id="sig_q" type="number" min="0" step="1" inputmode="numeric" value="${act||''}" placeholder="0" onkeydown="if(event.key==='Enter') sigmaGuardarFicha('${pid}')" class="mt-1 w-full border border-clay-200 rounded-xl px-3 py-2 text-lg font-semibold text-center">
+        <span class="text-[11px] text-clay-400">Deja 0 para dejar de ofrecer el stock del proveedor en este producto.</span></label>`:''}
+      ${usado?`<div class="text-xs text-clay-500">Los pedidos ya han sacado <b>${usado} u</b> de Sigma en este producto.</div>`:''}
+      ${log.length?`<div><div class="text-[11px] uppercase tracking-wide text-clay-400 mb-1">Últimos cambios</div>${log.map(l=>`<div class="text-xs text-clay-600 flex justify-between gap-2 py-0.5"><span>${fecha(l.ts)}${l.quien?' · '+l.quien:''}</span><span class="tabular-nums">${l.de} → <b>${l.a}</b> u</span></div>`).join('')}</div>`:''}`}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between gap-3">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">${(edita&&!ped)?'Cancelar':'Cerrar'}</button>
+      ${(edita&&!ped)?`<button onclick="sigmaGuardarFicha('${pid}')" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm">Guardar</button>`:''}
+    </div>`);
+  const q=document.getElementById('sig_q'); if(q){ q.focus(); if(q.select) q.select(); }
+}
+function sigmaGuardarFicha(pid){ const el=document.getElementById('sig_q'); if(!el) return; const n=Math.max(0,Math.round(+el.value||0)); closeModal(); if(!sigmaAnotar(pid,n) && CURRENT==='stock_uni') uniRepintar(); }
 // Detalle de un producto: stock por bodega, accesos a movimientos/ajuste y pedidos por preparar que lo llevan.
-function uniAjustar(pid,b){ if(b==='CA') openCAAdjust(pid); else if(b==='CP') openCPAjuste(pid); else openAdjust(pid); }
+function uniAjustar(pid,b){ if(b==='SIG') openSigma(pid); else if(b==='CA') openCAAdjust(pid); else if(b==='CP') openCPAjuste(pid); else openAdjust(pid); }
 function openUniDetalle(pid){
   const p=productById(pid); if(!p) return;
-  const aj=uniBodegasAjustables(), st={REQ:stockOf(pid), CA:stockCA(pid), CP:cpStock(pid)}, ped=esAPedido(p);
+  const aj=uniBodegasAjustables(), st={REQ:stockOf(pid), CA:stockCA(pid), CP:cpStock(pid), SIG:stockSigma(pid)}, ped=esAPedido(p);
   const cg={}; uniSaldosColgando().forEach(f=>{ if(f.p.id===pid) cg[f.b]=f; });   // negativo separado en ya entregado / por comprar
   const btn=(fn,txt)=>`<button onclick="${fn}" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg whitespace-nowrap">${txt}</button>`;
   const fila=b=>{ const n=st[b];
     const mov = b==='REQ' ? (canView('stock')?btn(`openTrazabilidad('${pid}')`,'Movimientos'):'') : (b==='CA' ? (canView('ca_stock')?btn(`openCATrazabilidad('${pid}')`,'Movimientos'):'') : (canView('cp_stock')?btn(`closeModal();go('cp_stock')`,'Ver historial'):''));
     return `<div class="flex items-center justify-between gap-3 px-4 py-3 border-t border-clay-100 flex-wrap"><div class="min-w-0"><div class="font-medium text-sm">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} <span class="text-clay-400 font-normal">(${BODEGA_INFO[b].lugar})</span></div>${(n<0&&!ped&&cg[b])?`${cg[b].colgando>0?`<div class="text-[11px] text-red-600">Faltan ${cg[b].colgando}: se vendieron desde esta bodega sin stock (pedidos ya entregados).</div>`:''}${cg[b].porEntregar>0?`<div class="text-[11px] text-amber-700">Por comprar ${cg[b].porEntregar}: pedidos sin entregar.</div>`:''}`:''}</div><div class="flex items-center gap-2"><span class="text-xl font-bold w-10 text-right ${n>0?'text-clay-800':'text-clay-300'}">${Math.max(0,n)}</span>${mov}${aj.includes(b)?btn(`uniAjustar('${pid}','${b}')`,'Ajustar'):''}</div></div>`; };
   const pend=(DB.sales||[]).filter(s=>!s.perdido&&s.estadoDespacho!=='entregado'&&(s.items||[]).some(i=>i.productId===pid&&itemPendienteQty(s,i)>0));
-  const pendHtml=pend.length?`<div class="px-4 py-3 border-t border-clay-100 bg-clay-50"><div class="text-[11px] uppercase tracking-wide text-clay-400 mb-1.5">${ped?'Pedidos sin entregar con este producto (hay que comprarlo)':'Pedidos por preparar con este producto'}</div>${pend.slice(0,10).map(s=>{ const t={REQ:0,CA:0,CP:0}; (s.items||[]).forEach(i=>{ if(i.productId!==pid) return; let q=Math.max(0,itemPendienteQty(s,i)); const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(q,r[b]); t[b]+=x; q-=x; }); });
-      return `<button onclick="openSaleDetail('${s.id}')" class="w-full text-left flex items-center justify-between gap-2 py-1.5 text-sm hover:text-clay-900"><span class="min-w-0 truncate"><span class="text-clay-400">${s.fechaEntrega||s.fecha||''}${(s.pedidoNum||s.shopifyNum)?' · '+(s.pedidoNum||s.shopifyNum):''}</span> ${devNombreVenta(s)||'Cliente'}</span><span class="shrink-0 text-xs text-clay-600">${ped?('🛒 '+(t.REQ+t.CA+t.CP)+' a pedido'):BODEGAS.filter(b=>t[b]>0).map(b=>BODEGA_INFO[b].icon+' '+t[b]+' '+BODEGA_INFO[b].corto).join(' · ')}</span></button>`; }).join('')}${pend.length>10?`<div class="text-[11px] text-clay-400 mt-1">y ${pend.length-10} más…</div>`:''}</div>`:'';
+  const pendHtml=pend.length?`<div class="px-4 py-3 border-t border-clay-100 bg-clay-50"><div class="text-[11px] uppercase tracking-wide text-clay-400 mb-1.5">${ped?'Pedidos sin entregar con este producto (hay que comprarlo)':'Pedidos por preparar con este producto'}</div>${pend.slice(0,10).map(s=>{ const t={REQ:0,CA:0,CP:0,SIG:0}; (s.items||[]).forEach(i=>{ if(i.productId!==pid) return; let q=Math.max(0,itemPendienteQty(s,i)); const r=itemReparto(s,i); FUENTES.forEach(b=>{ const x=Math.min(q,r[b]); t[b]+=x; q-=x; }); });
+      return `<button onclick="openSaleDetail('${s.id}')" class="w-full text-left flex items-center justify-between gap-2 py-1.5 text-sm hover:text-clay-900"><span class="min-w-0 truncate"><span class="text-clay-400">${s.fechaEntrega||s.fecha||''}${(s.pedidoNum||s.shopifyNum)?' · '+(s.pedidoNum||s.shopifyNum):''}</span> ${devNombreVenta(s)||'Cliente'}</span><span class="shrink-0 text-xs text-clay-600">${ped?('🛒 '+(t.REQ+t.CA+t.CP)+' a pedido'):FUENTES.filter(b=>t[b]>0).map(b=>BODEGA_INFO[b].icon+' '+t[b]+' '+BODEGA_INFO[b].corto).join(' · ')}</span></button>`; }).join('')}${pend.length>10?`<div class="text-[11px] text-clay-400 mt-1">y ${pend.length-10} más…</div>`:''}</div>`:'';
   modal(`
     <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
       <div><h3 class="text-lg font-bold">${productName(p)}</h3><div class="text-xs text-clay-400">${p.sku||''} · Stock por bodega</div></div>
@@ -4921,8 +5106,9 @@ function openUniDetalle(pid){
     <div class="p-5">
       <div class="border border-clay-100 rounded-xl overflow-hidden">
         ${ped?`<div class="px-4 py-3 bg-clay-50 text-sm text-clay-700 flex items-start justify-between gap-3 flex-wrap"><div><b>🛒 Producto a pedido</b> (venta calzada o mandado a hacer): no lleva stock. Se compra o se fabrica cuando el cliente lo pide, así que no se avisa "sin stock" ni cuenta como faltante.</div>${canView('productos')?`<button onclick="openProduct('${pid}')" class="text-xs font-medium text-clay-700 bg-white border border-clay-200 hover:bg-clay-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap">Cambiar en la ficha</button>`:''}</div>`:''}
-        <div class="px-4 py-3 bg-sage-50 flex items-center justify-between"><span class="text-sm font-semibold text-sage-800">Stock total unificado</span><span class="text-2xl font-bold text-sage-700">${BODEGAS.reduce((a,b)=>a+Math.max(0,st[b]),0)}</span></div>
+        <div class="px-4 py-3 bg-sage-50 flex items-center justify-between"><span class="text-sm font-semibold text-sage-800">Stock total unificado</span><span class="text-2xl font-bold text-sage-700">${FUENTES.reduce((a,b)=>a+Math.max(0,st[b]),0)}</span></div>
         ${['CA','CP','REQ'].map(fila).join('')}
+        ${ped?'':`<div class="flex items-center justify-between gap-3 px-4 py-3 border-t border-clay-100 flex-wrap"><div class="min-w-0"><div class="font-medium text-sm">🚚 Bodega Sigma <span class="text-clay-400 font-normal">(proveedor)</span></div><div class="text-[11px] text-clay-400">Stock del proveedor que se suma a mano al total.</div></div><div class="flex items-center gap-2"><span class="text-xl font-bold w-10 text-right ${st.SIG>0?'text-clay-800':'text-clay-300'}">${Math.max(0,st.SIG)}</span>${btn(`openSigma('${pid}')`,sigmaEditable()?'Anotar':'Ver')}</div></div>`}
         ${pendHtml}
       </div>
     </div>
@@ -4934,14 +5120,15 @@ function openUniAjuste(){
   modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><div><h3 class="text-lg font-bold">Ajustar stock</h3><div class="text-xs text-clay-400">Elige el producto y la bodega que quieres corregir.</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
   <div class="p-5 space-y-4">
     <div><label class="text-sm font-medium">Producto</label><select id="unia_prod" onchange="uniAjStock()" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${productsForPicker(productName).map(p=>`<option value="${p.id}">${productName(p)}</option>`).join('')}</select></div>
-    <div><div class="text-sm font-medium mb-1.5">¿En qué bodega?</div><div id="unia_bods" class="grid sm:grid-cols-3 gap-2"></div></div>
+    <div><div class="text-sm font-medium mb-1.5">¿En qué bodega?</div><div id="unia_bods" class="grid grid-cols-2 gap-2"></div></div>
     <div class="text-[11px] text-clay-400">Se abre el ajuste de esa bodega, igual que en su módulo: queda registrado con su motivo.</div>
   </div>`);
   uniAjStock();
 }
 function uniAjStock(){
   const pid=(document.getElementById('unia_prod')||{}).value, box=document.getElementById('unia_bods'); if(!pid||!box) return;
-  box.innerHTML=uniBodegasAjustables().map(b=>`<button type="button" onclick="uniAjustar('${pid}','${b}')" class="text-left border border-clay-200 hover:bg-clay-50 rounded-xl p-3"><div class="text-sm font-semibold">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre}</div><div class="text-xs text-clay-500 mt-0.5">Stock actual: <b>${stockBodega(pid,b)}</b></div></button>`).join('');
+  const sig=(sigmaEditable() && !esAPedido(productById(pid))) ? ['SIG'] : [];   // Bodega Sigma: solo administradores y productos que llevan stock
+  box.innerHTML=uniBodegasAjustables().concat(sig).map(b=>`<button type="button" onclick="uniAjustar('${pid}','${b}')" class="text-left border ${b==='SIG'?'border-dashed border-sage-400':'border-clay-200'} hover:bg-clay-50 rounded-xl p-3"><div class="text-sm font-semibold">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre}</div><div class="text-xs text-clay-500 mt-0.5">${b==='SIG'?'Proveedor · anotado':'Stock actual'}: <b>${b==='SIG'?Math.max(0,stockSigma(pid)):stockBodega(pid,b)}</b></div></button>`).join('');
 }
 
 /* ===================== PRODUCTOS ===================== */
@@ -5349,10 +5536,13 @@ function confirmarRecepcion(){
   const uREQ=items.filter(i=>i.bodega!=='CA').reduce((a,i)=>a+i.cantidad,0);
   const destinoNota = (uCA>0&&uREQ>0)?' · '+uREQ+' u a Requinoa y '+uCA+' u a Casa Augusta':(uCA>0?' · a Casa Augusta':'');
   DB.purchases.push({id:uid('pu'),fecha:todayISO(),proveedor:r.proveedor,items,notas:'Recepción de '+r.numero+(hayDif?' (cantidades ajustadas)':'')+destinoNota+(nota?' · '+nota:'')});
+  // Lo recibido cubre primero los pedidos que estaban esperando a Bodega Sigma (salen ahora de la bodega donde se recibió).
+  const cubSig=items.reduce((a,i)=>a+sigmaCubrirConIngreso(i.productId,i.cantidad,i.bodega),0);
   const o=DB.orders.find(x=>x.id===r.id);
   if(o){ o.estado='recibido'; o.recibido={fecha:todayISO(), items:r.items.map(i=>({productId:i.productId,pedida:i.pedida,recibida:i.recibida,bodega:(i.bodega==='CA'?'CA':'REQ')})), nota}; }
   const ocId=r.id; RECV=null; save(); closeModal(); go('compras');
-  const resumenBodega=(uCA>0&&uREQ>0)?('\n'+uREQ+' u a Bodega Requinoa · '+uCA+' u a Casa Augusta.'):(uCA>0?('\nTodo a Casa Augusta ('+uCA+' u).'):('\nTodo a Bodega Requinoa ('+uREQ+' u).'));
+  const resumenBodega=((uCA>0&&uREQ>0)?('\n'+uREQ+' u a Bodega Requinoa · '+uCA+' u a Casa Augusta.'):(uCA>0?('\nTodo a Casa Augusta ('+uCA+' u).'):('\nTodo a Bodega Requinoa ('+uREQ+' u).')))+(cubSig?('\n'+cubSig+' u quedaron para pedidos que esperaban a Bodega Sigma.'):'');
+  if(cubSig) toastInfo('🚚 '+cubSig+' u recibidas quedaron para pedidos que esperaban a Bodega Sigma.', 9000);
   if(o&&!o.facturaId){
     if(confirm('✓ Recepción confirmada y sumada al stock.'+resumenBodega+'\n\n¿Quieres convertir la orden '+o.numero+' en una factura de compra ahora? Podrás confirmar el plazo, monto y adjuntar el PDF.')){
       convertirOCaFactura(ocId);
@@ -5416,7 +5606,7 @@ function onPuProd(ix,pid){syncPu();const p=productById(pid);EDITPU.items[ix].pro
 function addPuItem(){syncPu();const p=DB.products[0];EDITPU.items.push({productId:p.id,cantidad:1,costo:p.costo});renderPurchaseModal();}
 function removePuItem(ix){if(EDITPU.items.length<=1)return;syncPu();EDITPU.items.splice(ix,1);renderPurchaseModal();}
 function syncPu(){EDITPU.proveedor=val('pu_prov');EDITPU.fecha=val('pu_fecha');EDITPU.notas=val('pu_notas');}
-function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);}save();closeModal();go('compras');}
+function savePurchase(){syncPu();if(!EDITPU.proveedor){alert('Ingresa proveedor');return;}let cubSig=0;if(EDITPU.id){const ix=DB.purchases.findIndex(p=>p.id===EDITPU.id);DB.purchases[ix]=EDITPU;}else{EDITPU.id=uid('pu');DB.purchases.push(EDITPU);cubSig=(EDITPU.items||[]).reduce((a,i)=>a+sigmaCubrirConIngreso(i.productId,i.cantidad,(i.bodega==='CA'?'CA':'REQ')),0);}save();closeModal();go('compras');if(cubSig) toastInfo('🚚 '+cubSig+' u de esta compra quedaron para pedidos que esperaban a Bodega Sigma.', 9000);}
 function deletePurchase(id){
   const p=DB.purchases.find(x=>x.id===id); if(!p) return;
   confirmModal({titulo:'¿Eliminar esta compra?', mensaje:'Tendrás unos segundos para deshacerlo.', confirmar:'Eliminar', danger:true, icon:'🗑️', onConfirm:()=>{
@@ -7525,7 +7715,8 @@ function buildSaleFromShopifyOrder(o){
 }
 /* Reparto de un pedido web recién importado entre las bodegas.
    Shopify publica el stock TOTAL (las tres bodegas), así que un pedido puede traer unidades que no están en
-   Casa Augusta. Cada línea saca primero de Casa Augusta; lo que falte, de Casa Planta y después de Requinoa.
+   Casa Augusta. Cada línea saca primero de Casa Augusta; lo que falte, de Casa Planta y después de Requinoa;
+   y si tampoco alcanza, de Bodega Sigma (stock del proveedor anotado a mano: queda marcado para pedirlo).
    Si no queda stock en ninguna, el resto se anota en Casa Augusta (vendido sin stock, como siempre).
    Lo "a pedido" no sale de bodega. Se llama ANTES de agregar la venta a DB.sales (así el stock que se lee
    todavía no la incluye). Con "Solo Casa Augusta" no reparte: todo sale de Casa Augusta, como antes. */
@@ -7535,8 +7726,8 @@ function repartirPedidoWeb(venta){
   venta.items.forEach(it=>{
     if(itemAPedido(it)) return;
     const pid=it.productId; let falta=Math.max(0,+it.cantidad||0); if(!falta) return;
-    if(!libre[pid]){ libre[pid]={}; SHOP_ORDEN_BODEGAS.forEach(b=>{ libre[pid][b]=Math.max(0,stockBodega(pid,b)); }); }
-    const r={REQ:0,CA:0,CP:0};
+    if(!libre[pid]){ libre[pid]={}; SHOP_ORDEN_BODEGAS.forEach(b=>{ libre[pid][b]=Math.max(0,stockFuente(pid,b)); }); }
+    const r={REQ:0,CA:0,CP:0,SIG:0};
     SHOP_ORDEN_BODEGAS.forEach(b=>{ const q=Math.min(falta, libre[pid][b]); if(q>0){ r[b]=q; libre[pid][b]-=q; falta-=q; } });
     r.CA+=falta;
     setItemRep(venta, it, r);
@@ -7549,7 +7740,7 @@ function repartirPedidoWeb(venta){
 function shopBodegaAviso(s, soloTexto){
   const t=saleReparto(s), us=SHOP_ORDEN_BODEGAS.filter(b=>t[b]>0);
   if(!us.length || (us.length===1 && us[0]==='CA')) return '';
-  const tx = us.length>1 ? ('🔀 Dividido: '+us.map(b=>BODEGA_INFO[b].corto+' '+t[b]).join(' · ')) : (BODEGA_INFO[us[0]].icon+' Sale de '+BODEGA_INFO[us[0]].nombre);
+  const tx = us.length>1 ? ('🔀 Dividido: '+us.map(b=>BODEGA_INFO[b].corto+' '+t[b]).join(' · ')) : (us[0]==='SIG' ? '🚚 Pedir a Bodega Sigma' : (BODEGA_INFO[us[0]].icon+' Sale de '+BODEGA_INFO[us[0]].nombre));
   return soloTexto ? tx : pill(tx,'amber');
 }
 // Texto para el aviso al importar: qué pedidos hay que preparar fuera de Casa Augusta ('' si ninguno).
@@ -8267,37 +8458,62 @@ function limpiarVinculosShopify(){ if(!confirm('¿Borrar TODAS las equivalencias
 /* --------- STOCK DE LA PLATAFORMA → SHOPIFY ---------
    La plataforma es la matriz. Aquí se calcula, por cada SKU de Shopify vinculado, cuánto stock debe quedar
    PUBLICADO en Shopify = max(0, stock total unificado − colchón). El total unificado suma lo disponible de las
-   tres bodegas (Casa Augusta + Casa Planta + Bodega Requinoa), igual que el módulo "Stock unificado".
+   tres bodegas (Casa Augusta + Casa Planta + Bodega Requinoa) más lo anotado en Bodega Sigma (proveedor),
+   igual que el módulo "Stock unificado".
    Si se elige "Solo Casa Augusta" (DB.shopifyStockFuente==='CA') vuelve a ser max(0, stockCA − colchón), como antes.
    El envío a Shopify lo hace el puente (Cloudflare Worker): botón "Sincronizar ahora" o automático. */
 function shopifyStockBuffer(){ const b=Number(DB.shopifyStockBuffer); return isNaN(b)?1:Math.max(0,b); }
 function setShopifyStockBuffer(val){ let n=parseInt(val,10); if(isNaN(n)||n<0) n=0; DB.shopifyStockBuffer=n; save(); renderCAShopify(); }
+/* Colchón SELECTIVO: el colchón se aplica producto por producto. Por defecto lo tienen todos los productos
+   vinculados (como siempre); en DB.shopifySinColchon van los SKU a los que NO se aplica, y de esos se publica
+   todo su stock. Se marca/desmarca en la columna "Colchón" de la pestaña Stock → Shopify. */
+function shopifyColchonAplica(sku){ return !((DB.shopifySinColchon||{})[sku]); }
+function setShopifyColchon(sku, on){ if(!DB.shopifySinColchon) DB.shopifySinColchon={}; if(on) delete DB.shopifySinColchon[sku]; else DB.shopifySinColchon[sku]=1; }
+// Vuelve a dibujar la pestaña manteniendo la posición de la tabla.
+function shopStockRepintar(){ const sc=document.getElementById('shopStockScroll'), y=sc?sc.scrollTop:0; renderCAShopify(); const sc2=document.getElementById('shopStockScroll'); if(sc2) sc2.scrollTop=y; }
+function toggleShopifyColchon(sku){ setShopifyColchon(sku, !shopifyColchonAplica(sku)); save(); shopStockRepintar(); }
+// "todos" / "ninguno": aplica o quita el colchón a todos los productos vinculados (con Deshacer).
+function setShopifyColchonTodos(on){
+  const antes=JSON.stringify(DB.shopifySinColchon||{}), nuevo={};
+  if(!on) shopifyStockRows().forEach(r=>{ nuevo[r.sku]=1; });
+  if(JSON.stringify(nuevo)===antes) return;
+  DB.shopifySinColchon=nuevo; save(); shopStockRepintar();
+  toastUndo(on?'Colchón aplicado a todos los productos':'Colchón quitado a todos los productos', ()=>{ DB.shopifySinColchon=JSON.parse(antes); save(); if(CURRENT==='ca_shopify') shopStockRepintar(); });
+}
 // Qué stock se publica en Shopify: 'total' = las tres bodegas sumadas (por defecto) · 'CA' = solo Casa Augusta (como antes).
 function shopifyStockFuente(){ return (DB && DB.shopifyStockFuente==='CA') ? 'CA' : 'total'; }
 function setShopifyStockFuente(v){ DB.shopifyStockFuente=(v==='CA')?'CA':'total'; save(); renderCAShopify(); }
-// Orden en que un pedido web saca el stock: primero Casa Augusta, después Casa Planta y al final Requinoa.
-const SHOP_ORDEN_BODEGAS=['CA','CP','REQ'];
+// Orden en que un pedido web saca el stock: primero Casa Augusta, después Casa Planta y Requinoa, y al final
+// Bodega Sigma (stock del proveedor anotado a mano).
+const SHOP_ORDEN_BODEGAS=['CA','CP','REQ','SIG'];
 // Filas de stock: solo variantes de Shopify VINCULADAS a un producto de la plataforma.
-//   st       stock real de cada bodega · total = stock unificado (una bodega en negativo no le resta a las otras)
+//   st       stock real de cada bodega (y lo anotado en Bodega Sigma) · total = stock unificado (una bodega en negativo no le resta a las otras)
 //   compr    comprometido: unidades de pedidos AÚN POR ENTREGAR que se vendieron desde una bodega sin stock. Lo más
 //            probable es que salgan de otra bodega (o que lo que hay en otra bodega sea justo la compra para ese
-//            pedido), así que no se ofrecen en la web: red de seguridad contra la sobreventa.
+//            pedido), así que no se ofrecen en la web: red de seguridad contra la sobreventa. Lo mismo con las
+//            unidades que esperan a Bodega Sigma: si aparece stock propio de ese producto, primero es para ellas.
 //   base     lo publicable antes del colchón · objetivo = lo que queda "disponible online" en Shopify
+//   colchon  si a este producto se le aplica el colchón · buffer = unidades que se le reservan (0 si no se le aplica)
 function shopifyStockRows(){ const buf=shopifyStockBuffer(), uni=shopifyStockFuente()==='total', pend=uni?pendientesPorBodega(true):null;
   return SHOPIFY_CATALOG.map(v=>{ const p=productByShopifySku(v.sku); if(!p) return null;
-    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id)};
-    const total=BODEGAS.reduce((a,b)=>a+Math.max(0,st[b]),0);
-    const compr=uni ? BODEGAS.reduce((a,b)=>a+(st[b]<0 ? Math.min(-st[b], pend[b][p.id]||0) : 0),0) : 0;
+    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id), SIG:stockSigma(p.id)};
+    const total=FUENTES.reduce((a,b)=>a+Math.max(0,st[b]),0);
+    const propio=BODEGAS.reduce((a,b)=>a+Math.max(0,st[b]),0);
+    const comprFis=uni ? BODEGAS.reduce((a,b)=>a+(st[b]<0 ? Math.min(-st[b], pend[b][p.id]||0) : 0),0) : 0;
+    const comprSig=uni ? Math.min(pend.SIG[p.id]||0, Math.max(0,propio-comprFis)) : 0;
+    const compr=comprFis+comprSig;
     const base=uni ? Math.max(0,total-compr) : st.CA;
-    const objetivo=Math.max(0, base-buf);
-    return {sku:v.sku, producto:v.producto, talla:v.talla, prod:p, st, stockCA:st.CA, total, compr, base, buffer:buf, objetivo};
+    const colchon=shopifyColchonAplica(v.sku), bufFila=colchon?buf:0;
+    const objetivo=Math.max(0, base-bufFila);
+    return {sku:v.sku, producto:v.producto, talla:v.talla, prod:p, st, stockCA:st.CA, total, compr, base, buffer:bufFila, colchon, objetivo};
   }).filter(Boolean).sort((a,b)=>a.producto.localeCompare(b.producto,'es',{numeric:true}));
 }
 // Texto que el usuario copia y me pega para que yo empuje a Shopify.
 function copyShopifyStockList(){ const rows=shopifyStockRows(); if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía. Vincula primero en la pestaña "Vincular SKU".'); return; }
   const fecha=new Date().toISOString().slice(0,10);
   const lineas=rows.map(r=>`${r.sku}\t${r.objetivo}`).join('\n');
-  const txt=`Sincronizar stock ${shopifyStockFuente()==='total'?'total (todas las bodegas)':'Casa Augusta'} → Shopify (colchón ${shopifyStockBuffer()} u.) — ${fecha}\nSKU\tDISPONIBLE_ONLINE\n${lineas}`;
+  const conC=rows.filter(r=>r.colchon).length;
+  const txt=`Sincronizar stock ${shopifyStockFuente()==='total'?'total (todas las bodegas)':'Casa Augusta'} → Shopify (colchón ${shopifyStockBuffer()} u.${conC<rows.length?' en '+conC+' de '+rows.length+' productos':''}) — ${fecha}\nSKU\tDISPONIBLE_ONLINE\n${lineas}`;
   const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Lista copiada. Pégamela en el chat y dime "sincroniza el stock a Shopify".'); };
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
 }
@@ -8338,10 +8554,12 @@ let SHOP_SYNC_RUNNING=false;
 async function sincronizarStockShopify(){
   if(SHOP_SYNC_RUNNING) return;
   if(!shopSyncConfigured()){ abrirConfigSync(); return; }
+  if(shopEquipoDesactualizado()){ toastInfo('⚠️ Otro equipo ya publica el stock con una versión más nueva de la plataforma. Actualiza esta pantalla antes de sincronizar.', 9000); try{ checkForUpdate(true); }catch(_){} return; }
   const rows=shopifyStockRows();
   if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía.'); return; }
   const items=rows.map(r=>({sku:r.sku, qty:r.objetivo})), sig=shopSigDe(rows);
-  if(!confirm('¿Enviar el stock de '+items.length+' productos a Shopify?\n\nSe fijará el "disponible online" ('+(shopifyStockFuente()==='total'?'stock total de las bodegas':'stock de Casa Augusta')+' menos el colchón de '+shopifyStockBuffer()+') en tu tienda.')) return;
+  const conC=rows.filter(r=>r.colchon).length;
+  if(!confirm('¿Enviar el stock de '+items.length+' productos a Shopify?\n\nSe fijará el "disponible online" ('+(shopifyStockFuente()==='total'?'stock total de las bodegas':'stock de Casa Augusta')+' menos el colchón de '+shopifyStockBuffer()+(conC<rows.length?(' en los '+conC+' productos que lo tienen marcado'):'')+') en tu tienda.')) return;
   SHOP_SYNC_RUNNING=true; renderCAShopify();
   try{
     const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
@@ -8387,6 +8605,7 @@ let BUZON_AVISADOS={};
 // automáticamente después de importar una venta del buzón. La manual sigue igual.
 async function sincronizarStockShopifyAuto(){
   if(!shopSyncConfigured()) return false;
+  if(shopEquipoDesactualizado()) return false;   // esta pantalla quedó con una versión antigua: no publica
   const rows=shopifyStockRows(); if(!rows.length) return false;
   const items=rows.map(r=>({sku:r.sku, qty:r.objetivo})), sig=shopSigDe(rows);
   try{
@@ -8406,6 +8625,15 @@ async function sincronizarStockShopifyAuto(){
    cuando llegan datos nuevos de la nube: si nadie lo envió todavía, lo envía este equipo. */
 let _shopPushTimer=null, _shopPushedSig=null;
 let _shopPushAt=0;   // cuándo está programada la próxima revisión
+// Versión de la FÓRMULA de lo que se publica en Shopify. Hay que subirla cada vez que cambie QUÉ se publica
+// (1 = total unificado · 2 = + Bodega Sigma · 3 = + colchón por producto). Mientras conviven equipos con versiones
+// distintas de la plataforma, manda siempre el cálculo más nuevo: el equipo nuevo vuelve a publicar si uno antiguo
+// envió otra cosa, y un equipo que quedó antiguo no publica encima de uno más nuevo.
+const SHOP_CALC_VER=3;
+// Fórmula del último envío exitoso (0 = lo hizo una versión anterior, que no la anota).
+function shopCalcVerUltimo(){ return (DB && DB.shopifyStockCalcFecha && DB.shopifyStockCalcFecha===DB.shopifyStockSyncFecha) ? (+DB.shopifyStockCalcVer||0) : 0; }
+// ¿Otro equipo ya publica con una fórmula más nueva que la de esta versión? Entonces este equipo no publica: hay que actualizarlo.
+function shopEquipoDesactualizado(){ return shopCalcVerUltimo()>SHOP_CALC_VER; }
 // "Firma" del stock objetivo: sku:cantidad|sku:cantidad… Si no cambia, no se reenvía.
 function shopSigDe(rows){ return rows.map(r=>r.sku+':'+r.objetivo).join('|'); }
 function shopStockSig(){ try{ return shopSigDe(shopifyStockRows()); }catch(_){ return null; } }
@@ -8414,7 +8642,7 @@ function shopStockSig(){ try{ return shopSigDe(shopifyStockRows()); }catch(_){ r
 // (que solo manda Casa Augusta), las fechas no coinciden y se considera que hay que volver a enviar.
 function shopSigEnviada(){ return (DB && DB.shopifyStockSyncSig!=null && DB.shopifyStockSyncSigFecha===DB.shopifyStockSyncFecha) ? DB.shopifyStockSyncSig : null; }
 // Anota un envío exitoso (no guarda: quien llama hace save()).
-function shopMarcarEnviado(sig){ const f=new Date().toISOString(); DB.shopifyStockSyncFecha=f; DB.shopifyStockSyncSigFecha=f; DB.shopifyStockSyncSig=sig; _shopPushedSig=sig; }
+function shopMarcarEnviado(sig){ const f=new Date().toISOString(); DB.shopifyStockSyncFecha=f; DB.shopifyStockSyncSigFecha=f; DB.shopifyStockSyncSig=sig; DB.shopifyStockCalcVer=SHOP_CALC_VER; DB.shopifyStockCalcFecha=f; _shopPushedSig=sig; }
 // Programa una revisión con retardo. Desde save() (sin parámetro) espera 15 s y agrupa cambios seguidos.
 // Con ms (datos que llegan de otro equipo) no atrasa una revisión que ya estaba programada para antes.
 function programarPushStockShopify(ms){
@@ -8429,8 +8657,13 @@ function programarPushStockShopify(ms){
 // enviado por otro equipo. (La doble condición evita reenvíos inútiles y que dos equipos se pisen.)
 async function pushStockShopifySiCambio(){
   if(!shopSyncConfigured() || SHOP_SYNC_RUNNING) return;
-  const sig=shopStockSig();
-  if(sig===null || sig===_shopPushedSig || sig===shopSigEnviada()) return; // sin cambios reales de stock: no molestar a Shopify
+  if(shopEquipoDesactualizado()) return;   // otro equipo publica con una versión más nueva: este no la pisa
+  const sig=shopStockSig(); if(sig===null) return;
+  const enviada=shopSigEnviada();
+  // Si el último envío lo hizo una versión ANTERIOR y no coincide con lo que corresponde publicar, se vuelve a enviar
+  // aunque este equipo ya lo hubiera enviado antes (el equipo antiguo no insiste, así que no hay ida y vuelta).
+  const pisado = shopCalcVerUltimo()<SHOP_CALC_VER && sig!==enviada;
+  if(!pisado && (sig===_shopPushedSig || sig===enviada)) return; // sin cambios reales de stock: no molestar a Shopify
   await sincronizarStockShopifyAuto();
 }
 // Revisa el buzón e importa las ventas nuevas. silent=true por defecto (ciclo automático).
@@ -8512,14 +8745,16 @@ function renderShopStock(){
   const uni=shopifyStockFuente()==='total';
   const totalObjetivo=rows.reduce((a,r)=>a+r.objetivo,0);
   const reservado=rows.reduce((a,r)=>a+Math.max(0,r.base),0)-totalObjetivo;   // lo que hay pero no se publica por el colchón
-  const soloCA=rows.reduce((a,r)=>a+Math.max(0,r.stockCA-buf),0);              // lo que se publicaría solo con Casa Augusta
+  const soloCA=rows.reduce((a,r)=>a+Math.max(0,r.stockCA-r.buffer),0);         // lo que se publicaría solo con Casa Augusta
+  const conColchon=rows.filter(r=>r.colchon).length;                             // productos a los que se les aplica el colchón
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
       <div class="text-2xl leading-none">📦</div>
       <div class="text-sm text-clay-700 leading-snug">
         <div class="font-semibold text-clay-800 mb-0.5">${uni?'El stock total de tus bodegas manda a Shopify':'El stock de Casa Augusta manda a Shopify'}</div>
-        Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = ${uni?'stock <b>total unificado</b> (Casa Augusta + Casa Planta + Bodega Requinoa)':'stock de Casa Augusta'} <b>menos el colchón</b> de seguridad.
-        ${uni?`<div class="text-xs text-clay-600 mt-1.5">🏠 → 🌿 <b>De dónde sale cada pedido web:</b> primero de Casa Augusta; si no alcanza, de Casa Planta y después de Requinoa. El pedido queda marcado con la bodega donde hay que prepararlo, o como <b>dividido</b> si sale de más de una.</div>`:''}
+        Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = ${uni?'stock <b>total unificado</b> (Casa Augusta + Casa Planta + Bodega Requinoa, más lo que anotes en Bodega Sigma)':'stock de Casa Augusta'} <b>menos el colchón</b> de seguridad.
+        <div class="text-xs text-clay-600 mt-1.5">🛟 <b>El colchón se elige producto por producto:</b> en la columna <b>Colchón</b> marcas a cuáles se les reserva; a los desmarcados se les publica todo su stock.</div>
+        ${uni?`<div class="text-xs text-clay-600 mt-1.5">🏠 → 🌿 <b>De dónde sale cada pedido web:</b> primero de Casa Augusta; si no alcanza, de Casa Planta y después de Requinoa; y al final de Bodega Sigma (proveedor). El pedido queda marcado con la bodega donde hay que prepararlo, o como <b>dividido</b> si sale de más de una.</div>`:''}
         <div class="text-xs text-clay-500 mt-1.5">Con el botón <b>“Sincronizar ahora”</b> se envía este stock a Shopify al instante (fija el "disponible online" de cada producto, sin pisar cambios recientes).</div>
         <div class="text-xs text-sage-700 mt-1.5">🔄 <b>Círculo automático activo:</b> cada venta nueva de Shopify entra sola a la plataforma (mientras la tienes abierta), descuenta el stock y devuelve el stock actualizado a Shopify. Con <b>“Revisar ventas Shopify”</b> lo fuerzas al instante.</div>
         <div class="text-xs text-sage-700 mt-1.5">⬆️ <b>Y al revés también:</b> cuando haces una venta o un ajuste en la plataforma, el stock se envía solo a Shopify en unos ~15 segundos, sin que tengas que apretar nada. El botón <b>“Sincronizar ahora”</b> sigue disponible por si quieres forzarlo.</div>
@@ -8529,7 +8764,7 @@ function renderShopStock(){
   const stats=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Productos vinculados',vinc,'de '+total+(faltan?(' · faltan '+faltan):''),faltan?'text-amber-600':'text-sage-700')}
     ${statCard('A publicar online',totalObjetivo,uni?('unidades · solo Casa Augusta: '+soloCA):'unidades','text-blue-700')}
-    ${statCard('Reservado (colchón)',reservado,buf+' u. por producto','text-clay-600')}
+    ${statCard('Reservado (colchón)',reservado,buf+' u. · '+(conColchon===vinc?'en todos los productos':('en '+conColchon+' de '+vinc+' productos')),'text-clay-600')}
   </div>`;
   const cfg=shopSyncConfigured();
   const ult=DB.shopifyStockSyncFecha?('Última: '+new Date(DB.shopifyStockSyncFecha).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):'';
@@ -8547,7 +8782,7 @@ function renderShopStock(){
     </label>
     <label class="text-sm text-clay-600 flex items-center gap-2">Colchón de seguridad
       <input type="number" min="0" value="${buf}" onchange="setShopifyStockBuffer(this.value)" class="border border-clay-200 rounded-xl px-2.5 py-1.5 text-sm w-20 text-center tabular-nums">
-      <span class="text-xs text-clay-400">u. por producto</span>
+      <span class="text-xs text-clay-400">u. por producto marcado</span>
     </label>
     <div class="flex flex-wrap items-center gap-2 ml-auto">
       ${botonSync}
@@ -8561,14 +8796,16 @@ function renderShopStock(){
   const pillObj=(r)=>{ if(r.base<=0) return pill('Agotado online','red'); if(r.objetivo===0) return pill('Solo colchón','amber'); return pill(r.objetivo+' disponible','green'); };
   // Dónde está el stock de un producto (solo las bodegas que tienen) y, si aplica, lo comprometido en pedidos.
   const donde=(r)=>{ const us=SHOP_ORDEN_BODEGAS.filter(b=>r.st[b]>0); return us.length ? us.map(b=>BODEGA_INFO[b].corto+' <b class="tabular-nums text-clay-700">'+r.st[b]+'</b>').join(' · ') : '<span class="text-clay-400">sin stock</span>'; };
-  const comprTxt=(r)=> r.compr ? `<div class="text-[11px] text-amber-700 whitespace-nowrap" title="Unidades de pedidos por entregar que se vendieron desde una bodega sin stock: saldrán de otra bodega, por eso no se publican.">−${r.compr} comprometida${r.compr!==1?'s':''} en pedidos</div>` : '';
+  const comprTxt=(r)=> r.compr ? `<div class="text-[11px] text-amber-700 whitespace-nowrap" title="Unidades de pedidos por entregar que se vendieron desde una bodega sin stock (o que esperaban al proveedor): saldrán del stock que hay, por eso no se publican.">−${r.compr} comprometida${r.compr!==1?'s':''} en pedidos</div>` : '';
   const stockNum=(r)=> uni ? r.total : r.stockCA;
+  // Casilla del colchón de cada producto: marcada = se le reservan las unidades del colchón; desmarcada = se publica todo.
+  const colchonChk=(r,movil)=>`<label class="inline-flex items-center gap-1.5 cursor-pointer select-none" title="Marcado: a este producto se le reservan ${buf} u (no se publican). Desmarcado: se publica todo su stock."><input type="checkbox" ${r.colchon?'checked':''} onchange="toggleShopifyColchon('${r.sku}')" class="w-4 h-4 accent-sage-600 cursor-pointer"><span class="tabular-nums text-xs whitespace-nowrap ${r.colchon?'text-clay-500':'text-clay-300'}">${r.colchon?((movil?'colchón ':'')+'−'+r.buffer):'sin colchón'}</span></label>`;
   const filaDesktop=(r)=>`<tr class="border-t border-clay-100">
     <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku}</div></td>
     <td class="px-4 py-3 text-center text-clay-500">${r.talla}</td>
     ${uni?`<td class="px-4 py-3 text-xs text-clay-500 whitespace-nowrap">${donde(r)}${comprTxt(r)}</td>`:''}
     <td class="px-4 py-3 text-right tabular-nums font-semibold ${r.base<=0?'text-red-600':'text-clay-800'}">${stockNum(r)}</td>
-    <td class="px-4 py-3 text-center tabular-nums text-clay-400">−${r.buffer}</td>
+    <td class="px-4 py-3 text-center">${colchonChk(r)}</td>
     <td class="px-4 py-3 text-right tabular-nums font-bold text-blue-700">${r.objetivo}</td>
     <td class="px-4 py-3 text-center">${pillObj(r)}</td>
   </tr>`;
@@ -8577,13 +8814,13 @@ function renderShopStock(){
       <div class="min-w-0"><div class="font-bold truncate">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku} · Talla ${r.talla}</div></div>
       <div class="text-right shrink-0"><div class="text-lg font-bold leading-none text-blue-700 tabular-nums">${r.objetivo}</div><div class="text-[11px] text-clay-400">online</div></div>
     </div>
-    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-clay-500"><span>${uni?'Total':'Casa Augusta'}: <b class="tabular-nums ${r.base<=0?'text-red-600':'text-clay-700'}">${stockNum(r)}</b> − colchón ${r.buffer}</span>${pillObj(r)}</div>
+    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-clay-500"><span>${uni?'Total':'Casa Augusta'}: <b class="tabular-nums ${r.base<=0?'text-red-600':'text-clay-700'}">${stockNum(r)}</b></span>${colchonChk(r,true)}${pillObj(r)}</div>
     ${uni?`<div class="mt-1 text-[11px] text-clay-500">${donde(r)}${comprTxt(r)}</div>`:''}
   </div>`;
   const tabla=`<div class="card overflow-hidden">
-    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm ${uni?'min-w-[860px]':'min-w-[720px]'}">
+    <div id="shopStockScroll" class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm ${uni?'min-w-[860px]':'min-w-[720px]'}">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
-        <th class="text-left px-4 py-3">Producto</th><th class="text-center px-4 py-3">Talla</th>${uni?'<th class="text-left px-4 py-3">Dónde está</th>':''}<th class="text-right px-4 py-3">${uni?'Stock total':'Stock Casa Augusta'}</th><th class="text-center px-4 py-3">Colchón</th><th class="text-right px-4 py-3">Disponible online</th><th class="text-center px-4 py-3">Estado</th>
+        <th class="text-left px-4 py-3">Producto</th><th class="text-center px-4 py-3">Talla</th>${uni?'<th class="text-left px-4 py-3">Dónde está</th>':''}<th class="text-right px-4 py-3">${uni?'Stock total':'Stock Casa Augusta'}</th><th class="text-center px-4 py-3">Colchón<div class="normal-case font-normal text-[10px] text-clay-400 whitespace-nowrap"><button type="button" onclick="setShopifyColchonTodos(true)" class="underline hover:text-clay-700" title="Aplicar el colchón a todos los productos">todos</button> · <button type="button" onclick="setShopifyColchonTodos(false)" class="underline hover:text-clay-700" title="Quitar el colchón a todos los productos">ninguno</button></div></th><th class="text-right px-4 py-3">Disponible online</th><th class="text-center px-4 py-3">Estado</th>
       </tr></thead><tbody>${rows.map(filaDesktop).join('')}</tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${rows.map(filaMobile).join('')}</div>
   </div>`;
