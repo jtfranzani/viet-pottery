@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.11.23-190';
+const APP_VERSION = '2026.11.23-191';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -530,6 +530,7 @@ async function bootData(){
   // Se GUARDA de inmediato: si no, la primera sincronización con la nube trae los datos antiguos y deshace el cambio.
   if(migrarMaceterosV3()) save();
   if(!DB.shopifyMap) DB.shopifyMap={}; // Vinculación: { skuShopify : idProductoPlataforma }. La plataforma es la matriz.
+  try{ shopifyCatalogAplicar(); }catch(_){}   // catálogo de Shopify traído con "Actualizar desde Shopify" (productos nuevos y precios)
   if(DB.shopifyStockBuffer==null) DB.shopifyStockBuffer=1; // Colchón: unidades que se reservan y NO se publican en Shopify (protege la venta presencial).
   if(DB.shopifySyncUrl==null) DB.shopifySyncUrl=''; // URL del puente (Cloudflare Worker) que escribe el stock en Shopify.
   if(DB.shopifySyncKey==null) DB.shopifySyncKey=''; // Clave compartida con el puente (se guarda en Firestore, no en el HTML público).
@@ -941,7 +942,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol, mods:userMods(u)};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; if(!DB.transfers)DB.transfers=[]; if(!DB.caReturns)DB.caReturns=[]; if(!DB.cpStock)DB.cpStock={}; if(!DB.cpSales)DB.cpSales=[]; if(!DB.cpMovs)DB.cpMovs=[]; if(!DB.shopifyDescartados)DB.shopifyDescartados=[]; migrarCuentas(); if(migrarMaceterosV3()) save(); refreshSessionPerms(); rerender(); try{ programarPushStockShopify(45000+Math.random()*20000); }catch(_){} });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; if(!DB.transfers)DB.transfers=[]; if(!DB.caReturns)DB.caReturns=[]; if(!DB.cpStock)DB.cpStock={}; if(!DB.cpSales)DB.cpSales=[]; if(!DB.cpMovs)DB.cpMovs=[]; if(!DB.shopifyDescartados)DB.shopifyDescartados=[]; try{ shopifyCatalogAplicar(); }catch(_){} migrarCuentas(); if(migrarMaceterosV3()) save(); refreshSessionPerms(); rerender(); try{ programarPushStockShopify(45000+Math.random()*20000); }catch(_){} });
     showApp();
     iniciarBuzonShopify(); // revisa el buzón de ventas de Shopify cada 60 s mientras la app está abierta
   });
@@ -7554,6 +7555,77 @@ const SHOPIFY_CATALOG = [
 ];
 // Fecha de la última sincronización de precios desde Shopify (se muestra en la pantalla de Vinculación).
 const SHOPIFY_PRECIOS_FECHA = '10-09-2026';
+/* --------- CATÁLOGO DE SHOPIFY AL DÍA ---------
+   La lista de arriba es una "foto" de Shopify que viene dentro de la plataforma. Para no depender de esa foto,
+   el botón "Actualizar desde Shopify" (pestaña Vincular SKU) lee el catálogo público de la tienda
+   (productos, variantes, SKU y precios; solo lectura) y lo guarda en DB.shopifyCatalogo, compartido entre equipos.
+   shopifyCatalogAplicar() arma la lista en uso: la foto de base + lo que trajo la tienda
+   (productos nuevos, nombres y precios actuales). SHOPIFY_CATALOG se actualiza "en sitio" para que
+   todo el resto de la plataforma (vínculos, stock, pedidos) lo use sin cambios. */
+const SHOPIFY_TIENDA_URL = 'https://vietpottery.cl';
+const SHOPIFY_CATALOG_BASE = SHOPIFY_CATALOG.map(v=>({...v}));
+function shopifyCatalogAplicar(){
+  const c=(typeof DB!=='undefined' && DB) ? DB.shopifyCatalogo : null, items=(c && Array.isArray(c.items)) ? c.items : [];
+  const vivos={}, enBase={}; items.forEach(v=>{ if(v && v.sku) vivos[v.sku]=v; }); SHOPIFY_CATALOG_BASE.forEach(b=>{ enBase[b.sku]=1; });
+  // Lo que ya venía en la plataforma conserva su talla; el nombre y el precio pasan a ser los actuales de Shopify.
+  const out=SHOPIFY_CATALOG_BASE.map(b=>{ const v=vivos[b.sku]; return v ? {...b, producto:(v.producto||b.producto), precio:(+v.precio||b.precio)} : {...b}; });
+  // Variantes nuevas de la tienda (con SKU) que no estaban en la foto.
+  items.forEach(v=>{ if(v && v.sku && !enBase[v.sku]) out.push({producto:String(v.producto||''), sku:v.sku, talla:(v.talla||'U'), precio:(+v.precio||0), nuevo:true}); });
+  if(items.length) out.sort((a,b)=>String(a.producto).localeCompare(String(b.producto),'es',{sensitivity:'base',numeric:true}));
+  SHOPIFY_CATALOG.length=0; out.forEach(v=>SHOPIFY_CATALOG.push(v));
+}
+// Fecha (texto) de la última vez que se trajo el catálogo desde Shopify; si nunca, la de la foto que viene en la plataforma.
+function shopifyCatalogFecha(){ const f=DB && DB.shopifyCatalogo && DB.shopifyCatalogo.fecha; if(!f) return SHOPIFY_PRECIOS_FECHA; const d=new Date(f), dd=n=>String(n).padStart(2,'0'); return isNaN(d) ? SHOPIFY_PRECIOS_FECHA : (dd(d.getDate())+'-'+dd(d.getMonth()+1)+'-'+d.getFullYear()+' '+dd(d.getHours())+':'+dd(d.getMinutes())); }
+// Talla corta de una variante: "M (diámetro 46 cm…)" → M · "Bali Tall (…)" → Tall · "77 cm x 29 cm" → la del SKU (…-L) o U (única).
+function shopTallaDe(titulo, sku){
+  const t=String(titulo||'').trim(), m=t.match(/^([A-Za-zÁÉÍÓÚáéíóúÑñ ]{1,14}?)\s*(\(|$)/);
+  if(m && m[1].trim() && !/^di[aá]metro/i.test(t) && !/^default title$/i.test(t)) return m[1].trim().replace(/^bali\s+/i,'');
+  const u=String(sku||'').split('-').pop().toUpperCase();
+  return /^(XS|S|M|L|XL|XXL|U|T|ME)$/.test(u) ? u : 'U';
+}
+// Trae el catálogo actual de la tienda (solo lectura) y lo deja guardado. silent=true: sin mensajes si no hay novedades.
+let SHOP_CAT_RUNNING=false, SHOP_CAT_AUTO=false;
+async function actualizarCatalogoShopify(silent){
+  if(SHOP_CAT_RUNNING) return false; SHOP_CAT_RUNNING=true;
+  try{ if(!silent && CURRENT==='ca_shopify') renderCAShopify(); }catch(_){}
+  let resultado=false, cambio=false;
+  try{
+    const items=[], sinSku=[], vistos={}; let pagina=1;
+    while(pagina<=10){
+      const res=await fetch(SHOPIFY_TIENDA_URL+'/products.json?limit=250&page='+pagina, {cache:'no-store'});
+      if(!res.ok) throw new Error('La tienda respondió '+res.status);
+      const data=await res.json(), prods=(data && Array.isArray(data.products)) ? data.products : [];
+      prods.forEach(p=>(p.variants||[]).forEach(v=>{
+        const sku=String(v.sku||'').trim(), precio=Math.round(parseFloat(v.price)||0), prod=String(p.title||'').trim();
+        if(!sku){ sinSku.push({producto:prod, variante:String(v.title||'').trim(), precio}); return; }
+        if(vistos[sku]) return; vistos[sku]=1;
+        items.push({producto:prod, sku, talla:shopTallaDe(v.title, sku), precio});
+      }));
+      if(prods.length<250) break; pagina++;
+    }
+    if(!items.length) throw new Error('La tienda no devolvió productos');
+    const antes={}; SHOPIFY_CATALOG.forEach(v=>{ antes[v.sku]=v; });
+    const nuevos=items.filter(v=>!antes[v.sku]), precios=items.filter(v=>antes[v.sku] && Number(antes[v.sku].precio)!==Number(v.precio)).length;
+    const previo=DB.shopifyCatalogo||{}; cambio=JSON.stringify([previo.items||[], previo.sinSku||[]])!==JSON.stringify([items, sinSku]);
+    // En automático solo se guarda (y se redibuja) si la tienda cambió algo; con el botón, siempre (queda la fecha de la revisión).
+    if(cambio || !silent){ DB.shopifyCatalogo={fecha:new Date().toISOString(), items, sinSku}; shopifyCatalogAplicar(); save(); }
+    resultado=true;
+    if(!silent || nuevos.length){
+      const partes=[];
+      partes.push(nuevos.length ? (nuevos.length+' producto'+(nuevos.length!==1?'s':'')+' nuevo'+(nuevos.length!==1?'s':'')+' por vincular ('+nuevos.slice(0,4).map(v=>v.producto+' '+v.talla).join(', ')+(nuevos.length>4?'…':'')+')') : 'sin productos nuevos');
+      if(precios) partes.push(precios+' precio'+(precios!==1?'s':'')+' cambi'+(precios!==1?'aron':'ó')+' en Shopify');
+      if(sinSku.length) partes.push(sinSku.length+' sin SKU en Shopify');
+      toastInfo('🔄 Catálogo de Shopify al día: '+partes.join(' · ')+'.', 9000);
+    }
+  }catch(e){
+    if(!silent) toastInfo('⚠️ No se pudo leer el catálogo de la tienda ('+((e&&e.message)||'sin conexión')+'). Inténtalo de nuevo.', 7000);
+  }finally{
+    SHOP_CAT_RUNNING=false;
+    // Se redibuja sin sacar al usuario del buscador (por si estaba escribiendo cuando llegó la respuesta).
+    try{ if(CURRENT==='ca_shopify' && (!silent || cambio)){ const enBuscador=!!(document.activeElement && document.activeElement.id==='vincQ'); renderCAShopify(); if(enBuscador){ const el=document.getElementById('vincQ'); if(el){ el.focus(); const t=el.value; el.value=''; el.value=t; } } } }catch(_){}
+  }
+  return resultado;
+}
 // Precio de Shopify por SKU. La plataforma toma este precio como referencia para las ventas online.
 function precioShopifySku(sku){ const v=SHOPIFY_CATALOG.find(x=>x.sku===sku); return v?v.precio:null; }
 // Aplica el precio de Shopify al producto de plataforma vinculado (actualiza su precioRef). NO toca el SKU.
@@ -7597,17 +7669,27 @@ function shopifyNotaCliente(o){
 }
 // Cuántos SKU de Shopify ya tienen su equivalencia definida.
 const shopifyMapCount = () => SHOPIFY_CATALOG.filter(v=>(DB.shopifyMap||{})[v.sku]).length;
-// Auto-sugerencia: el producto de plataforma con precioRef más cercano (misma talla si aporta señal).
+// Colores que se llaman distinto en Shopify y en la plataforma (para sugerir vínculos por nombre).
+const SHOP_SUG_SINONIMOS={ grafito:['grafito','plomo oscuro'], arena:['arena','sandstone'], oxido:['oxido','oxidado'], macchiato:['macchiato','machiatto','machiato'], machiatto:['macchiato','machiatto','machiato'] };
+const SHOP_SUG_IGNORAR={ linea:1, color:1, de:1, la:1, el:1, y:1, cm:1, x:1, macetero:1, maceteros:1 };
+function shopSugNorm(t){ return shopNorm(String(t||'').replace(/[()·\-\/.,*]/g,' ')); }
+// Sugiere el producto de la plataforma para una variante de Shopify POR NOMBRE: tienen que aparecer todas las palabras
+// del nombre de Shopify (modelo y color, con sus sinónimos) y calzar la talla. Entre varios, prefiere el que aún no
+// está vinculado a otro SKU y el de precio más parecido. Si ningún nombre calza, no sugiere nada (antes sugería el de
+// precio más cercano, aunque fuera otro producto).
 function shopifySuggest(v){
-  let best=null, bestDiff=Infinity;
+  const toks=shopSugNorm(v&&v.producto).split(' ').filter(t=>t && !SHOP_SUG_IGNORAR[t] && !/^\d/.test(t)); if(!toks.length) return null;
+  const talla=shopSugNorm(v.talla), usados={}; Object.keys(DB.shopifyMap||{}).forEach(k=>{ if(k!==v.sku) usados[DB.shopifyMap[k]]=1; });
+  let best=null, bestScore=-1;
   (DB.products||[]).forEach(p=>{
     if(p.soloCotizacion) return;
-    const ref=Number(p.precioRef)||0; if(!ref) return;
-    let diff=Math.abs(ref - v.precio);
-    // Bonus si el tamaño coincide textualmente (S/M/L/XL) para desempatar precios iguales.
-    const t=(p.tamano||'').toString().toUpperCase();
-    if(t && v.talla && t.includes(v.talla.toUpperCase())) diff -= 1;
-    if(diff<bestDiff){ bestDiff=diff; best=p; }
+    const nombre=' '+shopSugNorm(productName(p))+' ', tam=' '+shopSugNorm(p.tamano)+' ';
+    if(!toks.every(t=>(SHOP_SUG_SINONIMOS[t]||[t]).some(x=>nombre.includes(' '+x+' ')))) return;
+    if(talla && talla!=='u' && !tam.includes(' '+talla+' ') && !nombre.includes(' '+talla+' ')) return;   // la talla tiene que calzar
+    let score=0; if(talla && talla!=='u' && tam.includes(' '+talla+' ')) score+=4;
+    if(!usados[p.id]) score+=2;
+    const ref=Number(p.precioRef)||0; if(ref && v.precio) score+=Math.max(0, 1-Math.abs(ref-v.precio)/v.precio);
+    if(score>bestScore){ bestScore=score; best=p; }
   });
   return best;
 }
@@ -9223,23 +9305,32 @@ function renderCAShopify(){
    La plataforma es la matriz. Cada variante de Shopify se conecta a un producto de la plataforma.
    No se modifica ningún SKU: solo se guarda la equivalencia en DB.shopifyMap. */
 function renderShopVinculacion(){
+  // Al abrir la pestaña (una vez por sesión) se trae solo el catálogo de la tienda, para que lo recién creado en Shopify aparezca.
+  if(!SHOP_CAT_AUTO){ SHOP_CAT_AUTO=true; setTimeout(()=>{ actualizarCatalogoShopify(true); }, 300); }
   const q=(SHOP_VQ||'').toLowerCase().trim();
   // Opciones del desplegable = productos VIVOS de la plataforma (la matriz), ordenados alfabéticamente.
   const prods=[...(DB.products||[])].filter(p=>!p.soloCotizacion).sort((a,b)=>productName(a).localeCompare(productName(b)));
   const optionsFor=(pid)=>`<option value="">— Sin vincular —</option>`+prods.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${productName(p)}${p.precioRef?' · '+fmt(p.precioRef):''}</option>`).join('');
-  const cat=SHOPIFY_CATALOG.filter(v=>{ if(!q) return true; return (v.producto+' '+v.sku).toLowerCase().includes(q); });
+  // Lo que falta vincular va primero, para que lo nuevo de Shopify quede a la vista.
+  const sinVinc=v=>!((DB.shopifyMap||{})[v.sku] && productById((DB.shopifyMap||{})[v.sku]));
+  const filtrado=SHOPIFY_CATALOG.filter(v=>{ if(!q) return true; return (v.producto+' '+v.sku).toLowerCase().includes(q); });
+  const cat=filtrado.filter(sinVinc).concat(filtrado.filter(v=>!sinVinc(v)));
   const vinculados=shopifyMapCount(), total=SHOPIFY_CATALOG.length, faltan=total-vinculados;
+  const sinSku=(DB.shopifyCatalogo && Array.isArray(DB.shopifyCatalogo.sinSku)) ? DB.shopifyCatalogo.sinSku : [];
+  const btnCat=(grande)=> SHOP_CAT_RUNNING
+    ? `<button disabled class="${grande?'mt-4 text-sm px-4 py-2':'text-xs px-3 py-2'} font-semibold text-white bg-sage-400 rounded-xl cursor-wait">Actualizando…</button>`
+    : `<button onclick="actualizarCatalogoShopify(false)" title="Trae al momento los productos, SKU y precios de la tienda" class="${grande?'mt-4 text-sm px-4 py-2':'text-xs px-3 py-2'} font-semibold text-white bg-sage-700 hover:bg-sage-800 rounded-xl">🔄 Actualizar desde Shopify</button>`;
   const desalineados=shopifyPrecioDesalineados();
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
       <div class="text-2xl leading-none">🔗</div>
       <div class="text-sm text-clay-700 leading-snug">
         <div class="font-semibold text-clay-800 mb-0.5">Emparejar los SKU y precios de Shopify con la plataforma</div>
-        Tu plataforma es la <b>matriz</b> (la fuente de verdad). Aquí conectas cada producto de Shopify con su equivalente en la plataforma, <b>sin cambiar ningún SKU</b>, y mantienes los <b>precios iguales a Shopify</b>. Los precios mostrados vienen de Shopify (última sincronización: <b>${SHOPIFY_PRECIOS_FECHA}</b>).
-        <div class="text-xs text-clay-500 mt-1.5">Cuando cambies un precio en Shopify, pídeme <b>“actualiza los precios desde Shopify”</b> y los dejo al día; luego con <b>“Igualar precios a Shopify”</b> se pasan a la plataforma.</div>
+        Tu plataforma es la <b>matriz</b> (la fuente de verdad). Aquí conectas cada producto de Shopify con su equivalente en la plataforma, <b>sin cambiar ningún SKU</b>, y mantienes los <b>precios iguales a Shopify</b>. Los productos y precios mostrados vienen de Shopify (última actualización: <b>${shopifyCatalogFecha()}</b>).
+        <div class="text-xs text-clay-500 mt-1.5">Si creaste un producto en Shopify o cambiaste un precio, aprieta <b>“Actualizar desde Shopify”</b>: los trae al momento. Lo nuevo queda arriba para vincularlo; con <b>“Igualar precios a Shopify”</b> los precios se pasan a la plataforma (solo si tú quieres).</div>
       </div>
     </div>
-  </div>`;
+  </div>${sinSku.length?`<div class="card p-3 sm:p-4 mb-4 bg-amber-50 border border-amber-200 text-sm text-amber-900 leading-snug">⚠️ <b>${sinSku.length} producto${sinSku.length!==1?'s':''} de Shopify no tiene${sinSku.length!==1?'n':''} SKU</b>, así que no se puede${sinSku.length!==1?'n':''} vincular ni sincronizar el stock: ${sinSku.map(x=>'<b>'+x.producto+'</b>'+((x.variante && !/^default title$/i.test(x.variante))?' ('+x.variante+')':'')).join(', ')}. Escríbele un SKU a la variante en Shopify y vuelve a apretar <b>“Actualizar desde Shopify”</b>.</div>`:''}`;
   const stats=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Vinculados',vinculados,'de '+total,'text-sage-700')}
     ${statCard('Por vincular',faltan,faltan?'pendientes':'¡completo!',faltan?'text-red-600':'text-sage-700')}
@@ -9247,6 +9338,7 @@ function renderShopVinculacion(){
   </div>`;
   const acciones=`<div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-2">
     <input id="vincQ" value="${(SHOP_VQ||'').replace(/"/g,'&quot;')}" oninput="vincSearch(this.value)" placeholder="Buscar producto o SKU de Shopify..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+    ${btnCat(false)}
     <button onclick="autoVincularShopify()" class="text-xs font-semibold text-white bg-clay-700 hover:bg-clay-800 px-3 py-2 rounded-xl">✨ Sugerir vínculos</button>
     ${desalineados?`<button onclick="aplicarTodosPreciosShopify()" class="text-xs font-semibold text-white bg-sage-700 hover:bg-sage-800 px-3 py-2 rounded-xl">💲 Igualar precios a Shopify (${desalineados})</button>`:''}
     ${vinculados?`<button onclick="limpiarVinculosShopify()" class="text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 px-3 py-2 rounded-xl">Borrar vínculos</button>`:''}
@@ -9261,7 +9353,7 @@ function renderShopVinculacion(){
   // Fila por variante Shopify.
   const filaDesktop=(v)=>{ const pid=(DB.shopifyMap||{})[v.sku]; const p=pid?productById(pid):null; const sug=(!p)?shopifySuggest(v):null;
     return `<tr class="border-t border-clay-100 ${p?'':'bg-amber-50/40'}">
-      <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${v.producto}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · <span class="text-amber-600">borrador</span>':''}</div></td>
+      <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${v.producto}${(v.nuevo&&!p)?' <span class="badge bg-blue-100 text-blue-700 ml-1 align-middle">Nuevo</span>':''}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · <span class="text-amber-600">borrador</span>':''}</div></td>
       <td class="px-4 py-3 text-center text-clay-500 whitespace-nowrap">${v.talla}</td>
       <td class="px-4 py-3 text-right tabular-nums text-clay-700 font-semibold whitespace-nowrap">${fmt(v.precio)}</td>
       <td class="px-4 py-3 min-w-[240px]"><select onchange="setShopMap('${v.sku}',this.value)" class="${selCls}">${optionsFor(pid)}</select>${sug?`<button onclick="setShopMap('${v.sku}','${sug.id}')" class="mt-1 text-[11px] font-medium text-clay-500 hover:text-clay-800">Sugerido: <b>${productName(sug)}</b> — usar</button>`:''}</td>
@@ -9272,7 +9364,7 @@ function renderShopVinculacion(){
     const pl=p?(Number(p.precioRef)||0):null, sh=Number(v.precio)||0, dif=(p&&pl!==sh);
     return `<div class="bg-white border ${p?(dif?'border-amber-200':'border-clay-100'):'border-amber-200'} rounded-2xl p-3.5">
       <div class="flex justify-between items-start gap-2">
-        <div class="min-w-0"><div class="font-bold truncate">${v.producto}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · borrador':''}</div></div>
+        <div class="min-w-0"><div class="font-bold truncate">${v.producto}${(v.nuevo&&!p)?' <span class="badge bg-blue-100 text-blue-700 ml-1 align-middle">Nuevo</span>':''}</div><div class="text-[11px] text-clay-400 font-mono">${v.sku}${v.draft?' · borrador':''}</div></div>
         <div class="text-right shrink-0"><div class="text-sm font-semibold tabular-nums">${fmt(v.precio)}</div><div class="text-[11px] text-clay-400">Shopify · Talla ${v.talla}</div></div>
       </div>
       <div class="mt-2.5"><select onchange="setShopMap('${v.sku}',this.value)" class="${selCls}">${optionsFor(pid)}</select>${sug?`<button onclick="setShopMap('${v.sku}','${sug.id}')" class="mt-1.5 text-[11px] font-medium text-clay-500 hover:text-clay-800">Sugerido: <b>${productName(sug)}</b> — usar</button>`:''}</div>
@@ -9286,7 +9378,7 @@ function renderShopVinculacion(){
       </tr></thead><tbody>${cat.map(filaDesktop).join('')}</tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${cat.map(filaMobile).join('')}</div>
   </div>`
-  : `<div class="card p-10 text-center text-clay-500"><div class="text-3xl mb-2">🔍</div>Ningún producto de Shopify coincide con la búsqueda.<button onclick="vincSearch('')" class="mt-4 text-sm font-medium text-clay-700 border border-clay-200 hover:bg-clay-50 px-4 py-2 rounded-xl">✕ Limpiar búsqueda</button></div>`;
+  : `<div class="card p-10 text-center text-clay-500"><div class="text-3xl mb-2">🔍</div>Ningún producto de Shopify coincide con la búsqueda.<div class="text-sm text-clay-400 mt-1">¿Lo creaste hace poco en Shopify? Trae el catálogo al día y aparecerá (si tiene SKU).</div><div class="flex flex-wrap items-center justify-center gap-2">${btnCat(true)}<button onclick="vincSearch('')" class="mt-4 text-sm font-medium text-clay-700 border border-clay-200 hover:bg-clay-50 px-4 py-2 rounded-xl">✕ Limpiar búsqueda</button></div></div>`;
   return banner+stats+acciones+tabla;
 }
 // Detalle de venta de Casa Augusta (clickeable en la lista). Sin costos ni márgenes.
