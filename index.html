@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.11.23-191';
+const APP_VERSION = '2026.11.23-192';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -4860,6 +4860,43 @@ function descargarStockUnificado(){
   });
   savePdfDoc(doc, 'stock-unificado'+(una?('-'+BODEGA_INFO[b].corto.toLowerCase().replace(/\s+/g,'-')):'')+'-'+todayISO()+'.pdf');
 }
+/* ----- Bodega Sigma: PDF de lo anotado, para saber qué pedirle al proveedor -----
+   Lista los productos con stock anotado en Sigma (lo que se está ofreciendo) y, aparte, las unidades que YA se
+   vendieron desde Sigma en pedidos sin entregar (eso hay que pedirlo sí o sí). Deja una columna para anotar cuánto pedir. */
+function sigmaResumen(){
+  const pend=pendientesPorBodega(true).SIG;
+  return productsForPicker(productName).filter(p=>!esAPedido(p)).map(p=>({p, disp:Math.max(0,stockSigma(p.id)), vend:pend[p.id]||0, propio:stockUnificado(p.id)})).filter(f=>f.disp>0||f.vend>0);
+}
+function descargarPedidoSigma(){
+  if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
+  const filas=sigmaResumen(); if(!filas.length){ toastInfo('No hay productos anotados en Bodega Sigma.'); return; }
+  const { jsPDF }=window.jspdf, doc=new jsPDF(), W=doc.internal.pageSize.getWidth();
+  const tD=filas.reduce((a,f)=>a+f.disp,0), tV=filas.reduce((a,f)=>a+f.vend,0);
+  const neg=(t)=>({content:String(t),styles:{fontStyle:'bold',halign:'center'}});
+  const body=filas.map(f=>[f.p.sku||'', productName(f.p), String(f.propio), String(f.disp), f.vend?neg(f.vend):'—', '']);
+  body.push([{content:'TOTAL',colSpan:3,styles:{fontStyle:'bold',halign:'right'}}, neg(tD), neg(tV), '']);
+  const ahora=new Date(), dd=n=>String(n).padStart(2,'0'), fechaTxt=dd(ahora.getDate())+'-'+dd(ahora.getMonth()+1)+'-'+ahora.getFullYear()+' '+dd(ahora.getHours())+':'+dd(ahora.getMinutes());
+  const cab=function(){
+    doc.setFillColor(74,44,35); doc.rect(0,0,W,30,'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Viet Pottery — Bodega Sigma · Pedido al proveedor',14,11.5);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(221,176,155);
+    doc.text(fechaTxt+'  ·  '+filas.length+' producto'+(filas.length!==1?'s':'')+'  ·  '+tD+' u anotadas (ofrecidas)  ·  '+tV+' u ya vendidas por pedir',14,18.5);
+    doc.text('"Ya vendidas" = pedidos sin entregar que salen de Sigma: hay que pedirlas. "Anotado" = lo que se ofrece a la venta.',14,25.5);
+    doc.setTextColor(255,255,255); doc.text('Pág. '+doc.internal.getNumberOfPages(),W-14,11.5,{align:'right'});
+  };
+  const estilos={fontSize:9,cellPadding:2.4,minCellHeight:8.5,lineColor:[235,216,203],lineWidth:0.2,textColor:[74,44,35],valign:'middle'}, cabeza={fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold'};
+  doc.autoTable({ head:[['SKU','Producto','Stock\npropio','Anotado\nen Sigma','Ya vendidas\n(por pedir)','Cantidad\na pedir']], body,
+    columnStyles:{0:{cellWidth:30,fontSize:8},2:{halign:'center',cellWidth:18},3:{halign:'center',cellWidth:20},4:{halign:'center',cellWidth:24},5:{cellWidth:24}},
+    styles:estilos, headStyles:cabeza, margin:{top:36,left:14,right:14,bottom:12}, rowPageBreak:'avoid', didDrawPage:cab });
+  // Detalle: qué pedidos están esperando al proveedor
+  const peds=[]; (DB.sales||[]).forEach(s=>{ if(s.perdido||s.estadoDespacho==='entregado') return; (s.items||[]).forEach(i=>{ if(itemAPedido(i)||!i.rep||!(i.rep.SIG>0)) return; const q=Math.min(Math.max(0,itemPendienteQty(s,i)), itemReparto(s,i).SIG); if(q>0) peds.push([s.fechaEntrega||s.fecha||'', s.pedidoNum||s.shopifyNum||'—', devNombreVenta(s)||s.clienteNombre||'', itemLabel(i), String(q)]); }); });
+  if(peds.length){
+    peds.sort((a,b)=>a[0].localeCompare(b[0]));
+    doc.autoTable({ head:[['Entrega','Pedido','Cliente','Producto','Unidades\nde Sigma']], body:peds, startY:doc.lastAutoTable.finalY+10,
+      columnStyles:{0:{cellWidth:24},1:{cellWidth:22},4:{halign:'center',cellWidth:22}}, styles:estilos, headStyles:cabeza, margin:{top:36,left:14,right:14,bottom:12}, rowPageBreak:'avoid', didDrawPage:cab });
+  }
+  savePdfDoc(doc, 'pedido-sigma-'+todayISO()+'.pdf');
+}
 function renderStockUnificado(){
   const v=document.getElementById('view');
   const filas=uniFilas();
@@ -4896,6 +4933,7 @@ function renderStockUnificado(){
       <div class="flex items-center gap-1.5 flex-wrap">${chip('con','Con stock',conStock)}${chip('todos','Todos',filas.length)}${chip('multi','En 2 o más bodegas',multi)}${faltaN?chip('falta','Vendido sin stock',faltaN,'text-red-600'):''}${nPed?chip('ped','A pedido',nPed):''}</div>
       <div id="uniCount" class="text-xs text-clay-400 ml-auto">${vis.length} productos</div>
       <button onclick="descargarStockUnificado()" title="Descargar en PDF lo que estás viendo, para imprimirlo y revisar el stock" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-clay-200 text-sm text-clay-600 hover:bg-clay-50 whitespace-nowrap"><span>🖨️</span> Descargar PDF</button>
+      ${sigmaResumen().length?`<button onclick="descargarPedidoSigma()" title="PDF con lo anotado en Bodega Sigma y lo ya vendido, para pedirle al proveedor" class="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-sage-300 text-sm text-sage-700 hover:bg-sage-50 whitespace-nowrap"><span>🚚</span> PDF pedido a Sigma</button>`:''}
     </div>
     <div class="overflow-auto max-h-[62vh]"><table class="w-full text-sm min-w-[860px]" id="unitbl">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
