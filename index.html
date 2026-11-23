@@ -189,7 +189,7 @@
    ========================================================= */
 
 // >>> Subir este número cada vez que se publica una nueva versión a GitHub <<<
-const APP_VERSION = '2026.11.09-182';
+const APP_VERSION = '2026.11.22-187';
 
 const CITIES = ['Santiago','Rancagua','Talca','Otra'];
 // Autos de despacho disponibles para repartir cuando un día tiene muchos pedidos.
@@ -273,11 +273,13 @@ function mostrarBannerActualizacion(remote){
   </div>`;
   document.body.appendChild(b);
 }
-function toastInfo(msg){
+// ms (opcional): cuánto se muestra. Por defecto 2,6 s; los avisos que hay que alcanzar a leer piden más.
+function toastInfo(msg, ms){
   const t=document.createElement('div');
   t.style.cssText='position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;background:#23332a;color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;box-shadow:0 8px 28px rgba(0,0,0,.25);';
+  if(ms){ t.style.width='max-content'; t.style.maxWidth='92vw'; }   // aviso largo: usa el ancho de la pantalla en vez de una columna angosta
   t.textContent=msg; document.body.appendChild(t);
-  setTimeout(()=>{ t.style.transition='opacity .4s'; t.style.opacity='0'; setTimeout(()=>t.remove(),400); }, 2600);
+  setTimeout(()=>{ t.style.transition='opacity .4s'; t.style.opacity='0'; setTimeout(()=>t.remove(),400); }, ms||2600);
 }
 // Toast con botón "Deshacer" para acciones reversibles
 function toastUndo(msg, onUndo){
@@ -523,6 +525,10 @@ async function bootData(){
   // cualquier producto editado. Si el nombre dice claramente que NO es macetero (saco, planta, servicio…),
   // se vuelve a la clasificación automática. Lo que el usuario marque desde ahora se respeta tal cual.
   if(!DB.migMaceteroV2){ (DB.products||[]).forEach(p=>{ if(p.noMacetero===false && !esMaceteroAuto(p)) delete p.noMacetero; }); DB.migMaceteroV2=1; }
+  // Igual que la anterior, tras ampliar la regla con las plantas que faltaban (convolvulus, nandina, westringia…):
+  // esas plantas quedaron con el "sí es macetero" de la casilla antigua y pasan a la clasificación automática (a pedido).
+  // Se GUARDA de inmediato: si no, la primera sincronización con la nube trae los datos antiguos y deshace el cambio.
+  if(migrarMaceterosV3()) save();
   if(!DB.shopifyMap) DB.shopifyMap={}; // Vinculación: { skuShopify : idProductoPlataforma }. La plataforma es la matriz.
   if(DB.shopifyStockBuffer==null) DB.shopifyStockBuffer=1; // Colchón: unidades que se reservan y NO se publican en Shopify (protege la venta presencial).
   if(DB.shopifySyncUrl==null) DB.shopifySyncUrl=''; // URL del puente (Cloudflare Worker) que escribe el stock en Shopify.
@@ -605,11 +611,13 @@ const PROV_SKU={
 /* ---------- Helpers de negocio ---------- */
 const productById = id => DB.products.find(p=>p.id===id);
 const clientById = id => DB.clients.find(c=>c.id===id);
-// ¿El producto es un macetero? Solo los maceteros cuentan para la META de unidades.
-// Todo lo demás (sacos de tierra, plantas, fletes, honorarios, platos, accesorios) SÍ cuenta
-// para la venta en $, pero NO para la meta. Se controla con la casilla "No es macetero" del
-// producto (p.noMacetero); si no está marcada, se deduce por el nombre con palabras clave.
-const _NO_MAC_KW=/(saco|tierra|sustrato|abono|fertil|perlita|humus|compost|turba|corteza|gravilla|maicillo|piedra|maceta plast|flete|honorario|servicio|paisaj|plato|pito|poros|planta|rhus|crenata|nigricans|agapat|agapant|olivo|oliv[ao]|romero|lavand|buxus|\bboj\b|hiedra|jazm|suculent|cactus|palmer|ficus|helecho|trepador|cubresuelo|rastrer|arbust|\bmata\b|semilla|bulbo|c[eé]sped|pasto|jardiner|jard[ií]n|poda|riego|mantenci|\bd[ií]a\b|\bhora|visita|asesor|dise[ñn]o|proyecto|mano de obra|obra|arbol|árbol|env[ií]o|despacho|transporte|traslado|instalaci|regadera|herramienta|tijera|guante|\bkit\b)/i;
+// ¿El producto es un macetero? Los maceteros LLEVAN STOCK y cuentan para la META de unidades.
+// Todo lo demás (sacos de tierra, plantas, fletes, honorarios, platos, accesorios) SÍ cuenta para la venta
+// en $, pero NO para la meta, y se vende "A PEDIDO" (venta calzada): el cliente lo pide, se compra y se
+// entrega, así que no se controla su stock (ver esAPedido). Se decide con la opción "¿Es macetero?" del
+// producto (p.noMacetero); si está en automático, se deduce por el nombre con palabras clave.
+// Ojo: "jardinero/jardinería/jardín" son servicios, pero una "jardinera" SÍ es un macetero.
+const _NO_MAC_KW=/(saco|tierra|sustrato|abono|fertil|perlita|humus|compost|turba|corteza|gravilla|maicillo|piedra|maceta plast|flete|honorario|servicio|paisaj|plato|pito|poros|planta|rhus|\brus\b|crenata|nigricans|agapat|agapant|olivo|oliv[ao]|romero|lavand|buxus|\bboj\b|hiedra|jazm|suculent|cactus|palmer|ficus|helecho|trepador|cubresuelo|rastrer|arbust|\bmata\b|semilla|bulbo|c[eé]sped|pasto|anigo[sz]ant|convolvul|dietes|manto de eva|monstera|nandina|narciso|nepeta|rh?aphiolep|stenocarp|westringia|c[aá]mpanula|miosporo|myoporum|\(v\.?\s?c\.?\)|jardiner(?!as?\b)|jard[ií]n\b|poda|riego|mantenci|\bd[ií]a\b|\bhora|visita|asesor|dise[ñn]o|proyecto|mano de obra|obra|arbol|árbol|env[ií]o|despacho|transporte|traslado|instalaci|regadera|herramienta|tijera|guante|\bkit\b)/i;
 // Nombre completo del producto para la regla automática (modelo + tamaño + color + descripción).
 function _nombreParaRegla(p){ return [(p.modelo||''),(p.tamano||''),(p.color||''),(p.descripcion||'')].join(' '); }
 // ¿Cuenta como macetero según la regla automática (sin considerar la decisión manual)?
@@ -621,6 +629,25 @@ function esMacetero(p){
   if(p.noMacetero===false) return true;
   return esMaceteroAuto(p);
 }
+// Migración (una vez): quita el "sí es macetero" que dejó la casilla antigua en productos que la regla reconoce como
+// NO maceteros (plantas, insumos, servicios). Devuelve true si aplicó el cambio (para guardarlo). Se llama al cargar
+// y cada vez que llegan datos de la nube, por si otra pestaña con una versión anterior los vuelve a dejar como antes.
+function migrarMaceterosV3(){
+  if(!DB || DB.migMaceteroV3) return false;
+  (DB.products||[]).forEach(p=>{ if(p.noMacetero===false && !esMaceteroAuto(p)) delete p.noMacetero; });
+  DB.migMaceteroV3=1; return true;
+}
+// Producto "A PEDIDO" (venta calzada o mandado a hacer): NO LLEVA STOCK. La plataforma no avisa "sin stock" al
+// venderlo, no lo reparte entre bodegas y no lo cuenta como agotado, negativo ni faltante.
+//  · Regla automática: todo lo que no es macetero, y también los maceteros MANDADOS A HACER (fierro; pilares y
+//    cilindros de greda). Estos últimos siguen siendo maceteros para la meta, pero no llevan stock.
+//  · Manual: la opción "¿Lleva stock o se vende a pedido?" del producto (p.aPedido true/false) manda sobre la regla.
+const _A_PEDIDO_KW=/(fierro|pilar\s+greda|cilindro\s+greda)/i;
+function esAPedidoAuto(p){ return !!p && (!esMacetero(p) || _A_PEDIDO_KW.test(String(p.modelo||''))); }   // se mira solo el MODELO: "fierro" también puede ser un color de un macetero con stock
+function esAPedido(p){ if(!p) return false; if(p.aPedido===true) return true; if(p.aPedido===false) return false; return esAPedidoAuto(p); }
+const itemAPedido = it => esAPedido(productById(it&&it.productId));
+// Stock para MOSTRAR y sumar en pantallas: en un producto a pedido un saldo negativo no significa nada (se muestra 0).
+const stockVisible = (p, st) => (esAPedido(p) && st<0) ? 0 : st;
 // Marcar a mano desde la meta/lista: true = "no es macetero", false = "sí es macetero", null = volver a automático.
 function setProductoMacetero(pid, valor, volverA){
   const p=productById(pid); if(!p) return;
@@ -690,13 +717,81 @@ function productsForPicker(nameFn){
 // Lista de productos de una venta en líneas alineadas (cantidad × nombre).
 const saleItemsHtml = s => s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabel(i)}</span></div>`).join('');
 
+/* ---- Bodegas y reparto de un pedido entre bodegas (stock unificado) ----
+   Hay tres bodegas: REQ = Bodega Requinoa (central) · CA = Casa Augusta (Vitacura) · CP = Casa Planta (Requínoa).
+   Cada pedido tiene una bodega principal (s.bodega: '' = Requinoa, 'CA' o 'CP'). Si una línea no trae
+   reparto, todas sus unidades salen de esa bodega (como siempre). Si trae it.rep = {REQ:n, CA:n, CP:n},
+   ese reparto dice cuántas unidades salen de cada bodega: así un mismo pedido puede dividirse. */
+const BODEGAS = ['REQ','CA','CP'];
+const BODEGA_INFO = {
+  REQ:{nombre:'Bodega Requinoa', corto:'Requinoa',     lugar:'central',  icon:'🏭'},
+  CA: {nombre:'Casa Augusta',    corto:'Casa Augusta', lugar:'Vitacura', icon:'🏠'},
+  CP: {nombre:'Casa Planta',     corto:'Casa Planta',  lugar:'Requínoa', icon:'🌿'} };
+const bodegaPrincipal = s => (s&&(s.bodega==='CA'||s.bodega==='CP')) ? s.bodega : 'REQ';
+// Reparto normalizado de una línea: unidades por bodega (siempre suma la cantidad de la línea).
+function itemReparto(s, it){
+  const total=Math.max(0,+((it||{}).cantidad)||0), main=bodegaPrincipal(s), out={REQ:0,CA:0,CP:0};
+  const r=it&&it.rep;
+  if(!r||typeof r!=='object'){ out[main]=total; return out; }
+  let rest=total;
+  BODEGAS.forEach(b=>{ const q=Math.max(0,Math.min(rest,Math.round(+r[b]||0))); out[b]=q; rest-=q; });
+  if(rest>0) out[main]+=rest;   // lo que no esté repartido sale de la bodega principal
+  return out;
+}
+// Unidades de una línea que salen de la bodega b ('REQ' | 'CA' | 'CP').
+function itemQtyBodega(s, it, b){ if(!it.rep) return bodegaPrincipal(s)===b ? (+it.cantidad||0) : 0; return itemReparto(s,it)[b]; }
+// Unidades por bodega de un pedido completo (solo productos que llevan stock: lo "a pedido" no sale de ninguna
+// bodega), y si quedó dividido entre bodegas.
+function saleReparto(s){ const t={REQ:0,CA:0,CP:0}; ((s&&s.items)||[]).forEach(it=>{ if(itemAPedido(it)) return; const r=itemReparto(s,it); BODEGAS.forEach(b=>{ t[b]+=r[b]; }); }); return t; }
+// Unidades "a pedido" de una venta: se compran para ese pedido, no salen de bodega.
+const saleUnidadesAPedido = s => ((s&&s.items)||[]).reduce((a,it)=>a+(itemAPedido(it)?(+it.cantidad||0):0),0);
+const saleBodegasUsadas = s => { const t=saleReparto(s); return BODEGAS.filter(b=>t[b]>0); };
+const saleEsDividido = s => saleBodegasUsadas(s).length>1;
+// Etiqueta de la(s) bodega(s) de un pedido para las listas. Un pedido dividido muestra cuánto sale de cada una.
+function bodegaPillVenta(s){
+  const t=saleReparto(s), us=BODEGAS.filter(b=>t[b]>0);
+  if(us.length>1) return pill('🔀 Dividido: '+us.map(b=>BODEGA_INFO[b].corto+' '+t[b]).join(' · '),'amber');
+  if(s.origen==='CA') return pill('Casa Augusta','green');
+  if(!us.length && saleUnidadesAPedido(s)>0) return pill('🛒 A pedido','gray');   // solo productos a pedido: no sale de bodega
+  const b=us[0]||bodegaPrincipal(s);
+  return b==='CA' ? pill('Stock Casa Augusta','gray') : (b==='CP' ? pill('🌿 Stock Casa Planta','green') : '');
+}
+// Bloque "de qué bodega sale" para el detalle de un pedido: qué preparar en cada bodega y qué es a pedido.
+function preparacionHtml(s){
+  const t=saleReparto(s), us=BODEGAS.filter(b=>t[b]>0), nPed=saleUnidadesAPedido(s); if(!us.length&&!nPed) return '';
+  const dividido=us.length>1;
+  const fila=b=>{ const det=(s.items||[]).map(i=>{ if(itemAPedido(i)) return ''; const q=itemQtyBodega(s,i,b); return q>0 ? (q+'× '+itemLabel(i)) : ''; }).filter(Boolean).join(' · ');
+    return `<div class="flex items-start gap-2 text-sm"><span class="badge ${dividido?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'} shrink-0 whitespace-nowrap">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} · ${t[b]} u</span><span class="text-clay-600 text-xs leading-5">${det}</span></div>`; };
+  const filaPed = nPed ? `<div class="flex items-start gap-2 text-sm"><span class="badge bg-clay-100 text-clay-600 shrink-0 whitespace-nowrap">🛒 A pedido · ${nPed} u</span><span class="text-clay-600 text-xs leading-5">${(s.items||[]).filter(itemAPedido).map(i=>(+i.cantidad||0)+'× '+itemLabel(i)).join(' · ')} <span class="text-clay-400">· se compra o se manda a hacer; no sale de bodega</span></span></div>` : '';
+  return `<div class="px-4 py-3 border-t border-clay-100 ${dividido?'bg-amber-50/60':''}"><div class="text-[11px] uppercase tracking-wide mb-1.5 ${dividido?'text-amber-700 font-semibold':'text-clay-400'}">${dividido?'🔀 Pedido dividido · qué preparar en cada bodega':(us.length?'📦 Sale de':'🛒 Venta a pedido')}</div><div class="space-y-1.5">${us.map(fila).join('')}${filaPed}</div></div>`;
+}
+// Guarda el reparto de una línea (solo si no sale todo de la bodega principal: así los pedidos simples quedan igual que siempre).
+function setItemRep(s, it, r){ const main=bodegaPrincipal(s), rep={}; BODEGAS.forEach(b=>{ if(r[b]>0) rep[b]=r[b]; }); const ks=Object.keys(rep); if(!ks.length||(ks.length===1&&ks[0]===main)) delete it.rep; else it.rep=rep; }
+// Deja el reparto de un pedido limpio antes de guardarlo: si todo sale de una sola bodega, esa pasa a ser
+// la bodega del pedido y no se guarda reparto; si está dividido, cada línea guarda sus unidades por bodega.
+function normalizarReparto(s){
+  if(!s||!s.items) return;
+  s.items.forEach(it=>{ if(itemAPedido(it)) delete it.rep; });            // lo "a pedido" no sale de ninguna bodega
+  const con=s.items.filter(it=>!itemAPedido(it));                         // líneas que sí llevan stock
+  const reps=con.map(it=>itemReparto(s,it)), tot={REQ:0,CA:0,CP:0};
+  reps.forEach(r=>BODEGAS.forEach(b=>{ tot[b]+=r[b]; }));
+  const usadas=BODEGAS.filter(b=>tot[b]>0);
+  if(usadas.length<=1){ if(usadas.length){ s.bodega = usadas[0]==='REQ' ? '' : usadas[0]; } con.forEach(it=>{ delete it.rep; }); return; }
+  if(tot[bodegaPrincipal(s)]===0){ const b=usadas.slice().sort((x,y)=>tot[y]-tot[x])[0]; s.bodega = b==='REQ' ? '' : b; }
+  con.forEach((it,ix)=>setItemRep(s,it,reps[ix]));
+}
+// Stock de un producto en una bodega, y stock UNIFICADO: lo disponible sumando las tres bodegas
+// (una bodega en negativo —vendido sin stock— no le resta a las otras).
+const stockBodega = (pid,b) => b==='CA' ? stockCA(pid) : (b==='CP' ? cpStock(pid) : stockOf(pid));
+const stockUnificado = pid => BODEGAS.reduce((a,b)=>a+Math.max(0,stockBodega(pid,b)),0);
+
 // Stock de la bodega CENTRAL. Las ventas de Casa Augusta (bodega:'CA') NO restan aquí:
 // salen del stock de Casa Augusta. Las transferencias central→CA sí restan del central.
 function stockOf(productId){
   const p = productById(productId); if(!p) return 0;
   let s = p.stockInicial;
-  // Las ventas que salen de Casa Augusta ('CA') o de Casa Planta ('CP') NO restan del central.
-  DB.sales.forEach(v=>{ if(v.perdido||v.bodega==='CA'||v.bodega==='CP') return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
+  // Cada línea resta solo las unidades que salen de la bodega central (lo que sale de Casa Augusta o Casa Planta no resta aquí).
+  DB.sales.forEach(v=>{ if(v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=itemQtyBodega(v,i,'REQ'); }); });
   // Las compras/recepciones asignadas a Casa Augusta (item.bodega==='CA') NO suman al central.
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') s+=i.cantidad; }));
   DB.adjustments.forEach(a=>{ if(a.productId===productId) s+=a.cantidad; });
@@ -714,7 +809,7 @@ function stockCA(productId){
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; const dir=(t.sentido==='aCentral')?-1:1; (t.items||[]).forEach(i=>{ if(i.productId===productId) s+=dir*i.cantidad; }); });
   // Recepciones/compras asignadas directamente a Casa Augusta al recibir la OC.
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') s+=i.cantidad; }));
-  DB.sales.forEach(v=>{ if(v.bodega!=='CA'||v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=i.cantidad; }); });
+  DB.sales.forEach(v=>{ if(v.perdido) return; v.items.forEach(i=>{ if(i.productId===productId) s-=itemQtyBodega(v,i,'CA'); }); });
   // Devoluciones de la bodega Casa Augusta: lo devuelto reingresa; en un cambio, lo que se lleva el cliente sale.
   (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='CA') return; (r.items||[]).forEach(i=>{ if(i.productId===productId) s+=i.cantidad; }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) s-=(+i.cantidad||0); }); });
   // Ajustes manuales de inventario en Casa Augusta (conteo, merma, regalo, etc.).
@@ -749,6 +844,8 @@ const NAV = [
   {id:'ca_devoluciones', label:'Devoluciones', grupo:'Operaciones', roles:['admin','vendedor','bodega','casa_augusta','casa_planta'], icon:'M3 7v6h6M3 13a9 9 0 103-7.7L3 8'},
   {id:'calendario', label:'Calendario', grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'},
   {id:'tareas',    label:'Tareas',    grupo:'Operaciones', roles:['admin','vendedor','bodega'], icon:'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'},
+  // Stock unificado: total por producto y detalle por bodega (Requinoa, Casa Augusta y Casa Planta) + qué preparar en cada una.
+  {id:'stock_uni', label:'Stock unificado', grupo:'Inventario', roles:['admin','vendedor','bodega'], icon:'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'},
   {id:'stock',     label:'Bodega Requinoa', grupo:'Inventario', roles:['admin','bodega'], icon:'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z'},
   {id:'productos', label:'Productos', grupo:'Inventario', roles:['admin','bodega'], icon:'M20 7L12 3 4 7m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'},
   {id:'compras',   label:'Órdenes de compra', grupo:'Inventario', roles:['admin','bodega'], icon:'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0'},
@@ -792,7 +889,7 @@ function bootFirebaseApp(){
       else { alert('Tu usuario ('+user.email+') aún no tiene permisos en la plataforma. Pídele al administrador que te agregue en el módulo Usuarios.'); FB.signOutNow(); showLogin(); return; }
     }
     SESSION={email:u.email, nombre:u.nombre, rol:u.rol, mods:userMods(u)};
-    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; if(!DB.transfers)DB.transfers=[]; if(!DB.caReturns)DB.caReturns=[]; if(!DB.cpStock)DB.cpStock={}; if(!DB.cpSales)DB.cpSales=[]; if(!DB.cpMovs)DB.cpMovs=[]; if(!DB.shopifyDescartados)DB.shopifyDescartados=[]; migrarCuentas(); refreshSessionPerms(); rerender(); });
+    FB.watch((data)=>{ DB=data; if(!DB.orders)DB.orders=[]; if(!DB.users)DB.users=[]; if(!DB.quotes)DB.quotes=[]; if(!DB.invoices)DB.invoices=[]; if(!DB.suppliers)DB.suppliers=[]; if(!DB.metaUnidades)DB.metaUnidades={}; if(!DB.tasks)DB.tasks=[]; if(!DB.campaigns)DB.campaigns=[]; if(!DB.cuentas||!DB.cuentas.length)DB.cuentas=seedCuentas(); if(!DB.egresos)DB.egresos=[]; if(!DB.transfers)DB.transfers=[]; if(!DB.caReturns)DB.caReturns=[]; if(!DB.cpStock)DB.cpStock={}; if(!DB.cpSales)DB.cpSales=[]; if(!DB.cpMovs)DB.cpMovs=[]; if(!DB.shopifyDescartados)DB.shopifyDescartados=[]; migrarCuentas(); if(migrarMaceterosV3()) save(); refreshSessionPerms(); rerender(); try{ programarPushStockShopify(45000+Math.random()*20000); }catch(_){} });
     showApp();
     iniciarBuzonShopify(); // revisa el buzón de ventas de Shopify cada 60 s mientras la app está abierta
   });
@@ -1044,11 +1141,11 @@ function go(view){
   CURRENT = view;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active', b.dataset.nav===view));
   toggleSidebar(false);
-  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_shopify:'Casa Augusta · Shopify',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Devoluciones',ca_prospectos:'Casa Augusta · Potencial Cliente',cp_ventas:'Casa Planta · Ventas',cp_stock:'Casa Planta · Stock'};
+  const titles={midia:'Mi día',dashboard:'Dashboard',presupuestos:'Presupuestos',ventas:'Pedidos',reportes:'Reportes de ventas',abc:'¿Qué te da la plata?',ofertas:'Ofertas recomendadas',despachos:'Despachos',calendario:'Calendario de entregas',tareas:'Tareas',clientes:'Clientes',cobranzas:'Cobranzas',stock_uni:'Stock unificado',stock:'Bodega Requinoa · Stock',productos:'Productos',compras:'Órdenes de compra',facturas:'Facturas de compra',egresos:'Egresos',resultado:'Resultado operacional',plancuentas:'Plan de cuentas',usuarios:'Usuarios',ca_ventas:'Casa Augusta · Registrar venta',ca_shopify:'Casa Augusta · Shopify',ca_stock:'Casa Augusta · Stock',ca_entregas:'Casa Augusta · Entregas',ca_devoluciones:'Devoluciones',ca_prospectos:'Casa Augusta · Potencial Cliente',cp_ventas:'Casa Planta · Ventas',cp_stock:'Casa Planta · Stock'};
   document.getElementById('pageTitle').textContent = titles[view];
   document.getElementById('headerActions').innerHTML = headerAction(view);
   const v=document.getElementById('view'); v.innerHTML=''; v.classList.remove('fade'); void v.offsetWidth; v.classList.add('fade');
-  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios,ca_ventas:renderCAVentas,ca_shopify:renderCAShopify,ca_stock:renderCAStock,ca_entregas:renderCAEntregas,ca_devoluciones:renderCADevoluciones,ca_prospectos:renderCAProspectos,cp_ventas:renderCPVentas,cp_stock:renderCPStock})[view]();
+  ({midia:renderMiDia,dashboard:renderDashboard,presupuestos:renderPresupuestos,ventas:renderVentas,reportes:renderReportes,abc:renderABC,ofertas:renderOfertas,despachos:renderDespachos,calendario:renderCalendario,tareas:renderTareas,clientes:renderClientes,cobranzas:renderCobranzas,stock_uni:renderStockUnificado,stock:renderStock,productos:renderProductos,compras:renderCompras,facturas:renderFacturas,egresos:renderEgresos,resultado:renderResultado,plancuentas:renderPlanCuentas,usuarios:renderUsuarios,ca_ventas:renderCAVentas,ca_shopify:renderCAShopify,ca_stock:renderCAStock,ca_entregas:renderCAEntregas,ca_devoluciones:renderCADevoluciones,ca_prospectos:renderCAProspectos,cp_ventas:renderCPVentas,cp_stock:renderCPStock})[view]();
 }
 function headerAction(view){
   const btn=(fn,txt)=>`<button onclick="${fn}" title="${txt}" aria-label="${txt}" class="bg-clay-700 hover:bg-clay-800 text-white text-sm font-semibold px-3 sm:px-4 py-2 rounded-xl flex items-center gap-1.5 whitespace-nowrap shrink-0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg><span class="hidden sm:inline">${txt}</span></button>`;
@@ -1068,6 +1165,7 @@ function headerAction(view){
   if(view==='ca_devoluciones') return btn('openCADevolucion()','Registrar devolución');
   if(view==='cp_ventas') return btn('openCPSale()','Registrar venta');
   if(view==='cp_stock') return btn('openCPAjuste()','Ajustar stock');
+  if(view==='stock_uni' && uniBodegasAjustables().length) return btn('openUniAjuste()','Ajustar stock');
   return '';
 }
 
@@ -1243,7 +1341,7 @@ function renderDashboard(){
   const productosMes = SALES.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s),0) + CP_MES.reduce((a,s)=>a+saleSubtotal(s),0);
   const enviosMes = SALES.filter(inMonth).reduce((a,s)=>a+(s.costoEnvio||0),0);
   const porCobrar = SALES.filter(s=>!s.pagado).reduce((a,s)=>a+saleTotal(s),0);
-  const stockBajo = DB.products.filter(p=>stockOf(p.id)<=p.stockMin);
+  const stockBajo = DB.products.filter(p=>!esAPedido(p) && stockOf(p.id)<=p.stockMin);
   const despPend  = SALES.filter(s=>s.estadoDespacho!=='entregado');
   const margenMes = SALES.filter(inMonth).reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0) + CP_MES.reduce((a,s)=>a+saleSubtotal(s)-saleCost(s),0);
   const docsPend = SALES.filter(s=>s.docTipo==='pendiente');
@@ -1296,7 +1394,7 @@ function renderDashboard(){
   const entAtras=despPend.filter(s=>s.fechaEntrega && s.fechaEntrega<_hoy);
   const tarHoy=tareasPend.filter(t=>t.fecha===_hoy);
   const tarAtras=tareasPend.filter(t=>t.fecha && t.fecha<_hoy);
-  const negStock = DB.products.map(p=>({p,st:stockOf(p.id)})).filter(x=>x.st<0).sort((a,b)=>a.st-b.st);
+  const negStock = DB.products.map(p=>({p,st:stockOf(p.id)})).filter(x=>x.st<0 && !esAPedido(x.p)).sort((a,b)=>a.st-b.st);   // solo maceteros: lo "a pedido" no lleva stock
   const alerts=[];
   if(negStock.length){
     alerts.push({icon:'📥',tone:'red',titulo:`${negStock.length} producto${negStock.length>1?'s':''} por pedir`,sub:`Stock negativo: vendidos pero aún no están en bodega.`,btn:'Ver productos',fn:`go('productos')`});
@@ -1942,10 +2040,8 @@ function openQuoteDetail(id){
         <div class="divide-y divide-clay-100">
           ${q.items.map(i=>{const dt=i.descuento||0;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}</span><span class="font-medium whitespace-nowrap">${fmt(lineTotal(i))}</span></div>`;}).join('')}
         </div>
-        ${devolucionesBloqueHtml(s)}
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
-          ${saleTieneDevolucion(s)?`<div class="flex justify-between text-clay-400"><span>Vendido originalmente</span><span>${fmt(s.items.reduce((a,i)=>a+lineTotal(i),0))}</span></div>`:''}
-          <div class="flex justify-between text-clay-500"><span>Subtotal${saleTieneDevolucion(s)?' (neto de devoluciones/cambios)':''}</span><span>${fmt(subtotal)}</span></div>
+          <div class="flex justify-between text-clay-500"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
           ${envio>0?`<div class="flex justify-between text-clay-500"><span>Envío</span><span>${fmt(envio)}</span></div>`:''}
           <div class="flex justify-between font-bold text-clay-800 pt-1"><span>Total</span><span>${fmt(total)}</span></div>
         </div>
@@ -2056,6 +2152,7 @@ function convertirPresupuesto(qid){
   EDIT={id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:q.clienteNombre||'',clienteTel:q.telefono||'',clienteEmail:q.email||'',
         items:JSON.parse(JSON.stringify(q.items)),cuenta:ACCOUNTS[0],pagado:true,docTipo:'pendiente',docNumero:'',
         ciudad:q.ciudad||'Santiago',comuna:q.comuna||'',direccion:q.direccion||'',estadoDespacho:'pendiente',tipoDespacho:q.tipoDespacho||'Viet',courier:(q.tipoDespacho==='Currier'?(q.courier||''):''),seguimiento:(q.tipoDespacho==='Currier'?(q.seguimiento||''):''),costoEnvio:q.costoEnvio||0,notas:q.notas||''};
+  SALE_REP_AUTO=true; SALE_BOD_ELEGIDA=false;   // pedido nuevo: se reparte según el stock de cada bodega
   renderSaleModal();
 }
 function marcarPerdido(id){const q=DB.quotes.find(x=>x.id===id);if(!q)return;confirmModal({titulo:'Marcar presupuesto como perdido',mensaje:'El presupuesto '+(q.numero||'')+' pasará a estado Perdido. Podrás reabrirlo cuando quieras.',confirmar:'Marcar perdido',icon:'🚫',onConfirm:()=>{q.estado='perdido';save();go('presupuestos');}});}
@@ -2216,7 +2313,7 @@ function renderVentas(){
         ${rows.map(s=>{const c=clientById(s.clienteId);const zona=zonaOf(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${s.perdido?'opacity-60':''}" onclick="openSaleDetail('${s.id}')" data-doc="${s.docTipo}" data-pago="${s.pagado?'si':'no'}" data-despacho="${s.estadoDespacho}" data-perdido="${s.perdido?'si':'no'}" data-zona="${zona}" data-ciudad="${(s.ciudad||'').trim().toLowerCase()}" data-comuna="${(s.comuna||'').trim().toLowerCase()}">
           <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
           <td class="px-4 py-3 whitespace-nowrap">${entregaCell(s)}</td>
-          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):(s.bodega==='CP'?pill('🌿 Stock Casa Planta','green'):''))}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
+          <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}${c?c.nombre:(s.clienteNombre||'—')}<div class="mt-1 flex items-center gap-1.5 flex-wrap">${s.perdido?pill('Perdido','red'):''}${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${bodegaPillVenta(s)}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div></td>
           <td class="px-4 py-3 text-clay-700">${saleItemsHtml(s)}</td>
           <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
           <td class="px-4 py-3">${payPill(s)}</td>
@@ -2233,7 +2330,7 @@ function renderVentas(){
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0">
             ${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400">${s.pedidoNum}</div>`:''}<div class="font-bold truncate">${c?c.nombre:(s.clienteNombre||'—')}</div>
-            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${s.origen==='CA'?pill('Casa Augusta','green'):(s.bodega==='CA'?pill('Stock Casa Augusta','gray'):(s.bodega==='CP'?pill('🌿 Stock Casa Planta','green'):''))}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
+            <div class="flex items-center gap-1.5 mt-1 flex-wrap">${s.canal==='Shopify'?pill('🛍️ Shopify','blue'):''}${devPillVenta(s)}${bodegaPillVenta(s)}${zona==='Santiago'?pill('Santiago','blue'):pill('Región','amber')}<span class="text-xs text-clay-500">${[s.ciudad,s.comuna].filter(Boolean).map(titleCase).join(' · ')||'sin ubicación'}</span></div>
           </div>
           <div class="text-right shrink-0">
             <div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div>
@@ -2262,11 +2359,13 @@ function openSale(id){
   CONVERT_QUOTE_ID=null;
   const s = id?DB.sales.find(x=>x.id===id):{id:null,fecha:todayISO(),fechaEntrega:'',clienteId:'',clienteNombre:'',items:[{productId:DB.products[0].id,descripcion:productName(DB.products[0]),cantidad:1,precio:DB.products[0].precioRef,descuento:0}],cuenta:ACCOUNTS[0],pagado:false,docTipo:'pendiente',docNumero:'',ciudad:'Santiago',comuna:'',direccion:'',estadoDespacho:'pendiente',tipoDespacho:'Viet',courier:'',costoEnvio:0,bodega:'',notas:''};
   EDIT = JSON.parse(JSON.stringify(s));
+  SALE_REP_AUTO=!id; SALE_BOD_ELEGIDA=!!id;   // pedido nuevo: el sistema propone de qué bodega sale cada producto; al editar se respeta lo guardado
   renderSaleModal();
 }
 let EDIT=null;
 function renderSaleModal(){
   const s=EDIT;
+  repAuto();   // en pedidos nuevos reparte según el stock de cada bodega (antes de dibujar)
   const cliObj = clientById(s.clienteId);
   const clientName = s.clienteNombre || (cliObj?.nombre) || '';
   const cliTel = cliObj?.telefono || s.clienteTel || '';
@@ -2305,6 +2404,7 @@ function renderSaleModal(){
             <button type="button" onclick="setSaleBodega('CP')" id="bod_cp" class="px-3 py-1 rounded-md text-xs font-medium ${s.bodega==='CP'?'bg-sage-600 text-white':'text-clay-600'}">Bodega Casa Planta</button>
           </div>
         </div>
+        <div id="bod_resumen">${repResumenHtml()}</div>
       </div>
 
       <div>
@@ -2383,6 +2483,7 @@ function saleItemRow(it,ix,prodOpt){
       <button onclick="removeSaleItem(${ix})" class="col-span-1 text-clay-400 hover:text-red-600 text-center" title="Quitar">✕</button>
     </div>
     <div id="s_sub_${ix}" class="text-xs text-right mt-1.5">${lineSubHtml(it)}</div>
+    <div id="s_rep_${ix}">${itemRepHtml(it,ix)}</div>
     <div id="s_warn_${ix}">${itemStockWarn(it)}</div>
   </div>`;
 }
@@ -2398,25 +2499,143 @@ function lineSubHtml(it){
 function bodegaHint(b){ return b==='CA'?'El stock se descuenta de <b>Casa Augusta</b> (Santiago).':(b==='CP'?'El stock se descuenta del inventario propio de <b>Casa Planta</b>.':'El stock se descuenta de la <b>Bodega Requinoa</b> (central).'); }
 // Bodega "efectiva" de una venta para el stock: 'CA', 'CP' o '' (Requinoa/central).
 function bodegaDe(s){ return (s&&(s.bodega==='CA'||s.bodega==='CP'))?s.bodega:''; }
-function stockBaseVenta(productId){
-  // Los presupuestos muestran la disponibilidad de Casa Augusta (igual que las ventas de CA).
-  const bod = EDIT ? (EDIT._presupuesto ? 'CA' : bodegaDe(EDIT)) : '';
-  let base = bod==='CA' ? stockCA(productId) : (bod==='CP' ? cpStock(productId) : stockOf(productId));
+/* ---- Reparto del pedido entre bodegas (formulario de pedido) ----
+   SALE_REP_AUTO = el sistema reparte solo según el stock: toma primero de la bodega del pedido y, si no
+   alcanza, completa con las otras. Parte encendido en un pedido NUEVO (ahí además propone la bodega) y con
+   el botón "Repartir según stock". Se apaga al ELEGIR una bodega a mano (todo el pedido sale de esa, como
+   siempre: sirve para vender sin stock/venta calzada) y al EDITAR un pedido existente (se respeta lo guardado).
+   SALE_BOD_ELEGIDA = la bodega la fijó el usuario (o es un pedido existente): el sistema no la cambia sola. */
+let SALE_REP_AUTO=false, SALE_BOD_ELEGIDA=false;
+// Stock disponible de un producto en una bodega, SIN contar el pedido que se está editando (para no restarse a sí mismo).
+function stockBaseVentaBod(productId, b){
+  let base=stockBodega(productId,b);
   if(EDIT&&EDIT.id){ const orig=DB.sales.find(x=>x.id===EDIT.id);
-    if(orig && !orig.perdido && bodegaDe(orig)===bod)
-      orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); });
+    if(orig && !orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=itemQtyBodega(orig,i,b); });
   }
   return base;
 }
-// Advertencia por línea: compara lo pedido (sumando todas las líneas del mismo producto) contra el stock base.
+function stockBaseVenta(productId){
+  // Los presupuestos muestran la disponibilidad UNIFICADA (lo que hay sumando todas las bodegas).
+  if(EDIT&&EDIT._presupuesto) return stockUnificado(productId);
+  return stockBaseVentaBod(productId, bodegaPrincipal(EDIT));
+}
+// Unidades que este pedido saca de cada bodega para un producto (sumando todas sus líneas).
+function pedidoPorBodega(pid){ const req={REQ:0,CA:0,CP:0}; EDIT.items.forEach(x=>{ if(x.productId!==pid) return; const r=itemReparto(EDIT,x); BODEGAS.forEach(b=>{ req[b]+=r[b]; }); }); return req; }
+// Bodegas donde lo pedido de un producto supera lo disponible: [{b, base, req}].
+function faltantesProducto(pid){ if(esAPedido(productById(pid))) return []; const req=pedidoPorBodega(pid); return BODEGAS.map(b=>({b, base:Math.max(0,stockBaseVentaBod(pid,b)), req:req[b]})).filter(f=>f.req>f.base); }
+// ¿Queda stock libre de este producto en alguna bodega (descontando lo que ya ocupa este pedido)?
+function haySobranteEnBodega(pid){ const req=pedidoPorBodega(pid); return BODEGAS.some(b=>stockBaseVentaBod(pid,b)-req[b]>0); }
+// Advertencia por línea: compara lo pedido (sumando todas las líneas del mismo producto) contra el stock de cada bodega.
 function itemStockWarn(it){
   if(!it||!EDIT) return '';
-  const base=stockBaseVenta(it.productId);
-  const req=EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
-  if(req>base) return `<div class="text-[11px] text-red-600 font-medium mt-1 flex items-start gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ <span>Sin stock suficiente · disponible <b>${base}</b>, pedido <b>${req}</b> (faltan ${req-base}). Puedes generar el pedido igualmente.</span></div>`;
-  return '';
+  if(itemAPedido(it)) return '';   // producto a pedido (venta calzada): no lleva stock, no se avisa
+  const caja=txt=>`<div class="text-[11px] text-red-600 font-medium mt-1 flex items-start gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ <span>${txt}</span></div>`;
+  if(EDIT._presupuesto){
+    const base=stockBaseVenta(it.productId);
+    const req=EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
+    return req>base ? caja(`Sin stock suficiente · disponible <b>${base}</b> (sumando todas las bodegas), pedido <b>${req}</b> (faltan ${req-base}). Puedes generar el pedido igualmente.`) : '';
+  }
+  const falt=faltantesProducto(it.productId); if(!falt.length) return '';
+  const sobra=haySobranteEnBodega(it.productId);
+  return falt.map(f=>caja(`Sin stock suficiente en <b>${BODEGA_INFO[f.b].nombre}</b> · disponible <b>${f.base}</b>, pedido <b>${f.req}</b> (faltan ${f.req-f.base}). ${sobra?`Hay stock en otra bodega: <button type="button" onclick="repartirPedido()" class="underline font-semibold">⚡ repartir según stock</button>.`:'Puedes generar el pedido igualmente.'}`)).join('');
 }
 function refreshStockWarns(){ if(!EDIT) return; EDIT.items.forEach((it,ix)=>{ const el=document.getElementById('s_warn_'+ix); if(el) el.innerHTML=itemStockWarn(it); }); }
+// Reparte las líneas según el stock: primero la bodega elegida; lo que falte, de las otras (primero la que
+// más cubre del pedido, para involucrar la menor cantidad de bodegas); si no hay stock en ninguna, el
+// faltante queda en la bodega elegida (y se avisa). Respeta lo fijado a mano, salvo que todo=true.
+function repartirSegunStock(todo){
+  if(!EDIT||EDIT._presupuesto) return;
+  const main=bodegaPrincipal(EDIT), disp={};
+  const D=pid=>disp[pid]||(disp[pid]={REQ:stockBaseVentaBod(pid,'REQ'),CA:stockBaseVentaBod(pid,'CA'),CP:stockBaseVentaBod(pid,'CP')});
+  if(todo) EDIT.items.forEach(it=>{ delete it._repManual; });
+  EDIT.items.forEach(it=>{ if(itemAPedido(it)){ delete it.rep; delete it._repManual; delete it._repAbierto; } });   // lo "a pedido" no se reparte
+  const lineas=EDIT.items.filter(it=>!itemAPedido(it));
+  lineas.forEach(it=>{ if(!it._repManual) return; const r=itemReparto(EDIT,it), d=D(it.productId); BODEGAS.forEach(b=>{ d[b]-=r[b]; }); });
+  const plan=[];
+  lineas.forEach(it=>{ if(it._repManual) return; const d=D(it.productId), Q=Math.max(0,+it.cantidad||0), a=Math.max(0,Math.min(Q,d[main])); d[main]-=a; const r={REQ:0,CA:0,CP:0}; r[main]=a; plan.push({it,r,falta:Q-a}); });
+  const otras=BODEGAS.filter(b=>b!==main), cubre={};
+  otras.forEach(b=>{ const usado={}; cubre[b]=0; plan.forEach(p=>{ if(p.falta<=0) return; const pid=p.it.productId, av=Math.max(0,D(pid)[b])-(usado[pid]||0), x=Math.max(0,Math.min(p.falta,av)); usado[pid]=(usado[pid]||0)+x; cubre[b]+=x; }); });
+  otras.sort((x,y)=>cubre[y]-cubre[x]);
+  plan.forEach(p=>{ const d=D(p.it.productId);
+    const sola=p.falta>0 ? otras.find(b=>d[b]>=p.falta) : null;   // si una sola bodega cubre lo que falta de la línea, sale todo de esa
+    (sola?[sola]:otras).forEach(b=>{ if(p.falta<=0) return; const x=Math.max(0,Math.min(p.falta,d[b])); if(x>0){ p.r[b]+=x; d[b]-=x; p.falta-=x; } });
+    if(p.falta>0){ p.r[main]+=p.falta; p.falta=0; }
+    setItemRep(EDIT,p.it,p.r); });
+}
+// Pedido nuevo y el usuario aún no elige bodega: parte de la bodega que más unidades del pedido puede entregar.
+function elegirMejorBodega(){
+  const cubre={REQ:0,CA:0,CP:0};
+  BODEGAS.forEach(b=>{ const usado={}; EDIT.items.forEach(it=>{ if(itemAPedido(it)) return; const pid=it.productId, av=Math.max(0,stockBaseVentaBod(pid,b))-(usado[pid]||0), x=Math.max(0,Math.min(Math.max(0,+it.cantidad||0),av)); usado[pid]=(usado[pid]||0)+x; cubre[b]+=x; }); });
+  const act=bodegaPrincipal(EDIT), max=Math.max(cubre.REQ,cubre.CA,cubre.CP);
+  if(max<=0||cubre[act]===max) return;                 // no hay stock en ninguna, o la actual ya es la que más cubre
+  const mejor=['CA','CP','REQ'].find(b=>cubre[b]===max);
+  EDIT.bodega = mejor==='REQ' ? '' : mejor;
+  EDIT.items.forEach(it=>{ if(!it._repManual) delete it.rep; });
+}
+function repAuto(){ if(!EDIT||EDIT._presupuesto||!SALE_REP_AUTO) return; if(!SALE_BOD_ELEGIDA) elegirMejorBodega(); repartirSegunStock(); }
+// Botón "Repartir según stock": enciende el reparto automático y recalcula todo el pedido (también lo fijado a mano).
+function repartirPedido(){ if(!EDIT||EDIT._presupuesto) return; syncSaleFromForm(); SALE_REP_AUTO=true; (EDIT.items||[]).forEach(it=>{ delete it._repAbierto; }); if(!SALE_BOD_ELEGIDA) elegirMejorBodega(); repartirSegunStock(true); pintarBodegaBtns(); refreshRepRows(); refreshStockWarns(); refreshRepResumen(); }
+// Fila "Sale de" de cada línea: de qué bodega(s) sale el producto y cuánto stock hay en cada una.
+function itemRepHtml(it, ix){
+  if(!EDIT||EDIT._presupuesto||!it) return '';
+  if(itemAPedido(it)) return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-500"><span class="badge bg-clay-100 text-clay-600">🛒 A pedido</span><span>Se compra o se manda a hacer para este pedido: no lleva stock ni sale de una bodega.</span></div>`;
+  const r=itemReparto(EDIT,it), disp=b=>Math.max(0,stockBaseVentaBod(it.productId,b));
+  if(it._repAbierto){
+    return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-600 bg-white border border-sage-200 rounded-lg px-2 py-1.5"><span class="font-semibold">📦 Sale de:</span>${BODEGAS.map(b=>`<label class="inline-flex items-center gap-1">${BODEGA_INFO[b].corto}<input id="rep_${ix}_${b}" type="number" min="0" max="${+it.cantidad||0}" value="${r[b]}" oninput="onRepInput(${ix},'${b}',this.value)" class="w-12 border border-clay-200 rounded-md px-1 py-0.5 text-center text-xs"><span class="text-clay-400">de ${disp(b)}</span></label>`).join('<span class="text-clay-300">·</span>')}<button type="button" onclick="cerrarRep(${ix})" class="ml-auto font-semibold text-sage-700 underline">Listo</button></div>`;
+  }
+  const usadas=BODEGAS.filter(b=>r[b]>0);
+  const chips=usadas.map(b=>`<span class="badge ${usadas.length>1?'bg-amber-100 text-amber-800':'bg-sage-100 text-sage-700'}">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].corto} ${r[b]}</span>`).join('');
+  return `<div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-clay-500"><span>📦 Sale de:</span>${chips}<button type="button" onclick="abrirRep(${ix})" class="underline hover:text-clay-800">cambiar</button><span class="text-clay-400 sm:ml-auto">Stock: ${BODEGAS.map(b=>BODEGA_INFO[b].corto+' '+disp(b)).join(' · ')}</span></div>`;
+}
+function abrirRep(ix){ const it=EDIT&&EDIT.items[ix]; if(!it) return; it._repAbierto=true; refreshRepRows(); }
+function cerrarRep(ix){ const it=EDIT&&EDIT.items[ix]; if(!it) return; delete it._repAbierto; refreshRepRows(); }
+// El usuario fija a mano cuántas unidades salen de una bodega: el resto se reacomoda en las otras dos.
+function onRepInput(ix,b,v){
+  const it=EDIT&&EDIT.items[ix]; if(!it) return;
+  const Q=Math.max(0,+it.cantidad||0), main=bodegaPrincipal(EDIT), r={REQ:0,CA:0,CP:0};
+  // Stock libre de cada bodega para ESTA línea (sin contar lo que ocupan otras líneas del mismo producto).
+  const libre=x=>{ let d=stockBaseVentaBod(it.productId,x); EDIT.items.forEach((o,j)=>{ if(j!==ix&&o.productId===it.productId) d-=itemReparto(EDIT,o)[x]; }); return Math.max(0,d); };
+  r[b]=Math.max(0,Math.min(Q,Math.round(+v||0)));
+  // El resto se reacomoda solo en las otras dos: primero la bodega principal (o la de más stock) hasta donde alcance; si falta, queda en esa.
+  const otras=BODEGAS.filter(x=>x!==b).sort((x,y)=>((y===main)-(x===main))||(libre(y)-libre(x)));
+  let resto=Q-r[b];
+  otras.forEach(x=>{ const q=Math.min(resto,libre(x)); r[x]=q; resto-=q; });
+  if(resto>0) r[otras[0]]+=resto;
+  setItemRep(EDIT,it,r); it._repManual=true;
+  otras.forEach(x=>{ const el=document.getElementById('rep_'+ix+'_'+x); if(el) el.value=r[x]; });
+  if(SALE_REP_AUTO) repartirSegunStock();
+  refreshRepRows(ix); refreshStockWarns(); refreshRepResumen();
+}
+function refreshRepRows(except){ if(!EDIT) return; EDIT.items.forEach((it,ix)=>{ if(ix===except) return; const el=document.getElementById('s_rep_'+ix); if(el) el.innerHTML=itemRepHtml(it,ix); }); }
+function refreshRepResumen(){ const el=document.getElementById('bod_resumen'); if(el) el.innerHTML=repResumenHtml(); }
+// Resumen bajo "Bodega que despacha": avisa si el pedido quedó dividido y cuánto preparar en cada bodega.
+function repResumenHtml(){
+  if(!EDIT||EDIT._presupuesto) return '';
+  const t=saleReparto(EDIT), usadas=BODEGAS.filter(b=>t[b]>0), main=bodegaPrincipal(EDIT);
+  const con=EDIT.items.filter(it=>!itemAPedido(it)), nPed=saleUnidadesAPedido(EDIT);   // líneas con stock · unidades a pedido
+  const ped = nPed ? ` <span class="whitespace-nowrap">· 🛒 ${nPed} u a pedido</span>` : '';
+  if(!con.length) return nPed ? `<div class="mt-2 text-[11px] text-clay-500">🛒 Pedido solo con productos <b>a pedido</b> (${nPed} u): se compran para este pedido y no descuentan stock de ninguna bodega.</div>` : '';
+  const btn = SALE_REP_AUTO ? `<span class="text-[11px] font-medium text-sage-700 whitespace-nowrap" title="Toma primero de la bodega del pedido y completa con las otras según el stock">⚡ Reparto automático</span>` : `<button type="button" onclick="repartirPedido()" class="text-[11px] font-medium text-sage-700 underline whitespace-nowrap" title="Toma primero de la bodega elegida y completa con las otras según el stock">⚡ Repartir según stock</button>`;
+  if(usadas.length<=1){
+    const txt = SALE_REP_AUTO ? (SALE_BOD_ELEGIDA ? 'Si esta bodega no tiene stock suficiente, el sistema completa con las otras.' : 'Bodega propuesta según el stock. Si eliges otra, todo el pedido sale de esa.') : 'Todo el pedido sale de esta bodega. Si no alcanza el stock, puedes completar con las otras.';
+    return `<div class="mt-2 flex items-center justify-between gap-2 flex-wrap"><span class="text-[11px] text-clay-400">${(usadas.length&&usadas[0]!==main)?('Este pedido sale de <b>'+BODEGA_INFO[usadas[0]].nombre+'</b>.'):txt}${ped}</span>${btn}</div>`;
+  }
+  // ¿Alguna bodega podría entregar por sí sola todo lo que lleva stock?
+  const sola=BODEGAS.find(b=>{ const usado={}; return con.every(it=>{ const pid=it.productId; usado[pid]=(usado[pid]||0)+(+it.cantidad||0); return stockBaseVentaBod(pid,b)>=usado[pid]; }); });
+  return `<div class="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+    <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-xs text-amber-900"><b>🔀 Pedido dividido entre bodegas.</b> Preparar: ${usadas.map(b=>`${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} <b>${t[b]} u</b>`).join(' · ')}${ped}</div>${btn}</div>
+    ${sola?`<div class="text-[11px] text-amber-800 mt-1">💡 <b>${BODEGA_INFO[sola].nombre}</b> tiene stock para todo el pedido. <button type="button" onclick="setSaleBodega('${sola}')" class="underline font-semibold">Sacar todo de ${BODEGA_INFO[sola].nombre}</button></div>`:''}
+  </div>`;
+}
+// Pinta el botón de la bodega elegida y su texto de ayuda.
+function pintarBodegaBtns(){
+  if(!EDIT) return; const base='px-3 py-1 rounded-md text-xs font-medium ';
+  const req=document.getElementById('bod_req'), ca=document.getElementById('bod_ca'), cp=document.getElementById('bod_cp');
+  if(req) req.className=base+(!EDIT.bodega?'bg-sage-500 text-white':'text-clay-600');
+  if(ca) ca.className=base+(EDIT.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600');
+  if(cp) cp.className=base+(EDIT.bodega==='CP'?'bg-sage-600 text-white':'text-clay-600');
+  const hint=document.getElementById('bod_hint'); if(hint) hint.innerHTML=bodegaHint(EDIT.bodega);
+}
 function syncSaleFromForm(){
   const g=id=>document.getElementById(id);
   if(g('s_cli')) EDIT.clienteNombre=g('s_cli').value.trim();
@@ -2464,9 +2683,9 @@ function resolveClient(nombre, ciudad, comuna, direccion, telefono, email){
   }
   return c;
 }
-function onSaleProd(ix,pid){const p=productById(pid);EDIT.items[ix].productId=pid;EDIT.items[ix].descripcion=productName(p);EDIT.items[ix].precio=p.precioRef;refreshSaleItems();}
+function onSaleProd(ix,pid){const p=productById(pid);const it=EDIT.items[ix];it.productId=pid;it.descripcion=productName(p);it.precio=p.precioRef;delete it.rep;delete it._repManual;delete it._repAbierto;refreshSaleItems();}
 function updateLineSub(ix){const el=document.getElementById('s_sub_'+ix);if(el)el.innerHTML=lineSubHtml(EDIT.items[ix]);}
-function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub(ix);updateSaleTotal();refreshStockWarns();}
+function onSaleQty(ix,v){EDIT.items[ix].cantidad=Math.max(1,+v||1);updateLineSub(ix);updateSaleTotal();repAuto();pintarBodegaBtns();refreshRepRows();refreshStockWarns();refreshRepResumen();}
 function onSalePrice(ix,v){EDIT.items[ix].precio=+v||0;updateLineSub(ix);updateSaleTotal();}
 function onSaleDesc(ix,v){let d=+v||0;d=Math.max(0,Math.min(100,d));EDIT.items[ix].descuento=d;updateLineSub(ix);updateSaleTotal();}
 function addSaleItem(){syncSaleFromForm();const p=DB.products[0];EDIT.items.push({productId:p.id,descripcion:productName(p),cantidad:1,precio:p.precioRef,descuento:0});refreshSaleItems();}
@@ -2500,17 +2719,14 @@ function setSaleTipoDesp(t){
 }
 function setSaleBodega(t){
   if(!EDIT) return; EDIT.bodega = (t==='CA'||t==='CP') ? t : '';
-  const base='px-3 py-1 rounded-md text-xs font-medium ';
-  const req=document.getElementById('bod_req'), ca=document.getElementById('bod_ca'), cp=document.getElementById('bod_cp');
-  if(req) req.className=base+(!EDIT.bodega?'bg-sage-500 text-white':'text-clay-600');
-  if(ca) ca.className=base+(EDIT.bodega==='CA'?'bg-sage-600 text-white':'text-clay-600');
-  if(cp) cp.className=base+(EDIT.bodega==='CP'?'bg-sage-600 text-white':'text-clay-600');
-  const hint=document.getElementById('bod_hint');
-  if(hint) hint.innerHTML = bodegaHint(EDIT.bodega);
-  refreshStockWarns();
+  // Elegir una bodega a mano = TODO el pedido sale de ahí (como siempre). Si falta stock se avisa y se puede
+  // completar con las otras con "Repartir según stock"; así también se puede vender sin stock (venta calzada).
+  SALE_BOD_ELEGIDA=true; SALE_REP_AUTO=false;
+  (EDIT.items||[]).forEach(it=>{ delete it.rep; delete it._repManual; delete it._repAbierto; });
+  pintarBodegaBtns(); refreshRepRows(); refreshStockWarns(); refreshRepResumen();
 }
 function removeSaleItem(ix){if(EDIT.items.length<=1)return;syncSaleFromForm();EDIT.items.splice(ix,1);refreshSaleItems();}
-function refreshSaleItems(){const prodOpt=(sel)=>productsForPicker(productName).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();}
+function refreshSaleItems(){repAuto();const prodOpt=(sel)=>productsForPicker(productName).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productName(p)} · ${fmt(p.precioRef)}</option>`).join('');document.getElementById('s_items').innerHTML=EDIT.items.map((it,ix)=>saleItemRow(it,ix,prodOpt)).join('');updateSaleTotal();pintarBodegaBtns();refreshRepResumen();}
 function onSaleEnvio(v){ EDIT.costoEnvio=+v||0; updateSaleTotal(); }
 function updateSaleTotal(){
   const sub=saleSubtotal(EDIT), env=EDIT.costoEnvio||0, tot=sub+env;
@@ -2524,17 +2740,19 @@ function saveSale(){
   syncSaleFromForm();
   if(!EDIT.clienteNombre){alert('Escribe el nombre del cliente');return;}
   if(!EDIT.fechaEntrega){alert('Indica la fecha de entrega del pedido');return;}
-  // Aviso de stock insuficiente (no bloquea: permite generar igualmente).
+  // Aviso de stock insuficiente por bodega (no bloquea: permite generar igualmente).
   const faltantes=[]; const vistos={};
   (EDIT.items||[]).forEach(it=>{ if(vistos[it.productId]) return; vistos[it.productId]=true;
-    const base=stockBaseVenta(it.productId);
-    const req=EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
-    if(req>base) faltantes.push({nombre:productName(productById(it.productId)),base,req,falta:req-base});
+    faltantesProducto(it.productId).forEach(f=>faltantes.push({nombre:productName(productById(it.productId)),bod:BODEGA_INFO[f.b].nombre,base:f.base,req:f.req,falta:f.req-f.base}));
   });
   if(faltantes.length){
-    const msg='⚠️ Estos productos no tienen stock suficiente:\n\n'+faltantes.map(f=>`• ${f.nombre}: disponible ${f.base}, pedido ${f.req} (faltan ${f.falta})`).join('\n')+'\n\n¿Deseas generar el pedido de todas formas?';
+    const msg='⚠️ Estos productos no tienen stock suficiente:\n\n'+faltantes.map(f=>`• ${f.nombre} en ${f.bod}: disponible ${f.base}, pedido ${f.req} (faltan ${f.falta})`).join('\n')+'\n\n¿Deseas generar el pedido de todas formas?';
     if(!confirm(msg)) return;
   }
+  // Reparto entre bodegas: se quitan las marcas de edición y se deja limpio (si todo sale de una bodega, queda como pedido simple).
+  (EDIT.items||[]).forEach(it=>{ delete it._repManual; delete it._repAbierto; });
+  normalizarReparto(EDIT);
+  const repFinal=saleReparto(EDIT), bodFinal=BODEGAS.filter(b=>repFinal[b]>0);
   if(EDIT.estadoDespacho==='entregado'){ if(!EDIT.entregadoAt) EDIT.entregadoAt=Date.now(); (EDIT.items||[]).forEach(i=>{ i.entregadoQty=i.cantidad; }); }
   else if(EDIT.estadoDespacho==='pendiente' && !saleHayEntregaParcial(EDIT)){ (EDIT.items||[]).forEach(i=>{ delete i.entregadoQty; }); }
   // Si la venta sale de la bodega Casa Augusta, sincroniza los campos del módulo CA
@@ -2558,9 +2776,10 @@ function saveSale(){
     if(CONVERT_QUOTE_ID){ const q=(DB.quotes||[]).find(x=>x.id===CONVERT_QUOTE_ID); if(q){ q.estado='ganado'; q.ventaId=EDIT.id; } CONVERT_QUOTE_ID=null; }
   }
   const sid=EDIT.id;
-  save();closeModal();go((CURRENT==='despachos'||CURRENT==='ca_shopify')?CURRENT:'ventas');
+  save();closeModal();go((CURRENT==='despachos'||CURRENT==='ca_shopify'||CURRENT==='stock_uni')?CURRENT:'ventas');
   if(esNueva) openConfirmacion(sid);
   else if(reciénEntregado) openEntrega(sid);
+  if(bodFinal.length>1) toastInfo('🔀 Pedido dividido · preparar '+bodFinal.map(b=>repFinal[b]+' u en '+BODEGA_INFO[b].nombre).join(' y '));
 }
 function deleteSale(id){
   const s=DB.sales.find(x=>x.id===id); if(!s) return;
@@ -3304,6 +3523,7 @@ function openSaleDetail(id, backFecha, backRes){
         <div class="divide-y divide-clay-100">
           ${s.items.map(i=>{const dt=i.descuento||0;const pq=itemPendienteQty(s,i);const eq=itemEntregadoQty(s,i);const estado = pq<=0 ? `<span class="text-[11px] text-sage-600 font-medium">✓ Entregado</span>` : (eq>0 ? `<span class="text-[11px] text-amber-700 font-medium">⏳ ${pq}× pendiente${eq>0?` · ${eq}× entregado`:''}</span>` : '');const pr=productById(i.productId);const costoLinea=(pr?pr.costo:0)*i.cantidad;const ventaLinea=lineTotal(i);const unit=i.cantidad>0?Math.round(ventaLinea/i.cantidad):ventaLinea;return `<div class="flex justify-between items-baseline px-4 py-2.5 text-sm"><span><span class="text-clay-400">${i.cantidad} ×</span> ${itemLabel(i)}${dt>0?` <span class="text-sage-600 text-xs">(-${dt}%)</span>`:''}<br><span class="text-[11px] text-clay-400">${fmt(unit)} c/u${dt>0?' (con descuento)':''}</span>${estado?'<br>'+estado:''}</span><span class="text-right whitespace-nowrap"><span class="font-medium">${fmt(ventaLinea)}</span>${verMargen?`<br><span class="text-[11px] text-clay-400">costo ${fmt(costoLinea)}</span><br><span class="text-[11px] text-sage-600 font-medium">margen ${fmt(ventaLinea-costoLinea)}</span>`:''}</span></div>`;}).join('')}
         </div>
+        ${preparacionHtml(s)}
         ${devolucionesBloqueHtml(s)}
         <div class="px-4 py-3 bg-clay-50 text-sm space-y-1">
           ${saleTieneDevolucion(s)?`<div class="flex justify-between text-clay-400"><span>Vendido originalmente</span><span>${fmt(s.items.reduce((a,i)=>a+lineTotal(i),0))}</span></div>`:''}
@@ -3356,6 +3576,7 @@ function moverACasaAugusta(id){
   confirmModal({titulo:'¿Mover a Casa Augusta?', mensaje:'Esta venta pasará al módulo Casa Augusta y su stock se descontará de la bodega de Casa Augusta. Podrás revertirlo cuando quieras.', confirmar:'Mover a Casa Augusta', icon:'🏠', onConfirm:()=>{
     s.origen='CA';
     s.bodega='CA';
+    (s.items||[]).forEach(i=>{ delete i.rep; });   // al pasar a Casa Augusta, todo el stock sale de Casa Augusta
     s.tipoDespacho='CA';
     s.ciudad=s.ciudad||'Santiago';
     if(!s.caMetodo) s.caMetodo='retiro_cliente';
@@ -3425,7 +3646,7 @@ function renderDespachos(){
           return `<div class="border ${atrasado?'border-red-300 ring-1 ring-red-200 bg-red-50/40':'border-clay-100'} rounded-xl p-3 hover:border-clay-300 cursor-pointer" onclick="openSaleDetail('${s.id}')">
           ${atrasado?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-red-700 bg-red-100 rounded-lg px-2 py-1 mb-2">⚠️ Atrasado ${diasAtr} día${diasAtr!==1?'s':''} · debía entregarse el ${s.fechaEntrega}</div>`:esHoy?`<div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-lg px-2 py-1 mb-2">📦 Entrega programada para hoy</div>`:''}
           <div class="flex justify-between items-start gap-2"><div class="font-medium text-sm">${c?c.nombre:'—'}</div><div class="text-xs ${atrasado?'text-red-600 font-semibold':'text-clay-400'} whitespace-nowrap text-right">${s.fechaEntrega?fechaAmig(s.fechaEntrega):s.fecha}</div></div>
-          <div class="mt-1 flex flex-wrap gap-1">${pill(tp==='Currier'?'Currier':(tp==='Retiro'?'Retiro en tienda':('Despacho '+tp)), tp==='Fran'?'blue':(tp==='Currier'?'amber':(tp==='Retiro'?'clay':'green')))}${(tp==='Currier'||tp==='Retiro')?'':autoBadge(s.auto)}${tp==='Currier'&&s.seguimiento?`<span class="badge bg-clay-100 text-clay-600">📦 ${s.seguimiento}</span>`:''}</div>
+          <div class="mt-1 flex flex-wrap gap-1">${pill(tp==='Currier'?'Currier':(tp==='Retiro'?'Retiro en tienda':('Despacho '+tp)), tp==='Fran'?'blue':(tp==='Currier'?'amber':(tp==='Retiro'?'clay':'green')))}${(tp==='Currier'||tp==='Retiro')?'':autoBadge(s.auto)}${tp==='Currier'&&s.seguimiento?`<span class="badge bg-clay-100 text-clay-600">📦 ${s.seguimiento}</span>`:''}${bodegaPillVenta(s)}</div>
           <div class="text-xs text-clay-500 mt-1.5">${tp==='Retiro'?'🏪 Retiro en tienda':([s.ciudad,s.comuna,s.direccion].filter(Boolean).join(' · ')||'<span class="text-clay-300">sin dirección</span>')}</div>
           <div class="text-xs text-clay-500 mt-1">${s.items.map(i=>`${i.cantidad}× ${itemLabel(i)}`).join(', ')}</div>
           ${saleHayEntregaParcial(s)?`<div class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1.5 flex items-start gap-1">⏳<span>Entrega parcial — pendiente: ${pendientesTexto(s)}</span></div>`:''}
@@ -4259,14 +4480,16 @@ function setStockEstadoChip(val){ STOCK_EST=val; const sel=document.getElementBy
 function renderStock(){
   const v=document.getElementById('view');
   const prods=DB.products;
-  const valorCosto=prods.reduce((a,p)=>a+stockOf(p.id)*(p.costo||0),0);
-  const valorVenta=prods.reduce((a,p)=>a+stockOf(p.id)*(p.precioRef||0),0);
+  const stq=p=>stockVisible(p,stockOf(p.id));   // en un producto a pedido (no lleva stock) un saldo negativo no cuenta
+  const valorCosto=prods.reduce((a,p)=>a+stq(p)*(p.costo||0),0);
+  const valorVenta=prods.reduce((a,p)=>a+stq(p)*(p.precioRef||0),0);
   const ganancia=valorVenta-valorCosto;
-  const unidades=prods.reduce((a,p)=>a+stockOf(p.id),0);
-  const bajo=prods.filter(p=>{const st=stockOf(p.id);return st>0 && st<=p.stockMin;}).length;
-  const agotado=prods.filter(p=>stockOf(p.id)<=0).length;
+  const unidades=prods.reduce((a,p)=>a+stq(p),0);
+  const bajo=prods.filter(p=>{const st=stockOf(p.id);return !esAPedido(p) && st>0 && st<=p.stockMin;}).length;
+  const agotado=prods.filter(p=>!esAPedido(p) && stockOf(p.id)<=0).length;
+  const aPedidoN=prods.filter(p=>esAPedido(p)).length;
   const puede=SESSION.rol!=='vendedor';
-  const sortVal=p=>{const k=STOCK_SORT.key, st=stockOf(p.id); if(k==='sku')return (p.sku||'').toLowerCase(); if(k==='producto')return productName(p).toLowerCase(); if(k==='stock')return st; if(k==='min')return p.stockMin||0; if(k==='estado')return st<=0?0:st<=p.stockMin?1:2; if(k==='valorcosto')return st*(p.costo||0); if(k==='valorventa')return st*(p.precioRef||0); return 0;};
+  const sortVal=p=>{const k=STOCK_SORT.key, st=stq(p); if(k==='sku')return (p.sku||'').toLowerCase(); if(k==='producto')return productName(p).toLowerCase(); if(k==='stock')return st; if(k==='min')return p.stockMin||0; if(k==='estado')return esAPedido(p)?3:(st<=0?0:st<=p.stockMin?1:2); if(k==='valorcosto')return st*(p.costo||0); if(k==='valorventa')return st*(p.precioRef||0); return 0;};
   const dir=STOCK_SORT.dir==='asc'?1:-1;
   let prodsSorted=[...prods].sort((a,b)=>{const va=sortVal(a),vb=sortVal(b); return (typeof va==='string')?va.localeCompare(vb)*dir:(va-vb)*dir;});
   // Los productos "solo cotización" (no son stock habitual) van siempre al final, separados del catálogo.
@@ -4277,7 +4500,7 @@ function renderStock(){
   v.innerHTML=`
   <div class="flex items-center gap-2 mb-3">
     <span class="badge bg-sage-100 text-sage-700">Bodega Requinoa</span>
-    <span class="text-xs text-clay-400">Stock de la bodega central. Casa Augusta (Santiago) tiene su propio stock en su módulo.</span>
+    <span class="text-xs text-clay-400">Stock de la bodega central. Casa Augusta (Santiago) tiene su propio stock en su módulo. Los productos <b>a pedido</b> (plantas, tierra, platos, servicios y maceteros mandados a hacer) no llevan stock.</span>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Unidades en stock',unidades,prods.length+' productos','')}
@@ -4288,12 +4511,13 @@ function renderStock(){
   <div class="card overflow-hidden">
     <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
       <input id="fStock" value="${STOCK_Q.replace(/"/g,'&quot;')}" oninput="filterStock()" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
-      <div class="flex items-center gap-1.5">${chip('','Todos')}${chip('bajo','Bajo',bajo,'text-amber-600')}${chip('agotado','Agotado',agotado,'text-red-600')}</div>
+      <div class="flex items-center gap-1.5">${chip('','Todos')}${chip('bajo','Bajo',bajo,'text-amber-600')}${chip('agotado','Agotado',agotado,'text-red-600')}${aPedidoN?chip('pedido','A pedido',aPedidoN,'text-clay-400'):''}</div>
       <select id="fStockEstado" onchange="filterStock()" class="hidden">
         <option value="" ${STOCK_EST===''?'selected':''}>Todos</option>
         <option value="ok" ${STOCK_EST==='ok'?'selected':''}>OK</option>
         <option value="bajo" ${STOCK_EST==='bajo'?'selected':''}>Stock bajo</option>
         <option value="agotado" ${STOCK_EST==='agotado'?'selected':''}>Agotado</option>
+        <option value="pedido" ${STOCK_EST==='pedido'?'selected':''}>A pedido</option>
       </select>
       <button onclick="descargarPlanillaInventario()" class="border border-clay-200 hover:bg-clay-50 text-clay-700 text-sm font-medium px-3 py-2 rounded-xl flex items-center gap-1.5" title="Descargar planilla en PDF para imprimir y tomar inventario"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg><span class="hidden sm:inline">Planilla</span></button>
       <div id="stCount" class="text-xs text-clay-400 ml-auto">${prods.length} productos</div>
@@ -4303,10 +4527,10 @@ function renderStock(){
         ${sortTh('sku','SKU')}${sortTh('producto','Producto')}${sortTh('stock','Stock','text-right')}${sortTh('min','Mínimo','text-right')}${sortTh('estado','Estado')}${sortTh('valorcosto','Valor costo','text-right')}${sortTh('valorventa','Valor venta','text-right')}
         <th class="px-5 py-3"></th>
       </tr></thead><tbody>
-      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
+      ${prodsSorted.map(p=>{const st=stq(p);const ped=esAPedido(p);const ek=ped?'pedido':(st<=0?'agotado':st<=p.stockMin?'bajo':'ok');const estado=ped?pill('A pedido','gray'):(st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green'));const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-estado="${ek}" onclick="openTrazabilidad('${p.id}')">
         <td class="px-3 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
         <td class="px-3 py-3"><div class="font-medium">${productName(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</div></td>
-        <td class="px-3 py-3 text-right font-semibold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st}</td>
+        <td class="px-3 py-3 text-right font-semibold ${ped?'text-clay-300':(st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':'')}">${ped&&st<=0?'—':st}</td>
         <td class="px-3 py-3 text-right text-clay-400">${p.stockMin}</td>
         <td class="px-3 py-3">${estado}</td>
         <td class="px-3 py-3 text-right whitespace-nowrap text-clay-500">${fmt(st*(p.costo||0))}</td>
@@ -4317,10 +4541,10 @@ function renderStock(){
       </tr>`;}).join('')}
       </tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50" id="stcards">
-      ${prodsSorted.map(p=>{const st=stockOf(p.id);const ek=st<=0?'agotado':st<=p.stockMin?'bajo':'ok';const estado=st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green');const sep=p.id===primerCotizId?`<div class="stcard text-xs font-semibold text-clay-500 uppercase tracking-wide px-1 pt-3 pb-1" data-estado="ok" data-text="">Solo para cotización · no es stock habitual</div>`:'';return `${sep}<div class="stcard ${p.soloCotizacion?'bg-amber-50/60 border-amber-100':'bg-white border-clay-100'} border rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
+      ${prodsSorted.map(p=>{const st=stq(p);const ped=esAPedido(p);const ek=ped?'pedido':(st<=0?'agotado':st<=p.stockMin?'bajo':'ok');const estado=ped?pill('A pedido','gray'):(st<=0?pill('Agotado','red'):st<=p.stockMin?pill('Bajo','amber'):pill('OK','green'));const sep=p.id===primerCotizId?`<div class="stcard text-xs font-semibold text-clay-500 uppercase tracking-wide px-1 pt-3 pb-1" data-estado="ok" data-text="">Solo para cotización · no es stock habitual</div>`:'';return `${sep}<div class="stcard ${p.soloCotizacion?'bg-amber-50/60 border-amber-100':'bg-white border-clay-100'} border rounded-2xl p-3.5 cursor-pointer hover:border-clay-300" data-estado="${ek}" data-text="${(p.sku+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openTrazabilidad('${p.id}')">
         <div class="flex justify-between items-start gap-2">
           <div class="min-w-0"><div class="font-bold truncate">${productName(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 align-middle">Cotización</span>':''}</div><div class="text-xs text-clay-400 mt-0.5">${p.sku}</div></div>
-          <div class="text-right shrink-0"><div class="text-lg font-bold ${st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':''}">${st} <span class="text-xs text-clay-400 font-normal">u</span></div>${estado}</div>
+          <div class="text-right shrink-0"><div class="text-lg font-bold ${ped?'text-clay-300':(st<=0?'text-red-600':st<=p.stockMin?'text-amber-600':'')}">${ped&&st<=0?'—':(st+' <span class="text-xs text-clay-400 font-normal">u</span>')}</div>${estado}</div>
         </div>
         <div class="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-clay-100 text-xs">
           <div><div class="text-clay-400">Valor a costo</div><div class="font-medium text-clay-600">${fmt(st*(p.costo||0))}</div></div>
@@ -4348,7 +4572,7 @@ function stockMovements(productId){
   const p=productById(productId);
   if(p) moves.push({fecha:'', orden:0, tipo:'Stock inicial', detalle:'Carga base del producto', cantidad:p.stockInicial});
   DB.purchases.forEach(c=>c.items.forEach(i=>{ if(i.productId===productId && i.bodega!=='CA') moves.push({fecha:c.fecha, orden:1, tipo:'Compra', detalle:c.proveedor||'Proveedor', cantidad:i.cantidad}); }));
-  DB.sales.forEach(s=>{ if(s.bodega==='CA'||s.bodega==='CP'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
+  DB.sales.forEach(s=>{ if(s.perdido) return; s.items.forEach(i=>{ if(i.productId!==productId) return; const q=itemQtyBodega(s,i,'REQ'); if(q){const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente'))+(i.rep?' · pedido dividido entre bodegas':''), cantidad:-q}); }}); });
   (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='REQ') return; const det=devDetalle(r); (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:(r.clase==='cambio'?'Cambio (vuelve)':'Devolución'), detalle:det, cantidad:i.cantidad}); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Cambio (sale)', detalle:det, cantidad:-(+i.cantidad||0)}); }); });
   (DB.adjustments||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:1, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Recibido desde Casa Augusta', cantidad:i.cantidad}); else moves.push({fecha:t.fecha, orden:1, tipo:'Transferencia', detalle:'Envío a Casa Augusta', cantidad:-i.cantidad}); } }); });
@@ -4409,7 +4633,7 @@ function descargarPlanillaInventario(){
   doc.autoTable({
     head:[['SKU','Producto','Stock\nsistema','Conteo\nfísico','Diferencia']],
     // Solo maceteros (se excluyen los "solo cotización"), ordenados alfabéticamente por producto.
-    body:[...DB.products].filter(p=>!p.soloCotizacion).sort((a,b)=>productName(a).localeCompare(productName(b),'es',{sensitivity:'base',numeric:true})).map(p=>[p.sku, productName(p), String(stockOf(p.id)), '', '']),
+    body:[...DB.products].filter(p=>!p.soloCotizacion && !esAPedido(p)).sort((a,b)=>productName(a).localeCompare(productName(b),'es',{sensitivity:'base',numeric:true})).map(p=>[p.sku, productName(p), String(stockOf(p.id)), '', '']),
     styles:{fontSize:9,cellPadding:3,minCellHeight:9,lineColor:[235,216,203],lineWidth:0.2,textColor:[74,44,35],valign:'middle'},
     headStyles:{fillColor:[125,72,54],textColor:[255,255,255],fontStyle:'bold'},
     columnStyles:{0:{cellWidth:24},2:{halign:'center',cellWidth:24},3:{cellWidth:30},4:{cellWidth:28}},
@@ -4429,7 +4653,7 @@ function descargarStockCasaAugusta(){
   if(!window.jspdf||!window.jspdf.jsPDF){ alert('No se pudo generar el PDF. Verifica tu conexión e inténtalo de nuevo.'); return; }
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF();
-  let prods=[...DB.products].filter(p=>stockCA(p.id)>0 || !p.soloCotizacion);
+  let prods=[...DB.products].filter(p=>(stockCA(p.id)>0 || !p.soloCotizacion) && !(esAPedido(p)&&stockCA(p.id)<=0));   // sin los productos a pedido (no llevan stock)
   prods.sort((a,b)=>productNameCliente(a).localeCompare(productNameCliente(b),'es',{sensitivity:'base',numeric:true}));
   prods=[...prods.filter(p=>!p.soloCotizacion), ...prods.filter(p=>p.soloCotizacion)];
   let totalUnidades=0;
@@ -4466,7 +4690,259 @@ function openAdjust(pid){
   </div>
   <div class="p-5 border-t border-clay-100 flex justify-end gap-2"><button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200">Cancelar</button><button onclick="saveAdjust('${pid}')" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Aplicar</button></div>`);
 }
-function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!q){closeModal();return;}DB.adjustments.push({id:uid('a'),productId:pid,cantidad:q,motivo:document.getElementById('adj_m').value,fecha:todayISO()});save();closeModal();go('stock');}
+function saveAdjust(pid){const q=+document.getElementById('adj_q').value||0;if(!q){closeModal();return;}DB.adjustments.push({id:uid('a'),productId:pid,cantidad:q,motivo:document.getElementById('adj_m').value,fecha:todayISO()});save();closeModal();go(CURRENT==='stock_uni'?'stock_uni':'stock');}
+
+/* ===================== STOCK UNIFICADO =====================
+   Una sola pantalla con el stock de las tres bodegas: total por producto y detalle por bodega.
+   El total unificado suma lo DISPONIBLE en cada bodega; una bodega en negativo (vendido sin stock) no le
+   resta a las otras y se muestra como "faltan N". Debajo van los pedidos y ventas con su movimiento de
+   stock: cuántas unidades salen de cada bodega y qué falta por preparar en cada una.
+   No guarda datos propios: todo se calcula con el stock de cada bodega y los pedidos registrados. */
+let UNI_Q='', UNI_FIL='con', UNI_BOD='', UNI_ORD='nombre', UNI_PED_EST='prep', UNI_PED_ORI='', UNI_PED_BOD='';
+const UNI_ORIGEN={ shopify:{label:'Shopify', icon:'🛍️', pill:'blue'}, ca:{label:'Casa Augusta', icon:'🏠', pill:'green'}, cp:{label:'Casa Planta', icon:'🌿', pill:'green'}, viet:{label:'Viet Pottery', icon:'🪴', pill:'gray'} };
+// Bodegas que el usuario puede ajustar (según los módulos de stock a los que tiene acceso).
+function uniBodegasAjustables(){ if(!SESSION) return []; return BODEGAS.filter(b=> b==='REQ' ? (canView('stock')&&SESSION.rol!=='vendedor') : (b==='CA' ? canView('ca_stock') : canView('cp_stock'))); }
+// Una fila por producto: stock real de cada bodega (st), disponible (disp, nunca negativo), total y faltantes.
+function uniFilas(){
+  return productsForPicker(productName).map(p=>{
+    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id)}, disp={}, ped=esAPedido(p); let total=0, nBod=0, falta=0;
+    // "falta" = vendido sin stock; no aplica a los productos a pedido (no llevan stock)
+    BODEGAS.forEach(b=>{ disp[b]=Math.max(0,st[b]); total+=disp[b]; if(disp[b]>0) nBod++; if(st[b]<0 && !ped) falta+=-st[b]; });
+    return {p, st, disp, total, nBod, falta, ped};
+  });
+}
+// Unidades que faltan por entregar de un pedido, por bodega (lo "a pedido" no sale de bodega: va aparte).
+function salePendientePorBodega(s){
+  const t={REQ:0,CA:0,CP:0};
+  (s.items||[]).forEach(i=>{ if(itemAPedido(i)) return; let p=Math.max(0,itemPendienteQty(s,i)); if(!p) return; const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(p,r[b]); t[b]+=x; p-=x; }); });
+  return t;
+}
+// Pedidos y ventas de los cuatro orígenes (Shopify, Casa Augusta, Casa Planta y Viet Pottery) con su reparto por bodega.
+function uniPedidos(){
+  const out=[];
+  (DB.sales||[]).forEach(s=>{ if(s.perdido) return; const pend=s.estadoDespacho!=='entregado';
+    // PED = unidades "a pedido" (se compran para ese pedido; no salen de bodega)
+    const pedPend=pend?(s.items||[]).reduce((a,i)=>a+(itemAPedido(i)?Math.max(0,itemPendienteQty(s,i)):0),0):0;
+    out.push({s, cp:false, ori:(caCanal(s)==='Shopify'?'shopify':(s.origen==='CA'?'ca':'viet')), pend, rep:{...saleReparto(s), PED:saleUnidadesAPedido(s)}, prep:(pend?{...salePendientePorBodega(s), PED:pedPend}:{REQ:0,CA:0,CP:0,PED:0}), fecha:(s.fechaEntrega||s.fecha||'')}); });
+  (DB.cpSales||[]).forEach(s=>{ let u=0, up=0; (s.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(itemAPedido(i)) up+=q; else u+=q; }); out.push({s, cp:true, ori:'cp', pend:false, rep:{REQ:0,CA:0,CP:u,PED:up}, prep:{REQ:0,CA:0,CP:0,PED:0}, fecha:(s.fecha||'')}); });
+  return out;
+}
+function uniFiltro(v){ UNI_FIL=v; renderStockUnificado(); }
+function uniBodega(v){ UNI_BOD=(UNI_BOD===v?'':v); renderStockUnificado(); }
+function uniOrden(v){ UNI_ORD=v; renderStockUnificado(); }
+function uniPedEstado(v){ UNI_PED_EST=v; renderStockUnificado(); }
+function uniPedOrigen(v){ UNI_PED_ORI=(UNI_PED_ORI===v?'':v); renderStockUnificado(); }
+function uniPedBodega(v){ UNI_PED_BOD=(UNI_PED_BOD===v?'':v); renderStockUnificado(); }
+function uniBuscar(v){
+  UNI_Q=v||''; const q=UNI_Q.toLowerCase().trim(); let n=0;
+  document.querySelectorAll('#unitbl tbody tr[data-text]').forEach(tr=>{ const ok=!q||(tr.dataset.text||'').includes(q); tr.style.display=ok?'':'none'; if(ok) n++; });
+  const c=document.getElementById('uniCount'); if(c) c.textContent=n+' producto'+(n!==1?'s':'');
+}
+function renderStockUnificado(){
+  const v=document.getElementById('view');
+  const filas=uniFilas();
+  const tot={REQ:0,CA:0,CP:0}, nProd={REQ:0,CA:0,CP:0}, faltaB={REQ:0,CA:0,CP:0}; let total=0, conStock=0, multi=0, faltaN=0, nPed=0;
+  filas.forEach(f=>{ BODEGAS.forEach(b=>{ tot[b]+=f.disp[b]; if(f.disp[b]>0) nProd[b]++; if(f.st[b]<0 && !f.ped) faltaB[b]+=-f.st[b]; }); total+=f.total; if(f.total>0) conStock++; if(f.nBod>1) multi++; if(f.falta>0) faltaN++; if(f.ped) nPed++; });
+  let vis=filas.filter(f=> UNI_FIL==='todos' ? true : (UNI_FIL==='ped' ? f.ped : (UNI_FIL==='multi' ? f.nBod>1 : (UNI_FIL==='falta' ? f.falta>0 : f.total>0))));
+  if(UNI_BOD) vis=vis.filter(f=> f.ped ? f.disp[UNI_BOD]>0 : f.st[UNI_BOD]!==0);
+  if(UNI_ORD==='total') vis=vis.slice().sort((a,b)=>b.total-a.total);
+  // ---- Aviso: maceteros vendidos sin stock (saldo negativo de una bodega) y botón para regularizar lo ya entregado ----
+  // Cada saldo negativo se separa en: "colgando" (pedidos ya entregados → se regulariza) y "por comprar" (pedidos sin entregar).
+  const colg=uniSaldosColgando(), colgU=colg.reduce((a,f)=>a+f.colgando,0), colgPend=colg.reduce((a,f)=>a+f.porEntregar,0);
+  const colgMap={}, regB={REQ:0,CA:0,CP:0}, compB={REQ:0,CA:0,CP:0}; colg.forEach(f=>{ colgMap[f.p.id+'|'+f.b]=f; regB[f.b]+=f.colgando; compB[f.b]+=f.porEntregar; });
+  const puedeReg=colg.some(f=>f.colgando>0 && uniBodegasAjustables().includes(f.b));
+  const avisoColgando = colgU>0 ? `<div class="card p-3 sm:p-4 mb-4 bg-amber-50 border border-amber-200 flex items-center justify-between gap-3 flex-wrap">
+    <div class="text-sm text-amber-900 leading-snug min-w-0">⚠️ <b>${colgU} u de maceteros</b> quedaron como "vendidas sin stock" por pedidos <b>ya entregados</b>: se registraron saliendo de una bodega que no los tenía.${colgPend?` Otras ${colgPend} u son de pedidos por entregar (por comprar) y se compensan al recibir la compra.`:''}</div>
+    ${puedeReg?`<button onclick="openUniRegularizar()" class="bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold px-4 py-2 rounded-xl whitespace-nowrap">Regularizar…</button>`:''}
+  </div>` : '';
+  const card=(titulo,valor,sub,activo,fn,color)=>`<div onclick="${fn}" class="card p-3 sm:p-5 cursor-pointer hover:ring-2 hover:ring-sage-400 transition ${activo?'ring-2 ring-sage-500':''}"><div class="text-[11px] sm:text-sm text-clay-500 leading-tight">${titulo}</div><div class="text-lg sm:text-2xl font-bold mt-0.5 sm:mt-1 ${color||''}">${valor}</div><div class="text-[10px] sm:text-xs text-clay-400 mt-0.5 sm:mt-1 leading-tight">${sub}</div></div>`;
+  const subBod=b=>nProd[b]+' producto'+(nProd[b]!==1?'s':'')+(regB[b]?` · <span class="text-red-600">${regB[b]} u vendidas sin stock</span>`:'')+(compB[b]?` · <span class="text-amber-700" title="Maceteros de pedidos sin entregar que esta bodega no tiene: hay que comprarlos o traerlos">${compB[b]} u por comprar</span>`:'');
+  const chip=(val,label,n,col)=>`<button onclick="uniFiltro('${val}')" class="text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap ${UNI_FIL===val?'bg-clay-700 text-white border-clay-700':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${label} <span class="${UNI_FIL===val?'opacity-80':(col||'text-clay-400')}">${n}</span></button>`;
+  const th=(b)=>`<th class="text-center px-3 py-3 whitespace-nowrap ${UNI_BOD===b?'text-clay-800':''}">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre}<div class="normal-case font-normal text-[10px] text-clay-400">(${BODEGA_INFO[b].lugar})</div></th>`;
+  const celda=(f,b)=>{ const n=f.st[b]; if(n>0) return `<span class="font-semibold text-clay-800">${n}</span>`; if(n<0 && !f.ped){ const c=colgMap[f.p.id+'|'+b]||{colgando:-n,porEntregar:0};
+      return `<span class="text-clay-300">0</span>`+(c.colgando>0?`<div class="text-[10px] font-medium text-red-600 leading-tight" title="Vendidas desde esta bodega sin stock, en pedidos ya entregados: usa Regularizar. No restan al total">faltan ${c.colgando}</div>`:'')+(c.porEntregar>0?`<div class="text-[10px] font-medium text-amber-700 leading-tight" title="Pedidos sin entregar: esta bodega no las tiene, hay que comprarlas o traerlas">por comprar ${c.porEntregar}</div>`:''); }
+    return '<span class="text-clay-300">—</span>'; };
+  const tabla=`<div class="card overflow-hidden mb-4">
+    <div class="px-4 py-3 border-b border-clay-100 flex flex-wrap items-center gap-2">
+      <input id="uniQ" value="${(UNI_Q||'').replace(/"/g,'&quot;')}" oninput="uniBuscar(this.value)" placeholder="Buscar producto o SKU..." class="border border-clay-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]">
+      <select onchange="UNI_BOD='';uniBodega(this.value)" class="border border-clay-200 rounded-xl px-3 py-2 text-sm bg-white"><option value="">Todas las bodegas</option>${['CA','CP','REQ'].map(b=>`<option value="${b}" ${UNI_BOD===b?'selected':''}>${BODEGA_INFO[b].nombre}</option>`).join('')}</select>
+      <div class="flex items-center gap-1.5 flex-wrap">${chip('con','Con stock',conStock)}${chip('todos','Todos',filas.length)}${chip('multi','En 2 o más bodegas',multi)}${faltaN?chip('falta','Vendido sin stock',faltaN,'text-red-600'):''}${nPed?chip('ped','A pedido',nPed):''}</div>
+      <div id="uniCount" class="text-xs text-clay-400 ml-auto">${vis.length} productos</div>
+    </div>
+    <div class="overflow-auto max-h-[62vh]"><table class="w-full text-sm min-w-[720px]" id="unitbl">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
+        <th class="text-left px-4 py-3"><button onclick="uniOrden('nombre')" class="uppercase font-semibold ${UNI_ORD==='nombre'?'text-clay-800':'text-clay-500 hover:text-clay-700'}">Producto${UNI_ORD==='nombre'?' ↑':''}</button></th>
+        <th class="text-left px-3 py-3">SKU</th>
+        <th class="text-center px-3 py-3 bg-sage-100 text-sage-800 whitespace-nowrap"><button onclick="uniOrden('total')" class="uppercase font-semibold">Stock total${UNI_ORD==='total'?' ↓':''}</button><div class="normal-case font-normal text-[10px]">(unificado)</div></th>
+        ${th('CA')}${th('CP')}${th('REQ')}
+      </tr></thead><tbody>
+      ${vis.length?vis.map(f=>{const p=f.p;return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-text="${((p.sku||'')+' '+productName(p)).toLowerCase().replace(/"/g,'')}" onclick="openUniDetalle('${p.id}')">
+        <td class="px-4 py-2.5 font-medium">${productName(p)}${f.ped?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle" title="Venta calzada o mandado a hacer: no lleva stock">🛒 A pedido</span>':''}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</td>
+        <td class="px-3 py-2.5 text-clay-500 whitespace-nowrap">${p.sku||''}</td>
+        <td class="px-3 py-2.5 text-center bg-sage-50">${(f.ped&&f.total<=0)?'<span class="text-xs font-medium text-clay-400">sin stock (a pedido)</span>':`<span class="text-lg font-bold ${f.total>0?'text-sage-700':'text-red-600'}">${f.total}</span>`}</td>
+        <td class="px-3 py-2.5 text-center">${celda(f,'CA')}</td>
+        <td class="px-3 py-2.5 text-center">${celda(f,'CP')}</td>
+        <td class="px-3 py-2.5 text-center">${celda(f,'REQ')}</td>
+      </tr>`;}).join(''):`<tr><td colspan="6" class="px-4 py-10 text-center text-clay-500">No hay productos con este filtro.</td></tr>`}
+      </tbody></table></div>
+  </div>`;
+  // ---- Pedidos y ventas: movimiento de stock por bodega ----
+  const peds=uniPedidos(), pendientes=peds.filter(x=>x.pend);
+  const porPrep={REQ:{u:0,n:0},CA:{u:0,n:0},CP:{u:0,n:0},PED:{u:0,n:0}};
+  pendientes.forEach(x=>['REQ','CA','CP','PED'].forEach(b=>{ if(x.prep[b]>0){ porPrep[b].u+=x.prep[b]; porPrep[b].n++; } }));
+  const M=x=> UNI_PED_EST==='prep' ? x.prep : x.rep;   // por preparar: lo que falta entregar; últimas ventas: todo el movimiento del pedido
+  let base = UNI_PED_EST==='prep' ? pendientes.slice().sort((a,b)=>(a.fecha||'9999').localeCompare(b.fecha||'9999')) : peds.slice().sort((a,b)=>(b.s.fecha||'').localeCompare(a.s.fecha||''));
+  if(UNI_PED_BOD) base=base.filter(x=>M(x)[UNI_PED_BOD]>0);
+  const nOri={}; base.forEach(x=>{ nOri[x.ori]=(nOri[x.ori]||0)+1; });
+  let lista=UNI_PED_ORI?base.filter(x=>x.ori===UNI_PED_ORI):base;
+  const totalLista=lista.length; if(UNI_PED_EST!=='prep') lista=lista.slice(0,60);
+  const tabEst=(val,label)=>`<button onclick="uniPedEstado('${val}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold ${UNI_PED_EST===val?'bg-clay-700 text-white':'text-clay-600 hover:bg-clay-100'}">${label}</button>`;
+  const chipOri=k=>`<button onclick="uniPedOrigen('${k}')" class="text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap ${UNI_PED_ORI===k?'bg-sage-600 text-white border-sage-600':'bg-white border-clay-200 text-clay-600 hover:bg-clay-50'}">${UNI_ORIGEN[k].icon} ${UNI_ORIGEN[k].label} <span class="${UNI_PED_ORI===k?'opacity-80':'text-clay-400'}">${nOri[k]||0}</span></button>`;
+  const chipPrep=b=>{ const ped=b==='PED', tit=ped?'🛒 A pedido · por comprar o mandar a hacer':(BODEGA_INFO[b].icon+' Preparar en '+BODEGA_INFO[b].nombre);
+    return `<button onclick="uniPedBodega('${b}')" title="${ped?'Productos a pedido (venta calzada o mandados a hacer) de pedidos sin entregar':('Ver solo lo que sale de '+BODEGA_INFO[b].nombre)}" class="flex-1 min-w-[150px] text-left border rounded-xl px-3 py-2 ${UNI_PED_BOD===b?'border-sage-600 bg-sage-50 ring-1 ring-sage-600':'border-clay-200 bg-white hover:bg-clay-50'}"><div class="text-[11px] text-clay-500">${tit}</div><div class="text-base font-bold ${porPrep[b].u?'text-clay-800':'text-clay-300'}">${porPrep[b].u} u <span class="text-xs font-normal text-clay-400">· ${porPrep[b].n} pedido${porPrep[b].n!==1?'s':''}</span></div></button>`; };
+  const movHtml=x=>{ const m=M(x), us=BODEGAS.filter(b=>m[b]>0); if(!us.length && !(m.PED>0)) return '<span class="text-clay-300">—</span>';
+    const bod=us.map(b=>`<div class="badge ${us.length>1?'bg-amber-100 text-amber-800':'bg-sage-50 text-sage-800 border border-sage-100'} whitespace-nowrap mb-0.5">${BODEGA_INFO[b].icon} −${m[b]} unidad${m[b]!==1?'es':''} | ${BODEGA_INFO[b].nombre}</div>`);
+    if(m.PED>0) bod.push(`<div class="badge bg-clay-100 text-clay-600 whitespace-nowrap mb-0.5" title="Se compra para este pedido: no sale de bodega">🛒 ${m.PED} a pedido</div>`);
+    return bod.join('<br>'); };
+  const estHtml=x=> x.cp ? pill('Entregado','green') : (x.s.estadoDespacho==='entregado' ? pill('Entregado','green') : (x.s.estadoDespacho==='en_camino' ? pill('En camino','blue') : (saleHayEntregaParcial(x.s) ? pill('Entrega parcial','amber') : pill('Por preparar','amber'))));
+  const abrir=x=> x.cp ? (canView('cp_ventas')?`openCPSale('${x.s.id}')`:'') : `openSaleDetail('${x.s.id}')`;
+  const pedidos=`<div class="card overflow-hidden">
+    <div class="px-4 py-3 border-b border-clay-100">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div><div class="font-semibold">Pedidos y ventas · de qué bodega sale cada uno</div><div class="text-xs text-clay-400">${UNI_PED_EST==='prep'?'Unidades que faltan por entregar, según la bodega que las prepara.':'Últimos movimientos de los cuatro puntos de venta.'}</div></div>
+        <div class="flex items-center gap-1 bg-clay-100/70 p-1 rounded-xl">${tabEst('prep','Por preparar '+pendientes.length)}${tabEst('todas','Últimas ventas')}</div>
+      </div>
+      ${UNI_PED_EST==='prep'?`<div class="flex flex-wrap gap-2 mt-3">${['CA','CP','REQ'].concat(porPrep.PED.u?['PED']:[]).map(chipPrep).join('')}</div>`:''}
+      <div class="flex flex-wrap gap-1.5 mt-3">${['shopify','ca','cp','viet'].map(chipOri).join('')}</div>
+    </div>
+    ${lista.length?`<div class="overflow-auto max-h-[60vh]"><table class="w-full text-sm min-w-[860px]">
+      <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr><th class="text-left px-4 py-3">${UNI_PED_EST==='prep'?'Entrega':'Fecha'}</th><th class="text-left px-3 py-3"># Pedido</th><th class="text-left px-3 py-3">Origen</th><th class="text-left px-3 py-3">Cliente</th><th class="text-left px-3 py-3">Productos</th><th class="text-left px-3 py-3">Movimiento de stock</th><th class="text-left px-3 py-3">Estado</th></tr></thead>
+      <tbody>${lista.map(x=>{const s=x.s, o=UNI_ORIGEN[x.ori], fn=abrir(x);return `<tr class="border-t border-clay-100 ${fn?'hover:bg-clay-50/60 cursor-pointer':''}" ${fn?`onclick="${fn}"`:''}>
+        <td class="px-4 py-2.5 whitespace-nowrap text-clay-500">${UNI_PED_EST==='prep'?(s.fechaEntrega?fechaAmig(s.fechaEntrega):(s.fecha||'')):(s.fecha||'')}</td>
+        <td class="px-3 py-2.5 whitespace-nowrap font-semibold text-clay-600">${s.pedidoNum||s.shopifyNum||'—'}</td>
+        <td class="px-3 py-2.5 whitespace-nowrap">${pill(o.icon+' '+o.label,o.pill)}</td>
+        <td class="px-3 py-2.5 font-medium">${devNombreVenta(s)||'—'}</td>
+        <td class="px-3 py-2.5 text-clay-600">${(s.items||[]).map(i=>`<div class="whitespace-nowrap"><span class="text-clay-400 tabular-nums">${i.cantidad}×</span> ${itemLabel(i)}</div>`).join('')}</td>
+        <td class="px-3 py-2.5">${movHtml(x)}</td>
+        <td class="px-3 py-2.5 whitespace-nowrap">${estHtml(x)}</td>
+      </tr>`;}).join('')}</tbody></table></div>${totalLista>lista.length?`<div class="px-4 py-2 text-xs text-clay-400 border-t border-clay-100">Se muestran los últimos ${lista.length} de ${totalLista}.</div>`:''}`
+      :`<div class="p-8 text-center text-sm text-clay-500">${UNI_PED_EST==='prep'?'No hay pedidos por preparar con este filtro. 🎉':'No hay ventas con este filtro.'}</div>`}
+  </div>`;
+  v.innerHTML=`
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4">
+    ${card('Stock total unificado',total+' u',conStock+' productos con stock',!UNI_BOD,"UNI_BOD='';renderStockUnificado()",'text-sage-700')}
+    ${card('🏠 Casa Augusta <span class="text-clay-400">(Vitacura)</span>',tot.CA+' u',subBod('CA'),UNI_BOD==='CA',"uniBodega('CA')")}
+    ${card('🌿 Casa Planta <span class="text-clay-400">(Requínoa)</span>',tot.CP+' u',subBod('CP'),UNI_BOD==='CP',"uniBodega('CP')")}
+    ${card('🏭 Bodega Requinoa <span class="text-clay-400">(central)</span>',tot.REQ+' u',subBod('REQ'),UNI_BOD==='REQ',"uniBodega('REQ')")}
+  </div>
+  ${avisoColgando}
+  ${tabla}
+  ${pedidos}
+  <div class="text-xs text-clay-400 mt-3 px-1">💡 El <b>stock total</b> suma lo disponible en las tres bodegas. <b>"faltan N"</b> son maceteros vendidos desde una bodega sin stock en pedidos ya entregados (se corrige con <b>Regularizar</b>); <b>"por comprar N"</b> son de pedidos sin entregar. Ninguno resta al total. Lo que no es macetero (plantas, tierra, platos, servicios) y los maceteros mandados a hacer (fierro, greda) son <b>a pedido</b>: no llevan stock. Toca un producto para ver sus movimientos o ajustar; toca un pedido para abrirlo.</div>`;
+  uniBuscar(UNI_Q);
+}
+/* ---- Regularizar "vendido sin stock" ----
+   Un macetero queda con saldo NEGATIVO en una bodega cuando se vendió descontando de una bodega que no lo tenía.
+   Ese negativo tiene dos partes:
+     · por entregar: pedidos aún no entregados (venta calzada): se compensa solo al recibir la compra en esa bodega.
+     · colgando: pedidos YA entregados. El macetero salió físicamente de otro lado y el stock de las otras bodegas
+       ya es el real, así que lo correcto es dejar ese saldo en cero con un ajuste (+) en la bodega negativa.
+   No se tocan los pedidos ni el stock de las demás bodegas. Los productos a pedido no participan (no llevan stock). */
+// Unidades AÚN POR ENTREGAR de cada producto en cada bodega: { REQ:{idProducto:n}, CA:{…}, CP:{…} }.
+// Lo "a pedido" no cuenta (no sale de bodega), salvo que se pida con conAPedido=true: ahí se anota en la bodega del pedido.
+function pendientesPorBodega(conAPedido){
+  const pend={REQ:{},CA:{},CP:{}};
+  (DB.sales||[]).forEach(s=>{ if(s.perdido) return; (s.items||[]).forEach(i=>{ if(!conAPedido && itemAPedido(i)) return; let q=Math.max(0,itemPendienteQty(s,i)); if(!q) return; const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(q,r[b]); if(x>0){ pend[b][i.productId]=(pend[b][i.productId]||0)+x; q-=x; } }); }); });
+  return pend;
+}
+function uniSaldosColgando(){
+  const pend=pendientesPorBodega();
+  const out=[];
+  (DB.products||[]).forEach(p=>{ if(esAPedido(p)) return; BODEGAS.forEach(b=>{ const st=stockBodega(p.id,b); if(!(st<0)) return; const porEntregar=Math.min(-st, pend[b][p.id]||0); out.push({p, b, st, porEntregar, colgando:(-st-porEntregar)}); }); });
+  return out;
+}
+function openUniRegularizar(){
+  const aj=uniBodegasAjustables(), filas=uniSaldosColgando().sort((a,b)=>(b.colgando-a.colgando)||productName(a.p).localeCompare(productName(b.p),'es'));
+  const ok=filas.filter(f=>f.colgando>0&&aj.includes(f.b)), totC=ok.reduce((a,f)=>a+f.colgando,0), totP=filas.reduce((a,f)=>a+f.porEntregar,0);
+  const sinPermiso=filas.filter(f=>f.colgando>0&&!aj.includes(f.b)).length;
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">Regularizar maceteros vendidos sin stock</h3><div class="text-xs text-clay-400">Deja en cero el saldo negativo que quedó de pedidos ya entregados.</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <div class="text-sm text-clay-600 bg-clay-50 rounded-xl px-3 py-2.5">Estos maceteros se vendieron descontando de una bodega que no los tenía. Como el stock de las otras bodegas ya es el real, se agrega un <b>ajuste (+)</b> solo en la bodega que quedó en negativo. <b>No cambia el stock de las demás bodegas ni modifica ningún pedido</b>, y queda registrado en los movimientos de cada producto.</div>
+      <div class="overflow-x-auto border border-clay-100 rounded-xl"><table class="w-full text-sm min-w-[560px]">
+        <thead class="bg-clay-50 text-clay-500 text-xs uppercase"><tr><th class="text-left px-3 py-2.5">Producto</th><th class="text-left px-3 py-2.5">Bodega</th><th class="text-right px-3 py-2.5">Saldo hoy</th><th class="text-right px-3 py-2.5">Por entregar<div class="normal-case font-normal text-[10px] text-clay-400">se mantiene</div></th><th class="text-right px-3 py-2.5">Se ajusta</th></tr></thead>
+        <tbody>${filas.length?filas.map(f=>`<tr class="border-t border-clay-100 ${f.colgando>0?'':'text-clay-400'}"><td class="px-3 py-2">${productName(f.p)}</td><td class="px-3 py-2 whitespace-nowrap">${BODEGA_INFO[f.b].icon} ${BODEGA_INFO[f.b].nombre}</td><td class="px-3 py-2 text-right tabular-nums text-red-600">${f.st}</td><td class="px-3 py-2 text-right tabular-nums">${f.porEntregar||'—'}</td><td class="px-3 py-2 text-right tabular-nums font-semibold ${f.colgando>0?'text-sage-700':''}">${f.colgando>0?(aj.includes(f.b)?('+'+f.colgando):'sin permiso'):'—'}</td></tr>`).join(''):`<tr><td colspan="5" class="px-3 py-8 text-center text-clay-400">No hay maceteros con saldo negativo. 🎉</td></tr>`}</tbody>
+      </table></div>
+      ${totP?`<div class="text-xs text-clay-500">Las <b>${totP} u por entregar</b> no se tocan: son pedidos aún sin entregar y quedan en cero cuando recibas la compra en esa bodega (Órdenes de compra → Recibir).</div>`:''}
+      ${sinPermiso?`<div class="text-xs text-amber-700">Hay ${sinPermiso} producto${sinPermiso!==1?'s':''} en bodegas que tu usuario no puede ajustar.</div>`:''}
+    </div>
+    <div class="p-5 border-t border-clay-100 flex items-center justify-between gap-3 sticky bottom-0 bg-white">
+      <button onclick="closeModal()" class="px-4 py-2 rounded-xl border border-clay-200 text-sm">Cancelar</button>
+      ${totC?`<button onclick="regularizarSaldosColgando()" class="bg-clay-700 hover:bg-clay-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm">Dejar en cero ${totC} u (${ok.length} producto${ok.length!==1?'s':''})</button>`:`<span class="text-sm text-clay-400">Nada que regularizar</span>`}
+    </div>`,'xl');
+}
+function regularizarSaldosColgando(){
+  const aj=uniBodegasAjustables(), lista=uniSaldosColgando().filter(f=>f.colgando>0&&aj.includes(f.b));
+  if(!lista.length){ closeModal(); return; }
+  const motivo='Regularización: vendido sin stock en pedidos ya entregados', quien=(SESSION.nombre||SESSION.email), hechos=[];
+  lista.forEach(f=>{
+    if(f.b==='REQ'){ const a={id:uid('a'),productId:f.p.id,cantidad:f.colgando,motivo,fecha:todayISO()}; DB.adjustments.push(a); hechos.push({b:'REQ',id:a.id}); }
+    else if(f.b==='CA'){ if(!DB.adjustmentsCA) DB.adjustmentsCA=[]; const a={id:uid('aca'),productId:f.p.id,cantidad:f.colgando,motivo,fecha:todayISO(),creadoPor:quien}; DB.adjustmentsCA.push(a); hechos.push({b:'CA',id:a.id}); }
+    else { cpMov('ajuste', f.p.id, f.colgando, motivo); hechos.push({b:'CP',pid:f.p.id,q:f.colgando}); }
+  });
+  const u=lista.reduce((a,f)=>a+f.colgando,0);
+  save(); closeModal(); go('stock_uni');
+  toastUndo('✅ '+u+' u regularizadas en '+lista.length+' producto'+(lista.length!==1?'s':''), ()=>{
+    hechos.forEach(h=>{ if(h.b==='REQ') DB.adjustments=(DB.adjustments||[]).filter(a=>a.id!==h.id); else if(h.b==='CA') DB.adjustmentsCA=(DB.adjustmentsCA||[]).filter(a=>a.id!==h.id); else cpMov('ajuste', h.pid, -h.q, 'Deshacer regularización'); });
+    save(); if(CURRENT==='stock_uni') go('stock_uni');
+  });
+}
+// Detalle de un producto: stock por bodega, accesos a movimientos/ajuste y pedidos por preparar que lo llevan.
+function uniAjustar(pid,b){ if(b==='CA') openCAAdjust(pid); else if(b==='CP') openCPAjuste(pid); else openAdjust(pid); }
+function openUniDetalle(pid){
+  const p=productById(pid); if(!p) return;
+  const aj=uniBodegasAjustables(), st={REQ:stockOf(pid), CA:stockCA(pid), CP:cpStock(pid)}, ped=esAPedido(p);
+  const cg={}; uniSaldosColgando().forEach(f=>{ if(f.p.id===pid) cg[f.b]=f; });   // negativo separado en ya entregado / por comprar
+  const btn=(fn,txt)=>`<button onclick="${fn}" class="text-xs font-medium text-clay-700 bg-clay-100 hover:bg-clay-200 px-2.5 py-1.5 rounded-lg whitespace-nowrap">${txt}</button>`;
+  const fila=b=>{ const n=st[b];
+    const mov = b==='REQ' ? (canView('stock')?btn(`openTrazabilidad('${pid}')`,'Movimientos'):'') : (b==='CA' ? (canView('ca_stock')?btn(`openCATrazabilidad('${pid}')`,'Movimientos'):'') : (canView('cp_stock')?btn(`closeModal();go('cp_stock')`,'Ver historial'):''));
+    return `<div class="flex items-center justify-between gap-3 px-4 py-3 border-t border-clay-100 flex-wrap"><div class="min-w-0"><div class="font-medium text-sm">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre} <span class="text-clay-400 font-normal">(${BODEGA_INFO[b].lugar})</span></div>${(n<0&&!ped&&cg[b])?`${cg[b].colgando>0?`<div class="text-[11px] text-red-600">Faltan ${cg[b].colgando}: se vendieron desde esta bodega sin stock (pedidos ya entregados).</div>`:''}${cg[b].porEntregar>0?`<div class="text-[11px] text-amber-700">Por comprar ${cg[b].porEntregar}: pedidos sin entregar.</div>`:''}`:''}</div><div class="flex items-center gap-2"><span class="text-xl font-bold w-10 text-right ${n>0?'text-clay-800':'text-clay-300'}">${Math.max(0,n)}</span>${mov}${aj.includes(b)?btn(`uniAjustar('${pid}','${b}')`,'Ajustar'):''}</div></div>`; };
+  const pend=(DB.sales||[]).filter(s=>!s.perdido&&s.estadoDespacho!=='entregado'&&(s.items||[]).some(i=>i.productId===pid&&itemPendienteQty(s,i)>0));
+  const pendHtml=pend.length?`<div class="px-4 py-3 border-t border-clay-100 bg-clay-50"><div class="text-[11px] uppercase tracking-wide text-clay-400 mb-1.5">${ped?'Pedidos sin entregar con este producto (hay que comprarlo)':'Pedidos por preparar con este producto'}</div>${pend.slice(0,10).map(s=>{ const t={REQ:0,CA:0,CP:0}; (s.items||[]).forEach(i=>{ if(i.productId!==pid) return; let q=Math.max(0,itemPendienteQty(s,i)); const r=itemReparto(s,i); BODEGAS.forEach(b=>{ const x=Math.min(q,r[b]); t[b]+=x; q-=x; }); });
+      return `<button onclick="openSaleDetail('${s.id}')" class="w-full text-left flex items-center justify-between gap-2 py-1.5 text-sm hover:text-clay-900"><span class="min-w-0 truncate"><span class="text-clay-400">${s.fechaEntrega||s.fecha||''}${(s.pedidoNum||s.shopifyNum)?' · '+(s.pedidoNum||s.shopifyNum):''}</span> ${devNombreVenta(s)||'Cliente'}</span><span class="shrink-0 text-xs text-clay-600">${ped?('🛒 '+(t.REQ+t.CA+t.CP)+' a pedido'):BODEGAS.filter(b=>t[b]>0).map(b=>BODEGA_INFO[b].icon+' '+t[b]+' '+BODEGA_INFO[b].corto).join(' · ')}</span></button>`; }).join('')}${pend.length>10?`<div class="text-[11px] text-clay-400 mt-1">y ${pend.length-10} más…</div>`:''}</div>`:'';
+  modal(`
+    <div class="p-5 border-b border-clay-100 flex items-center justify-between sticky top-0 bg-white z-10">
+      <div><h3 class="text-lg font-bold">${productName(p)}</h3><div class="text-xs text-clay-400">${p.sku||''} · Stock por bodega</div></div>
+      <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
+    </div>
+    <div class="p-5">
+      <div class="border border-clay-100 rounded-xl overflow-hidden">
+        ${ped?`<div class="px-4 py-3 bg-clay-50 text-sm text-clay-700 flex items-start justify-between gap-3 flex-wrap"><div><b>🛒 Producto a pedido</b> (venta calzada o mandado a hacer): no lleva stock. Se compra o se fabrica cuando el cliente lo pide, así que no se avisa "sin stock" ni cuenta como faltante.</div>${canView('productos')?`<button onclick="openProduct('${pid}')" class="text-xs font-medium text-clay-700 bg-white border border-clay-200 hover:bg-clay-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap">Cambiar en la ficha</button>`:''}</div>`:''}
+        <div class="px-4 py-3 bg-sage-50 flex items-center justify-between"><span class="text-sm font-semibold text-sage-800">Stock total unificado</span><span class="text-2xl font-bold text-sage-700">${BODEGAS.reduce((a,b)=>a+Math.max(0,st[b]),0)}</span></div>
+        ${['CA','CP','REQ'].map(fila).join('')}
+        ${pendHtml}
+      </div>
+    </div>
+    <div class="p-5 border-t border-clay-100 flex justify-end sticky bottom-0 bg-white"><button onclick="closeModal()" class="bg-clay-700 text-white font-semibold px-5 py-2 rounded-xl">Cerrar</button></div>`);
+}
+// Botón "Ajustar stock": elige producto y bodega, y abre el ajuste propio de esa bodega (con su motivo e historial).
+function openUniAjuste(){
+  if(!uniBodegasAjustables().length) return;
+  modal(`<div class="p-5 border-b border-clay-100 flex items-center justify-between"><div><h3 class="text-lg font-bold">Ajustar stock</h3><div class="text-xs text-clay-400">Elige el producto y la bodega que quieres corregir.</div></div><button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button></div>
+  <div class="p-5 space-y-4">
+    <div><label class="text-sm font-medium">Producto</label><select id="unia_prod" onchange="uniAjStock()" class="w-full border border-clay-200 rounded-xl px-3 py-2 mt-1 bg-white">${productsForPicker(productName).map(p=>`<option value="${p.id}">${productName(p)}</option>`).join('')}</select></div>
+    <div><div class="text-sm font-medium mb-1.5">¿En qué bodega?</div><div id="unia_bods" class="grid sm:grid-cols-3 gap-2"></div></div>
+    <div class="text-[11px] text-clay-400">Se abre el ajuste de esa bodega, igual que en su módulo: queda registrado con su motivo.</div>
+  </div>`);
+  uniAjStock();
+}
+function uniAjStock(){
+  const pid=(document.getElementById('unia_prod')||{}).value, box=document.getElementById('unia_bods'); if(!pid||!box) return;
+  box.innerHTML=uniBodegasAjustables().map(b=>`<button type="button" onclick="uniAjustar('${pid}','${b}')" class="text-left border border-clay-200 hover:bg-clay-50 rounded-xl p-3"><div class="text-sm font-semibold">${BODEGA_INFO[b].icon} ${BODEGA_INFO[b].nombre}</div><div class="text-xs text-clay-500 mt-0.5">Stock actual: <b>${stockBodega(pid,b)}</b></div></button>`).join('');
+}
 
 /* ===================== PRODUCTOS ===================== */
 const SIZE_RANK={XS:0,S:1,M:2,L:3,XL:4,XXL:5};
@@ -4544,8 +5020,9 @@ function openProductDetail(id){
   const st=stockOf(id);
   const mg=p.precioRef?Math.round((p.precioRef-p.costo)/p.precioRef*100):0;
   const esVendedor=SESSION.rol==='vendedor';
-  const stTxt=st<=0?'Agotado':st<=(p.stockMin||0)?'Stock bajo':'OK';
-  const stCol=st<=0?'text-red-600':st<=(p.stockMin||0)?'text-amber-600':'text-sage-600';
+  const aPed=esAPedido(p);   // producto a pedido (venta calzada): no lleva stock
+  const stTxt=aPed?'A pedido (no lleva stock)':(st<=0?'Agotado':st<=(p.stockMin||0)?'Stock bajo':'OK');
+  const stCol=aPed?'text-clay-500':(st<=0?'text-red-600':st<=(p.stockMin||0)?'text-amber-600':'text-sage-600');
   const mini=(t,v,col)=>`<div class="bg-clay-50 rounded-xl p-3 text-center"><div class="text-xs text-clay-500">${t}</div><div class="text-lg font-bold ${col||''}">${v}</div></div>`;
   const actBtn=(fn,txt,primary)=>`<button onclick="${fn}" class="text-sm font-medium px-3 py-2 rounded-xl ${primary?'bg-clay-700 hover:bg-clay-800 text-white':'border border-clay-200 text-clay-700 hover:bg-clay-50'}">${txt}</button>`;
   modal(`
@@ -4565,7 +5042,7 @@ function openProductDetail(id){
         ${mini('Unidades vendidas',vendidas,'')}
         ${mini('Ingreso generado',fmt(ingreso),'text-sage-600')}
       </div>
-      <div class="bg-clay-50 rounded-xl p-3.5 text-sm text-clay-600">Estado de stock: <b class="${stCol}">${stTxt}</b> · mínimo ${p.stockMin} u · valor en stock ${fmt(st*p.costo)}</div>
+      <div class="bg-clay-50 rounded-xl p-3.5 text-sm text-clay-600">Estado de stock: <b class="${stCol}">${stTxt}</b>${aPed?' · se compra o se manda a hacer cuando el cliente lo pide':(' · mínimo '+p.stockMin+' u · valor en stock '+fmt(st*p.costo))}</div>
       <div class="border-t border-clay-100 pt-4 flex flex-wrap gap-2">
         ${actBtn(`openTrazabilidad('${p.id}')`,'📦 Ver trazabilidad',true)}
         ${!esVendedor?actBtn(`openAdjust('${p.id}')`,'Ajustar stock'):''}
@@ -4593,12 +5070,21 @@ function openProduct(id){
       <span><span class="text-sm font-medium">Producto solo para cotizaciones</span><span class="block text-[11px] text-clay-400 mt-0.5">No es stock habitual (se usa puntualmente para una cotización). Aparecerá separado y al final de la lista de Productos, sin mezclarse con tu catálogo.</span></span>
     </label>
     <div class="sm:col-span-2 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2.5 mt-1">
-      <div class="text-sm font-medium">¿Cuenta como macetero para la meta de unidades?</div>
-      <div class="text-[11px] text-clay-400 mt-0.5 mb-2">Plantas, sacos de tierra, servicios, fletes, platos y accesorios sí cuentan para la venta en $, pero <b>no</b> para la meta de maceteros.</div>
+      <div class="text-sm font-medium">¿Es macetero? <span class="font-normal text-clay-400">(cuenta para la meta de unidades)</span></div>
+      <div class="text-[11px] text-clay-400 mt-0.5 mb-2">Solo los <b>maceteros</b> cuentan para la meta. Plantas, sacos de tierra, platos, servicios y fletes suman a la venta en $, pero no a la meta (y se venden a pedido).</div>
       <select id="p_nomac" class="w-full border border-clay-200 rounded-xl px-3 py-2 bg-white text-sm">
-        <option value="auto" ${p.noMacetero===undefined?'selected':''}>Automático por nombre → ${esMaceteroAuto(p)?'sí cuenta como macetero':'NO cuenta (planta, insumo o servicio)'}</option>
+        <option value="auto" ${p.noMacetero===undefined?'selected':''}>Automático por nombre → ${esMaceteroAuto(p)?'sí es macetero':'no es macetero (planta, insumo o servicio)'}</option>
         <option value="si" ${p.noMacetero===false?'selected':''}>Sí, es macetero (forzar)</option>
         <option value="no" ${p.noMacetero===true?'selected':''}>No es macetero (forzar)</option>
+      </select>
+    </div>
+    <div class="sm:col-span-2 bg-clay-50 border border-clay-100 rounded-xl px-3 py-2.5 mt-1">
+      <div class="text-sm font-medium">¿Lleva stock o se vende a pedido?</div>
+      <div class="text-[11px] text-clay-400 mt-0.5 mb-2">Un producto <b>a pedido</b> (venta calzada o mandado a hacer) no lleva stock: se compra o se fabrica cuando el cliente lo pide, no avisa "sin stock" y no aparece como faltante. Úsalo también en maceteros mandados a hacer (fierro, greda): siguen contando para la meta.</div>
+      <select id="p_aped" class="w-full border border-clay-200 rounded-xl px-3 py-2 bg-white text-sm">
+        <option value="auto" ${p.aPedido===undefined?'selected':''}>Automático → ${esAPedidoAuto(p)?'a pedido (no lleva stock)':'lleva stock'}</option>
+        <option value="stock" ${p.aPedido===false?'selected':''}>Lleva stock (forzar)</option>
+        <option value="pedido" ${p.aPedido===true?'selected':''}>A pedido / mandado a hacer: no lleva stock (forzar)</option>
       </select>
     </div>
   </div>
@@ -4609,6 +5095,7 @@ function saveProduct(){
   Object.assign(EDITP,{sku:val('p_sku'),skuProveedor:val('p_skuprov')||'',modelo:val('p_modelo'),tamano:val('p_tam'),color:val('p_color')||'Natural',costo:milesParse(val('p_costo')),precioRef:milesParse(val('p_precio')),stockInicial:+val('p_stock')||0,stockMin:+val('p_min')||0,soloCotizacion:!!(document.getElementById('p_cotiz')&&document.getElementById('p_cotiz').checked)});
   // Clasificación para la meta: 'auto' deja que decida la regla por nombre; 'si'/'no' la fuerzan.
   const nm=(document.getElementById('p_nomac')||{}).value; if(nm==='no') EDITP.noMacetero=true; else if(nm==='si') EDITP.noMacetero=false; else delete EDITP.noMacetero;
+  const ap=(document.getElementById('p_aped')||{}).value; if(ap==='pedido') EDITP.aPedido=true; else if(ap==='stock') EDITP.aPedido=false; else delete EDITP.aPedido;   // ¿lleva stock o a pedido?
   if(!EDITP.modelo){alert('Ingresa el modelo');return;}
   if(EDITP.id){const ix=DB.products.findIndex(p=>p.id===EDITP.id);DB.products[ix]=EDITP;}else{EDITP.id=uid('p');DB.products.push(EDITP);}
   save();closeModal();go('productos');
@@ -6990,8 +7477,8 @@ function shopifyAdoptarVentaManual(o){
   return true;
 }
 // Construye un PEDIDO (Ventas → Pedidos) a partir de un pedido de Shopify.
-// Sigue la misma lógica de un pedido normal (origen no-CA, tipoDespacho 'Viet'),
-// con la única diferencia de que el stock se descuenta de Casa Augusta (bodega:'CA').
+// Sigue la misma lógica de un pedido normal (origen no-CA, tipoDespacho 'Viet'). Nace con bodega 'CA';
+// al importarlo, repartirPedidoWeb() decide de qué bodega sale cada unidad según el stock.
 function buildSaleFromShopifyOrder(o){
   const items = (o.items||[]).map(li=>{
     const sku = shopifyLineaSku(li); // SKU de Shopify o, si viene vacío, reconocido por nombre + variante
@@ -7036,6 +7523,40 @@ function buildSaleFromShopifyOrder(o){
     shopifyEnvio:(o.shippingTitle||o.metodoEnvio||(typeof o.shippingLine==='string'?o.shippingLine:(o.shippingLine&&o.shippingLine.title))||''),
     shopifyTotal:(totShopify||null) };
 }
+/* Reparto de un pedido web recién importado entre las bodegas.
+   Shopify publica el stock TOTAL (las tres bodegas), así que un pedido puede traer unidades que no están en
+   Casa Augusta. Cada línea saca primero de Casa Augusta; lo que falte, de Casa Planta y después de Requinoa.
+   Si no queda stock en ninguna, el resto se anota en Casa Augusta (vendido sin stock, como siempre).
+   Lo "a pedido" no sale de bodega. Se llama ANTES de agregar la venta a DB.sales (así el stock que se lee
+   todavía no la incluye). Con "Solo Casa Augusta" no reparte: todo sale de Casa Augusta, como antes. */
+function repartirPedidoWeb(venta){
+  if(!venta || !venta.items || shopifyStockFuente()!=='total') return venta;
+  const libre={};   // stock libre por producto y bodega; se va consumiendo línea a línea
+  venta.items.forEach(it=>{
+    if(itemAPedido(it)) return;
+    const pid=it.productId; let falta=Math.max(0,+it.cantidad||0); if(!falta) return;
+    if(!libre[pid]){ libre[pid]={}; SHOP_ORDEN_BODEGAS.forEach(b=>{ libre[pid][b]=Math.max(0,stockBodega(pid,b)); }); }
+    const r={REQ:0,CA:0,CP:0};
+    SHOP_ORDEN_BODEGAS.forEach(b=>{ const q=Math.min(falta, libre[pid][b]); if(q>0){ r[b]=q; libre[pid][b]-=q; falta-=q; } });
+    r.CA+=falta;
+    setItemRep(venta, it, r);
+  });
+  normalizarReparto(venta);
+  return venta;
+}
+// Aviso de bodega para un pedido web: solo cuando NO sale completo de Casa Augusta (hay que prepararlo en otra
+// bodega o está dividido). soloTexto=true devuelve el texto sin la etiqueta de color.
+function shopBodegaAviso(s, soloTexto){
+  const t=saleReparto(s), us=SHOP_ORDEN_BODEGAS.filter(b=>t[b]>0);
+  if(!us.length || (us.length===1 && us[0]==='CA')) return '';
+  const tx = us.length>1 ? ('🔀 Dividido: '+us.map(b=>BODEGA_INFO[b].corto+' '+t[b]).join(' · ')) : (BODEGA_INFO[us[0]].icon+' Sale de '+BODEGA_INFO[us[0]].nombre);
+  return soloTexto ? tx : pill(tx,'amber');
+}
+// Texto para el aviso al importar: qué pedidos hay que preparar fuera de Casa Augusta ('' si ninguno).
+function shopAvisoImportados(ventas){
+  const av=(ventas||[]).map(s=>{ const tx=shopBodegaAviso(s,true); return tx ? ((s.pedidoNum||'Pedido')+' '+tx) : ''; }).filter(Boolean);
+  return av.length ? (' ⚠️ Ojo con la bodega: '+av.join(' | ')) : '';
+}
 // ¿Se puede importar? (no excluido, no importado ya, y con al menos una línea vinculada)
 function shopifyOrderImportable(o){ if(o.excluir) return false; if(shopifyOrderImportado(o.orderId, o.num)) return false; return (o.items||[]).some(li=>{ const k=shopifyLineaSku(li); return k && productByShopifySku(k); }); }
 function shopifyOrdersPendientes(){ return SHOPIFY_ORDERS.filter(shopifyOrderImportable).length; }
@@ -7047,11 +7568,12 @@ function confirmImportShopifyOrders(){
   if(!IMPORT_SEL) return;
   const elegidos = SHOPIFY_ORDERS.filter(o=>IMPORT_SEL[o.orderId] && !shopifyOrderImportado(o.orderId, o.num));
   if(!elegidos.length){ if(typeof toastInfo==='function') toastInfo('No hay pedidos nuevos seleccionados para importar.'); return; }
-  let n=0, saltados=0;
-  elegidos.forEach(o=>{ const venta=buildSaleFromShopifyOrder(o); if(venta){ DB.sales.push(venta); n++; } else { saltados++; } });
+  let n=0, saltados=0; const nuevas=[];
+  elegidos.forEach(o=>{ const venta=buildSaleFromShopifyOrder(o); if(venta){ repartirPedidoWeb(venta); DB.sales.push(venta); nuevas.push(venta); n++; } else { saltados++; } });
   if(n>0) SHOP_NUEVOS_OFF=false;   // reaparece el banner de "pedidos nuevos" al importar
   save(); closeModal(); go('ca_shopify');
-  if(typeof toastInfo==='function') toastInfo('✅ Se importaron '+n+' pedido(s) de Shopify'+(saltados?(' · '+saltados+' sin vincular, omitido(s)'):'')+'.');
+  const avisoBod=shopAvisoImportados(nuevas);
+  if(typeof toastInfo==='function') toastInfo('✅ Se importaron '+n+' pedido(s) de Shopify'+(saltados?(' · '+saltados+' sin vincular, omitido(s)'):'')+'.'+avisoBod, avisoBod?12000:0);
 }
 function renderImportShopifyModal(){
   const filaLinea=(li)=>{ const k=shopifyLineaSku(li); const p=k?productByShopifySku(k):null; const okv=!!p;
@@ -7089,7 +7611,7 @@ function renderImportShopifyModal(){
       <button onclick="closeModal()" class="text-clay-400 hover:text-clay-700 text-xl">✕</button>
     </div>
     <div class="p-5 space-y-3">
-      <div class="text-sm text-clay-600 bg-blue-50 border border-blue-100 rounded-xl p-3 leading-snug">Se crearán como ventas de Casa Augusta con canal <b>Shopify</b> y descontarán stock de Casa Augusta. Los pedidos de <b>prueba</b> (tachados en Shopify) vienen desmarcados. Los ya importados no se repiten.</div>
+      <div class="text-sm text-clay-600 bg-blue-50 border border-blue-100 rounded-xl p-3 leading-snug">Se crearán como pedidos con canal <b>Shopify</b> y ${shopifyStockFuente()==='total'?'descontarán el stock de la bodega que lo tenga (primero Casa Augusta; si no alcanza, Casa Planta)':'descontarán stock de Casa Augusta'}. Los pedidos de <b>prueba</b> (tachados en Shopify) vienen desmarcados. Los ya importados no se repiten.</div>
       ${SHOPIFY_ORDERS.map(card).join('')}
     </div>
     <div class="p-5 border-t border-clay-100 flex items-center justify-between sticky bottom-0 bg-white">
@@ -7144,10 +7666,10 @@ function renderCAStock(){
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
         <th class="text-left px-4 py-3">SKU</th><th class="text-left px-3 py-3">Producto</th><th class="text-right px-3 py-3">En Casa Augusta</th><th class="text-right px-4 py-3">Valor venta</th>
       </tr></thead><tbody>
-      ${prods.map(p=>{const st=stockCA(p.id);const col=st<=0?'text-red-600':st<=2?'text-amber-600':'';const estado=st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green');const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-stock="${st>0?1:0}" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}" onclick="openCATrazabilidad('${p.id}')">
+      ${prods.map(p=>{const st=stockCA(p.id);const ped=esAPedido(p);const col=ped?'text-clay-300':(st<=0?'text-red-600':st<=2?'text-amber-600':'');const estado=ped?pill('A pedido','gray'):(st<=0?pill('Agotado','red'):st<=2?pill('Bajo','amber'):pill('OK','green'));const esPrimerCotiz=p.id===primerCotizId;return `<tr class="border-t ${esPrimerCotiz?'border-t-2 border-clay-300':'border-clay-100'} hover:bg-clay-50/60 cursor-pointer ${p.soloCotizacion?'bg-amber-50/40':''}" data-stock="${st>0?1:0}" data-text="${(p.sku+' '+productNameCliente(p)).toLowerCase().replace(/"/g,'')}" onclick="openCATrazabilidad('${p.id}')">
         <td class="px-4 py-3 text-clay-500 whitespace-nowrap">${p.sku}</td>
         <td class="px-3 py-3 font-medium">${productNameCliente(p)}${p.soloCotizacion?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle">Solo cotización</span>':''}</td>
-        <td class="px-3 py-3 text-right font-semibold ${col}">${st} <span class="ml-1">${estado}</span></td>
+        <td class="px-3 py-3 text-right font-semibold ${col}">${ped&&st<=0?'':st} <span class="ml-1">${estado}</span></td>
         <td class="px-4 py-3 text-right text-sage-700 whitespace-nowrap">${fmt(Math.max(0,st)*(p.precioRef||0))}</td>
       </tr>`;}).join('')}
       </tbody></table></div>
@@ -7203,7 +7725,7 @@ function caStockMovements(productId){
   const moves=[];
   (DB.transfers||[]).forEach(t=>{ if(t.estado==='anulada') return; (t.items||[]).forEach(i=>{ if(i.productId===productId){ if(t.sentido==='aCentral') moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Enviado a central (Requínoa)', cantidad:-i.cantidad}); else moves.push({fecha:t.fecha, orden:0, tipo:'Transferencia', detalle:'Recibido desde central', cantidad:i.cantidad}); } }); });
   DB.purchases.forEach(c=>(c.items||[]).forEach(i=>{ if(i.productId===productId && i.bodega==='CA') moves.push({fecha:c.fecha, orden:0, tipo:'Compra', detalle:(c.proveedor||'Proveedor')+' · recepción directa', cantidad:i.cantidad}); }));
-  DB.sales.forEach(s=>{ if(s.bodega!=='CA'||s.perdido) return; s.items.forEach(i=>{ if(i.productId===productId){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente')), cantidad:-i.cantidad}); }}); });
+  DB.sales.forEach(s=>{ if(s.perdido) return; s.items.forEach(i=>{ if(i.productId!==productId) return; const q=itemQtyBodega(s,i,'CA'); if(q){ const c=clientById(s.clienteId); moves.push({fecha:s.fecha, orden:1, tipo:'Venta', detalle:(c?c.nombre:(s.clienteNombre||'Cliente'))+(i.rep?' · pedido dividido entre bodegas':''), cantidad:-q}); }}); });
   (DB.caReturns||[]).forEach(r=>{ if(devBodega(r)!=='CA') return; const det=devDetalle(r); (r.items||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:(r.clase==='cambio'?'Cambio (vuelve)':'Devolución'), detalle:det, cantidad:i.cantidad}); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===productId) moves.push({fecha:r.fecha, orden:1, tipo:'Cambio (sale)', detalle:det, cantidad:-(+i.cantidad||0)}); }); });
   (DB.adjustmentsCA||[]).forEach(a=>{ if(a.productId===productId) moves.push({fecha:a.fecha, orden:2, tipo:'Ajuste', detalle:a.motivo||'Ajuste manual', cantidad:a.cantidad}); });
   moves.sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'') || a.orden-b.orden);
@@ -7290,7 +7812,7 @@ function saveCAAdjust(pid,actual){
   if(!q){ closeModal(); return; }
   const motivo=((document.getElementById('adjca_m')||{}).value||'').trim();
   DB.adjustmentsCA.push({id:uid('aca'),productId:pid,cantidad:q,motivo:motivo,fecha:todayISO(),creadoPor:(SESSION.nombre||SESSION.email)});
-  save(); closeModal(); go('ca_stock');
+  save(); closeModal(); go(CURRENT==='stock_uni'?'stock_uni':'ca_stock');
   toastInfo('✅ Inventario ajustado a '+Math.round(real)+' ('+(q>0?'+':'')+q+')');
 }
 
@@ -7742,25 +8264,40 @@ function vincSearch(val){ SHOP_VQ=val; renderCAShopify(); const el=document.getE
 // Auto-vincular: rellena SOLO los que aún no tienen equivalencia usando la sugerencia por precio/talla.
 function autoVincularShopify(){ if(!DB.shopifyMap) DB.shopifyMap={}; let n=0; SHOPIFY_CATALOG.forEach(v=>{ if(DB.shopifyMap[v.sku]) return; const p=shopifySuggest(v); if(p){ DB.shopifyMap[v.sku]=p.id; n++; } }); save(); renderCAShopify(); if(typeof toastInfo==='function') toastInfo(n?('Se sugirieron '+n+' vínculos. Revísalos y ajusta los que no calcen.'):'No hubo vínculos nuevos por sugerir.'); }
 function limpiarVinculosShopify(){ if(!confirm('¿Borrar TODAS las equivalencias Shopify↔Plataforma? Los SKU no se tocan, solo la tabla de vínculos.')) return; DB.shopifyMap={}; save(); renderCAShopify(); }
-/* --------- STOCK CASA AUGUSTA → SHOPIFY ---------
-   La plataforma (Casa Augusta) es la matriz. Aquí se calcula, por cada SKU de Shopify vinculado,
-   cuánto stock debe quedar PUBLICADO en Shopify = max(0, stockCA - colchón).
-   La app NO puede empujar sola a Shopify (es estática). El usuario copia la lista y me pide
-   "sincroniza el stock a Shopify"; yo la empujo por MCP (set-inventory) con red de seguridad. */
+/* --------- STOCK DE LA PLATAFORMA → SHOPIFY ---------
+   La plataforma es la matriz. Aquí se calcula, por cada SKU de Shopify vinculado, cuánto stock debe quedar
+   PUBLICADO en Shopify = max(0, stock total unificado − colchón). El total unificado suma lo disponible de las
+   tres bodegas (Casa Augusta + Casa Planta + Bodega Requinoa), igual que el módulo "Stock unificado".
+   Si se elige "Solo Casa Augusta" (DB.shopifyStockFuente==='CA') vuelve a ser max(0, stockCA − colchón), como antes.
+   El envío a Shopify lo hace el puente (Cloudflare Worker): botón "Sincronizar ahora" o automático. */
 function shopifyStockBuffer(){ const b=Number(DB.shopifyStockBuffer); return isNaN(b)?1:Math.max(0,b); }
 function setShopifyStockBuffer(val){ let n=parseInt(val,10); if(isNaN(n)||n<0) n=0; DB.shopifyStockBuffer=n; save(); renderCAShopify(); }
+// Qué stock se publica en Shopify: 'total' = las tres bodegas sumadas (por defecto) · 'CA' = solo Casa Augusta (como antes).
+function shopifyStockFuente(){ return (DB && DB.shopifyStockFuente==='CA') ? 'CA' : 'total'; }
+function setShopifyStockFuente(v){ DB.shopifyStockFuente=(v==='CA')?'CA':'total'; save(); renderCAShopify(); }
+// Orden en que un pedido web saca el stock: primero Casa Augusta, después Casa Planta y al final Requinoa.
+const SHOP_ORDEN_BODEGAS=['CA','CP','REQ'];
 // Filas de stock: solo variantes de Shopify VINCULADAS a un producto de la plataforma.
-function shopifyStockRows(){ const buf=shopifyStockBuffer();
+//   st       stock real de cada bodega · total = stock unificado (una bodega en negativo no le resta a las otras)
+//   compr    comprometido: unidades de pedidos AÚN POR ENTREGAR que se vendieron desde una bodega sin stock. Lo más
+//            probable es que salgan de otra bodega (o que lo que hay en otra bodega sea justo la compra para ese
+//            pedido), así que no se ofrecen en la web: red de seguridad contra la sobreventa.
+//   base     lo publicable antes del colchón · objetivo = lo que queda "disponible online" en Shopify
+function shopifyStockRows(){ const buf=shopifyStockBuffer(), uni=shopifyStockFuente()==='total', pend=uni?pendientesPorBodega(true):null;
   return SHOPIFY_CATALOG.map(v=>{ const p=productByShopifySku(v.sku); if(!p) return null;
-    const cca=stockCA(p.id); const objetivo=Math.max(0, cca-buf);
-    return {sku:v.sku, producto:v.producto, talla:v.talla, prod:p, stockCA:cca, buffer:buf, objetivo};
+    const st={REQ:stockOf(p.id), CA:stockCA(p.id), CP:cpStock(p.id)};
+    const total=BODEGAS.reduce((a,b)=>a+Math.max(0,st[b]),0);
+    const compr=uni ? BODEGAS.reduce((a,b)=>a+(st[b]<0 ? Math.min(-st[b], pend[b][p.id]||0) : 0),0) : 0;
+    const base=uni ? Math.max(0,total-compr) : st.CA;
+    const objetivo=Math.max(0, base-buf);
+    return {sku:v.sku, producto:v.producto, talla:v.talla, prod:p, st, stockCA:st.CA, total, compr, base, buffer:buf, objetivo};
   }).filter(Boolean).sort((a,b)=>a.producto.localeCompare(b.producto,'es',{numeric:true}));
 }
 // Texto que el usuario copia y me pega para que yo empuje a Shopify.
 function copyShopifyStockList(){ const rows=shopifyStockRows(); if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía. Vincula primero en la pestaña "Vincular SKU".'); return; }
   const fecha=new Date().toISOString().slice(0,10);
   const lineas=rows.map(r=>`${r.sku}\t${r.objetivo}`).join('\n');
-  const txt=`Sincronizar stock Casa Augusta → Shopify (colchón ${shopifyStockBuffer()} u.) — ${fecha}\nSKU\tDISPONIBLE_ONLINE\n${lineas}`;
+  const txt=`Sincronizar stock ${shopifyStockFuente()==='total'?'total (todas las bodegas)':'Casa Augusta'} → Shopify (colchón ${shopifyStockBuffer()} u.) — ${fecha}\nSKU\tDISPONIBLE_ONLINE\n${lineas}`;
   const done=()=>{ if(typeof toastInfo==='function') toastInfo('✅ Lista copiada. Pégamela en el chat y dime "sincroniza el stock a Shopify".'); };
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,()=>shopStockFallbackCopy(txt,done)); } else { shopStockFallbackCopy(txt,done); }
 }
@@ -7803,14 +8340,14 @@ async function sincronizarStockShopify(){
   if(!shopSyncConfigured()){ abrirConfigSync(); return; }
   const rows=shopifyStockRows();
   if(!rows.length){ if(typeof toastInfo==='function') toastInfo('No hay SKU vinculados todavía.'); return; }
-  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo}));
-  if(!confirm('¿Enviar el stock de '+items.length+' productos a Shopify?\n\nSe fijará el "disponible online" (stock de Casa Augusta menos el colchón de '+shopifyStockBuffer()+') en tu tienda.')) return;
+  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo})), sig=shopSigDe(rows);
+  if(!confirm('¿Enviar el stock de '+items.length+' productos a Shopify?\n\nSe fijará el "disponible online" ('+(shopifyStockFuente()==='total'?'stock total de las bodegas':'stock de Casa Augusta')+' menos el colchón de '+shopifyStockBuffer()+') en tu tienda.')) return;
   SHOP_SYNC_RUNNING=true; renderCAShopify();
   try{
     const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
     const data=await res.json().catch(()=>({ok:false,error:'La respuesta del puente no es válida.'}));
     SHOP_SYNC_RUNNING=false;
-    if(res.ok && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); try{ _shopPushedSig=shopStockSig(); }catch(_){} save(); }
+    if(res.ok && data.ok){ shopMarcarEnviado(sig); save(); }
     renderCAShopify();
     mostrarResultadoSync((res.ok&&data.ok)?data:{ok:false, error:(data&&data.error)||('Error HTTP '+res.status), results:data&&data.results});
   }catch(e){
@@ -7836,8 +8373,9 @@ function mostrarResultadoSync(data){
    Cada venta nueva de Shopify llega al "buzón" seguro (Cloudflare KV) vía webhook.
    El puente NUNCA toca la base de datos: solo guarda la venta hasta que la app la recoge.
    Mientras la plataforma está abierta, revisa el buzón cada 60 s y, por cada venta nueva:
-     1) la convierte en venta de Casa Augusta (canal Shopify) → descuenta stockCA,
-     2) reenvía el stock actualizado de Casa Augusta a Shopify (silencioso),
+     1) la convierte en pedido (canal Shopify) y descuenta el stock de la bodega que lo tiene
+        (primero Casa Augusta; si no alcanza, Casa Planta y después Requinoa),
+     2) reenvía el stock total actualizado a Shopify (silencioso),
      3) le avisa al buzón que ya la importó, para que se borre del KV.
    Si una venta trae un SKU aún NO vinculado, NO se importa ni se borra: queda en el
    buzón esperando a que se cree el vínculo, y entra sola en el siguiente ciclo. */
@@ -7850,11 +8388,11 @@ let BUZON_AVISADOS={};
 async function sincronizarStockShopifyAuto(){
   if(!shopSyncConfigured()) return false;
   const rows=shopifyStockRows(); if(!rows.length) return false;
-  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo}));
+  const items=rows.map(r=>({sku:r.sku, qty:r.objetivo})), sig=shopSigDe(rows);
   try{
     const res=await fetch(DB.shopifySyncUrl,{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({items}) });
     const data=await res.json().catch(()=>null);
-    if(res.ok && data && data.ok){ DB.shopifyStockSyncFecha=new Date().toISOString(); _shopPushedSig=shopStockSig(); save(); try{ if(CURRENT==='ca_shopify') renderCAShopify(); }catch(_){} return true; }
+    if(res.ok && data && data.ok){ shopMarcarEnviado(sig); save(); try{ if(CURRENT==='ca_shopify') renderCAShopify(); }catch(_){} return true; }
   }catch(e){ /* silencioso: se reintenta en el próximo ciclo */ }
   return false;
 }
@@ -7862,21 +8400,37 @@ async function sincronizarStockShopifyAuto(){
    La plataforma es la matriz. Cada vez que cambia el stock aquí (una venta presencial,
    un pedido, un ajuste, una devolución, una transferencia), se reenvía el stock a Shopify
    SOLO, con un retardo (debounce) de ~15 s para agrupar cambios seguidos. Solo se envía si
-   el stock objetivo cambió de verdad respecto al último envío (evita llamadas inútiles). */
+   el stock objetivo cambió de verdad respecto al último envío (evita llamadas inútiles).
+   Como ahora se publica el stock de las tres bodegas, el cambio puede venir de otro equipo (ej: una venta
+   de Casa Planta hecha en un celular que se bloquea antes de alcanzar a enviar). Por eso también se revisa
+   cuando llegan datos nuevos de la nube: si nadie lo envió todavía, lo envía este equipo. */
 let _shopPushTimer=null, _shopPushedSig=null;
-// "Firma" del stock objetivo actual: sku:cantidad|sku:cantidad… Si no cambia, no se reenvía.
-function shopStockSig(){ try{ return shopifyStockRows().map(r=>r.sku+':'+r.objetivo).join('|'); }catch(_){ return null; } }
-// Programa un envío con retardo. Se llama desde save() en cada cambio de la base.
-function programarPushStockShopify(){
+let _shopPushAt=0;   // cuándo está programada la próxima revisión
+// "Firma" del stock objetivo: sku:cantidad|sku:cantidad… Si no cambia, no se reenvía.
+function shopSigDe(rows){ return rows.map(r=>r.sku+':'+r.objetivo).join('|'); }
+function shopStockSig(){ try{ return shopSigDe(shopifyStockRows()); }catch(_){ return null; } }
+// Firma del último envío exitoso, COMPARTIDA entre equipos (se guarda en la base junto con la fecha).
+// Solo vale si ese último envío guardó su firma: si después envió un equipo con una versión antigua
+// (que solo manda Casa Augusta), las fechas no coinciden y se considera que hay que volver a enviar.
+function shopSigEnviada(){ return (DB && DB.shopifyStockSyncSig!=null && DB.shopifyStockSyncSigFecha===DB.shopifyStockSyncFecha) ? DB.shopifyStockSyncSig : null; }
+// Anota un envío exitoso (no guarda: quien llama hace save()).
+function shopMarcarEnviado(sig){ const f=new Date().toISOString(); DB.shopifyStockSyncFecha=f; DB.shopifyStockSyncSigFecha=f; DB.shopifyStockSyncSig=sig; _shopPushedSig=sig; }
+// Programa una revisión con retardo. Desde save() (sin parámetro) espera 15 s y agrupa cambios seguidos.
+// Con ms (datos que llegan de otro equipo) no atrasa una revisión que ya estaba programada para antes.
+function programarPushStockShopify(ms){
   if(!shopSyncConfigured()) return;
+  const espera=ms||15000, cuando=Date.now()+espera;
+  if(ms && _shopPushTimer && _shopPushAt<=cuando) return;
   clearTimeout(_shopPushTimer);
-  _shopPushTimer=setTimeout(()=>pushStockShopifySiCambio(), 15000);
+  _shopPushAt=cuando;
+  _shopPushTimer=setTimeout(()=>{ _shopPushTimer=null; pushStockShopifySiCambio(); }, espera);
 }
-// Envía solo si el stock objetivo cambió respecto al último envío exitoso.
+// Envía solo si el stock objetivo cambió: ni este equipo lo envió ya en esta sesión, ni figura como
+// enviado por otro equipo. (La doble condición evita reenvíos inútiles y que dos equipos se pisen.)
 async function pushStockShopifySiCambio(){
   if(!shopSyncConfigured() || SHOP_SYNC_RUNNING) return;
   const sig=shopStockSig();
-  if(sig===null || sig===_shopPushedSig) return; // sin cambios reales de stock: no molestar a Shopify
+  if(sig===null || sig===_shopPushedSig || sig===shopSigEnviada()) return; // sin cambios reales de stock: no molestar a Shopify
   await sincronizarStockShopifyAuto();
 }
 // Revisa el buzón e importa las ventas nuevas. silent=true por defecto (ciclo automático).
@@ -7891,11 +8445,11 @@ async function revisarBuzonShopify(silent){
     const pend=Array.isArray(data.orders)?data.orders:[];
     BUZON_LAST=Date.now();
     if(!pend.length){ if(!silent && typeof toastInfo==='function') toastInfo('No hay ventas nuevas de Shopify por importar.'); return; }
-    let importadas=0, sinVinculo=0, adoptadas=0; const ackIds=[]; const stuck=[]; // stuck: pedidos que quedan en espera
+    let importadas=0, sinVinculo=0, adoptadas=0; const ackIds=[]; const stuck=[]; const nuevas=[]; // stuck: pedidos que quedan en espera
     for(const o of pend){
       if(shopifyOrderImportado(o.orderId, o.num)){ if(shopifyAdoptarVentaManual(o)) adoptadas++; ackIds.push(o.orderId); continue; } // ya estaba (auto o a mano): solo limpiar buzón
       const venta=buildSaleFromShopifyOrder(o);
-      if(venta){ DB.sales.push(venta); importadas++; ackIds.push(o.orderId); }
+      if(venta){ repartirPedidoWeb(venta); DB.sales.push(venta); nuevas.push(venta); importadas++; ackIds.push(o.orderId); } // reparte entre bodegas según el stock
       else { // sin SKU vinculado: se DEJA en el buzón (no se acusa). Se anota qué productos vienen SIN SKU desde Shopify.
         sinVinculo++;
         const itemsSinSku=(o.items||[]).filter(li=>!li.sku);
@@ -7911,7 +8465,8 @@ async function revisarBuzonShopify(silent){
       try{ await fetch(base+'/ack',{ method:'POST', headers:{'Content-Type':'application/json','X-Sync-Key':DB.shopifySyncKey}, body:JSON.stringify({orderIds:ackIds}) }); }catch(_){}
     }
     if(importadas){
-      if(typeof toastInfo==='function') toastInfo('🛍️ '+importadas+' venta(s) de Shopify importada(s). Actualizando stock…');
+      const avisoBod=shopAvisoImportados(nuevas);
+      if(typeof toastInfo==='function') toastInfo('🛍️ '+importadas+' venta(s) de Shopify importada(s). Actualizando stock…'+avisoBod, avisoBod?12000:0);
       try{ rerender(); }catch(_){}
       await sincronizarStockShopifyAuto(); // devolver el stock actualizado a Shopify
     } else if(!silent && typeof toastInfo==='function' && !stuck.length){
@@ -7954,15 +8509,17 @@ function renderShopStock(){
   const buf=shopifyStockBuffer();
   const rows=shopifyStockRows();
   const vinc=rows.length, total=SHOPIFY_CATALOG.length, faltan=total-vinc;
+  const uni=shopifyStockFuente()==='total';
   const totalObjetivo=rows.reduce((a,r)=>a+r.objetivo,0);
-  const totalCA=rows.reduce((a,r)=>a+r.stockCA,0);
-  const reservado=totalCA-totalObjetivo;
+  const reservado=rows.reduce((a,r)=>a+Math.max(0,r.base),0)-totalObjetivo;   // lo que hay pero no se publica por el colchón
+  const soloCA=rows.reduce((a,r)=>a+Math.max(0,r.stockCA-buf),0);              // lo que se publicaría solo con Casa Augusta
   const banner=`<div class="card p-4 mb-4 bg-blue-50 border border-blue-100">
     <div class="flex items-start gap-3">
       <div class="text-2xl leading-none">📦</div>
       <div class="text-sm text-clay-700 leading-snug">
-        <div class="font-semibold text-clay-800 mb-0.5">El stock de Casa Augusta manda a Shopify</div>
-        Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = stock de Casa Augusta <b>menos el colchón</b> de seguridad.
+        <div class="font-semibold text-clay-800 mb-0.5">${uni?'El stock total de tus bodegas manda a Shopify':'El stock de Casa Augusta manda a Shopify'}</div>
+        Tu plataforma es la <b>matriz</b>. Aquí ves, por cada producto vinculado, cuánto debe quedar <b>disponible online</b> = ${uni?'stock <b>total unificado</b> (Casa Augusta + Casa Planta + Bodega Requinoa)':'stock de Casa Augusta'} <b>menos el colchón</b> de seguridad.
+        ${uni?`<div class="text-xs text-clay-600 mt-1.5">🏠 → 🌿 <b>De dónde sale cada pedido web:</b> primero de Casa Augusta; si no alcanza, de Casa Planta y después de Requinoa. El pedido queda marcado con la bodega donde hay que prepararlo, o como <b>dividido</b> si sale de más de una.</div>`:''}
         <div class="text-xs text-clay-500 mt-1.5">Con el botón <b>“Sincronizar ahora”</b> se envía este stock a Shopify al instante (fija el "disponible online" de cada producto, sin pisar cambios recientes).</div>
         <div class="text-xs text-sage-700 mt-1.5">🔄 <b>Círculo automático activo:</b> cada venta nueva de Shopify entra sola a la plataforma (mientras la tienes abierta), descuenta el stock y devuelve el stock actualizado a Shopify. Con <b>“Revisar ventas Shopify”</b> lo fuerzas al instante.</div>
         <div class="text-xs text-sage-700 mt-1.5">⬆️ <b>Y al revés también:</b> cuando haces una venta o un ajuste en la plataforma, el stock se envía solo a Shopify en unos ~15 segundos, sin que tengas que apretar nada. El botón <b>“Sincronizar ahora”</b> sigue disponible por si quieres forzarlo.</div>
@@ -7971,7 +8528,7 @@ function renderShopStock(){
   </div>`;
   const stats=`<div class="grid grid-cols-3 gap-2.5 sm:gap-4 mb-4">
     ${statCard('Productos vinculados',vinc,'de '+total+(faltan?(' · faltan '+faltan):''),faltan?'text-amber-600':'text-sage-700')}
-    ${statCard('A publicar online',totalObjetivo,'unidades','text-blue-700')}
+    ${statCard('A publicar online',totalObjetivo,uni?('unidades · solo Casa Augusta: '+soloCA):'unidades','text-blue-700')}
     ${statCard('Reservado (colchón)',reservado,buf+' u. por producto','text-clay-600')}
   </div>`;
   const cfg=shopSyncConfigured();
@@ -7982,6 +8539,12 @@ function renderShopStock(){
       ? `<button onclick="sincronizarStockShopify()" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl inline-flex items-center gap-2">🔄 Sincronizar ahora${ult?` <span class="text-[11px] font-normal text-sage-100">· ${ult}</span>`:''}</button>`
       : `<button onclick="abrirConfigSync()" class="text-sm font-semibold text-white bg-sage-700 hover:bg-sage-800 px-4 py-2 rounded-xl">⚙️ Configurar sincronización</button>`);
   const acciones=`<div class="card p-2.5 sm:p-3 mb-4 flex flex-wrap items-center gap-3">
+    <label class="text-sm text-clay-600 flex items-center gap-2">Stock que se publica
+      <select onchange="setShopifyStockFuente(this.value)" class="border border-clay-200 rounded-xl px-2.5 py-1.5 text-sm bg-white">
+        <option value="total" ${uni?'selected':''}>Total de las bodegas</option>
+        <option value="CA" ${uni?'':'selected'}>Solo Casa Augusta</option>
+      </select>
+    </label>
     <label class="text-sm text-clay-600 flex items-center gap-2">Colchón de seguridad
       <input type="number" min="0" value="${buf}" onchange="setShopifyStockBuffer(this.value)" class="border border-clay-200 rounded-xl px-2.5 py-1.5 text-sm w-20 text-center tabular-nums">
       <span class="text-xs text-clay-400">u. por producto</span>
@@ -7994,11 +8557,17 @@ function renderShopStock(){
     </div>
   </div>`;
   if(!vinc){ return banner+stats+acciones+emptyState({icon:'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', titulo:'Aún no hay SKU vinculados', detalle:'Ve a la pestaña "Vincular SKU" y conecta los productos de Shopify con la plataforma. Aquí aparecerá el stock a publicar.'}); }
-  const pillObj=(r)=>{ if(r.objetivo===0) return pill('Agotado online','red'); if(r.stockCA<=buf) return pill('Solo colchón','amber'); return pill(r.objetivo+' disponible','green'); };
+  // Sin stock = agotado; con stock pero todo dentro del colchón = "solo colchón" (existe, pero no se ofrece online).
+  const pillObj=(r)=>{ if(r.base<=0) return pill('Agotado online','red'); if(r.objetivo===0) return pill('Solo colchón','amber'); return pill(r.objetivo+' disponible','green'); };
+  // Dónde está el stock de un producto (solo las bodegas que tienen) y, si aplica, lo comprometido en pedidos.
+  const donde=(r)=>{ const us=SHOP_ORDEN_BODEGAS.filter(b=>r.st[b]>0); return us.length ? us.map(b=>BODEGA_INFO[b].corto+' <b class="tabular-nums text-clay-700">'+r.st[b]+'</b>').join(' · ') : '<span class="text-clay-400">sin stock</span>'; };
+  const comprTxt=(r)=> r.compr ? `<div class="text-[11px] text-amber-700 whitespace-nowrap" title="Unidades de pedidos por entregar que se vendieron desde una bodega sin stock: saldrán de otra bodega, por eso no se publican.">−${r.compr} comprometida${r.compr!==1?'s':''} en pedidos</div>` : '';
+  const stockNum=(r)=> uni ? r.total : r.stockCA;
   const filaDesktop=(r)=>`<tr class="border-t border-clay-100">
     <td class="px-4 py-3 whitespace-nowrap"><div class="font-medium text-clay-800">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku}</div></td>
     <td class="px-4 py-3 text-center text-clay-500">${r.talla}</td>
-    <td class="px-4 py-3 text-right tabular-nums font-semibold ${r.stockCA<=0?'text-red-600':'text-clay-800'}">${r.stockCA}</td>
+    ${uni?`<td class="px-4 py-3 text-xs text-clay-500 whitespace-nowrap">${donde(r)}${comprTxt(r)}</td>`:''}
+    <td class="px-4 py-3 text-right tabular-nums font-semibold ${r.base<=0?'text-red-600':'text-clay-800'}">${stockNum(r)}</td>
     <td class="px-4 py-3 text-center tabular-nums text-clay-400">−${r.buffer}</td>
     <td class="px-4 py-3 text-right tabular-nums font-bold text-blue-700">${r.objetivo}</td>
     <td class="px-4 py-3 text-center">${pillObj(r)}</td>
@@ -8008,12 +8577,13 @@ function renderShopStock(){
       <div class="min-w-0"><div class="font-bold truncate">${r.producto}</div><div class="text-[11px] text-clay-400 font-mono">${r.sku} · Talla ${r.talla}</div></div>
       <div class="text-right shrink-0"><div class="text-lg font-bold leading-none text-blue-700 tabular-nums">${r.objetivo}</div><div class="text-[11px] text-clay-400">online</div></div>
     </div>
-    <div class="mt-2 flex items-center justify-between text-xs text-clay-500"><span>Casa Augusta: <b class="tabular-nums ${r.stockCA<=0?'text-red-600':'text-clay-700'}">${r.stockCA}</b> − colchón ${r.buffer}</span>${pillObj(r)}</div>
+    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-clay-500"><span>${uni?'Total':'Casa Augusta'}: <b class="tabular-nums ${r.base<=0?'text-red-600':'text-clay-700'}">${stockNum(r)}</b> − colchón ${r.buffer}</span>${pillObj(r)}</div>
+    ${uni?`<div class="mt-1 text-[11px] text-clay-500">${donde(r)}${comprTxt(r)}</div>`:''}
   </div>`;
   const tabla=`<div class="card overflow-hidden">
-    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm min-w-[720px]">
+    <div class="hidden sm:block overflow-auto max-h-[64vh]"><table class="w-full text-sm ${uni?'min-w-[860px]':'min-w-[720px]'}">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr>
-        <th class="text-left px-4 py-3">Producto</th><th class="text-center px-4 py-3">Talla</th><th class="text-right px-4 py-3">Stock Casa Augusta</th><th class="text-center px-4 py-3">Colchón</th><th class="text-right px-4 py-3">Disponible online</th><th class="text-center px-4 py-3">Estado</th>
+        <th class="text-left px-4 py-3">Producto</th><th class="text-center px-4 py-3">Talla</th>${uni?'<th class="text-left px-4 py-3">Dónde está</th>':''}<th class="text-right px-4 py-3">${uni?'Stock total':'Stock Casa Augusta'}</th><th class="text-center px-4 py-3">Colchón</th><th class="text-right px-4 py-3">Disponible online</th><th class="text-center px-4 py-3">Estado</th>
       </tr></thead><tbody>${rows.map(filaDesktop).join('')}</tbody></table></div>
     <div class="sm:hidden p-2.5 space-y-2.5 bg-clay-50">${rows.map(filaMobile).join('')}</div>
   </div>`;
@@ -8275,7 +8845,7 @@ function bannerNuevosShopify(nuevas){
   if(!nuevas.length || SHOP_NUEVOS_OFF) return '';
   const n=nuevas.length;
   const totalN=nuevas.reduce((a,s)=>a+saleTotal(s),0);
-  const chips=nuevas.slice(0,8).map(s=>{ const c=clientById(s.clienteId); const nom=c?c.nombre:(s.clienteNombre||'Cliente'); return `<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-clay-700 bg-white border border-clay-200 rounded-full px-2.5 py-1 whitespace-nowrap">${s.pedidoNum?`<b class="text-clay-400 font-bold">${s.pedidoNum}</b>`:''}${nom} · ${fmt(saleTotal(s))}</span>`; }).join('');
+  const chips=nuevas.slice(0,8).map(s=>{ const c=clientById(s.clienteId); const nom=c?c.nombre:(s.clienteNombre||'Cliente'); return `<span class="inline-flex items-center gap-1.5 text-xs font-semibold text-clay-700 bg-white border border-clay-200 rounded-full px-2.5 py-1 whitespace-nowrap">${s.pedidoNum?`<b class="text-clay-400 font-bold">${s.pedidoNum}</b>`:''}${nom} · ${fmt(saleTotal(s))}${shopBodegaAviso(s,true)?` · <span class="text-amber-700">${shopBodegaAviso(s,true)}</span>`:''}</span>`; }).join('');
   const resto=n>8?`<span class="text-xs text-clay-500 self-center">+${n-8} más</span>`:'';
   const titulo = n===1 ? '¡Tienes 1 pedido nuevo de Shopify!' : '¡Entraron '+n+' pedidos nuevos de Shopify!';
   const sub = n===1 ? 'Entró un pedido. Revísalo para preparar el despacho.' : 'Suman '+fmt(totalN)+' en ventas por revisar.';
@@ -8345,7 +8915,7 @@ function renderCAShopify(){
       <div class="text-2xl leading-none">🛍️</div>
       <div class="text-sm text-clay-700 leading-snug flex-1">
         <div class="font-semibold text-clay-800 mb-0.5">Ventas de la tienda online (Shopify)</div>
-        Aquí ves las ventas hechas por Shopify. Se registran en <b>Ventas → Pedidos</b> (con la misma lógica de un pedido normal), con la diferencia de que <b>descuentan el stock de Casa Augusta</b>.
+        Aquí ves las ventas hechas por Shopify. Se registran en <b>Ventas → Pedidos</b> (con la misma lógica de un pedido normal), ${shopifyStockFuente()==='total'?'y <b>descuentan el stock de la bodega que lo tiene</b>: primero Casa Augusta y, si no alcanza, Casa Planta (el pedido queda marcado)':'con la diferencia de que <b>descuentan el stock de Casa Augusta</b>'}.
         <div class="text-xs text-clay-500 mt-1.5">Puedes <b>importar los pedidos de Shopify</b> con el botón de abajo (foto del ${SHOPIFY_ORDERS_FECHA}) o registrar una venta a mano. Los pedidos de prueba vienen desmarcados.</div>
       </div>
     </div>
@@ -8389,7 +8959,7 @@ function renderCAShopify(){
       </tr></thead><tbody>
       ${rows.map(s=>{const c=clientById(s.clienteId);const nuevo=shopVentaNueva(s);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60 cursor-pointer ${nuevo?'bg-blue-50/40':''}" onclick="abrirShopVentaDetalle('${s.id}')">
         <td class="px-4 py-3 whitespace-nowrap text-clay-500">${s.fecha}</td>
-        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}<span class="inline-flex items-center gap-1.5 flex-wrap">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">Nuevo</span>`:''}${devPillVenta(s)}</span>${s.notaCliente?`<div class="mt-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 max-w-[320px] truncate" title="${String(s.notaCliente).replace(/"/g,'&quot;')}">💬 ${s.notaCliente}</div>`:''}</td>
+        <td class="px-4 py-3 font-medium">${s.pedidoNum?`<div class="text-[11px] font-semibold text-clay-400 mb-0.5">${s.pedidoNum}</div>`:''}<span class="inline-flex items-center gap-1.5 flex-wrap">${c?c.nombre:(s.clienteNombre||'—')}${nuevo?`<span class="text-[10px] font-bold uppercase tracking-wide text-white bg-blue-600 rounded-full px-2 py-0.5">Nuevo</span>`:''}${devPillVenta(s)}${shopBodegaAviso(s)}</span>${s.notaCliente?`<div class="mt-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 max-w-[320px] truncate" title="${String(s.notaCliente).replace(/"/g,'&quot;')}">💬 ${s.notaCliente}</div>`:''}</td>
         <td class="px-4 py-3 text-clay-700">${s.items.map(i=>`<div class="flex items-baseline gap-1.5 whitespace-nowrap"><span class="text-clay-400 tabular-nums font-medium">${i.cantidad}×</span><span>${itemLabelCliente(i)}</span></div>`).join('')}</td>
         <td class="px-4 py-3 text-right font-semibold whitespace-nowrap">${fmt(saleTotal(s))}</td>
         <td class="px-4 py-3">${caPagoPill(s)}</td>
@@ -8405,7 +8975,7 @@ function renderCAShopify(){
           <div class="text-right shrink-0"><div class="text-lg font-bold leading-none">${fmt(saleTotal(s))}</div></div>
         </div>
         <div class="text-sm text-clay-600 mt-2 leading-snug">${s.items.map(i=>i.cantidad+'× '+itemLabelCliente(i)).join(' · ')}</div>
-        <div class="flex flex-wrap gap-1.5 mt-2.5">${caPagoPill(s)}${shopEntregaPill(s)}<button onclick="event.stopPropagation();toggleShopDespacho('${s.id}')" class="badge inline-flex items-center gap-1 ${tipoDespachoOf(s)==='Retiro'?'bg-sage-50 text-sage-700':'bg-clay-100 text-clay-600'}">${shopDespachoLabel(s)} ⇄</button>${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
+        <div class="flex flex-wrap gap-1.5 mt-2.5">${shopBodegaAviso(s)}${caPagoPill(s)}${shopEntregaPill(s)}<button onclick="event.stopPropagation();toggleShopDespacho('${s.id}')" class="badge inline-flex items-center gap-1 ${tipoDespachoOf(s)==='Retiro'?'bg-sage-50 text-sage-700':'bg-clay-100 text-clay-600'}">${shopDespachoLabel(s)} ⇄</button>${s.docTipo==='pendiente'?pill('Doc pendiente','amber'):(s.docTipo==='no_aplica'?'':`<span class="badge bg-clay-100 text-clay-600">${s.docTipo==='factura'?'Factura':'Boleta'} ${s.docNumero||''}</span>`)}</div>
         <div class="mt-3 pt-3 border-t border-clay-100 flex flex-wrap gap-2">${tipoDespachoOf(s)==='Retiro'?`<button onclick="event.stopPropagation();openRetiroMsg('${s.id}')" class="flex-1 text-xs font-semibold text-sage-700 border border-sage-200 bg-sage-50 hover:bg-sage-100 px-2 py-2 rounded-lg text-center">📅 Mensaje de retiro</button>`:''}${shopDocBtn(s,true)}<button onclick="event.stopPropagation();openConfirmacion('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Comprobante</button><button onclick="event.stopPropagation();abrirShopVentaEdit('${s.id}')" class="flex-1 text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2 py-2 rounded-lg text-center">Editar</button></div>
       </div>`;}).join('')}
     </div>
@@ -8536,7 +9106,7 @@ function openCASaleDetail(id){
 }
 function stockCABaseVenta(productId){
   let base=stockCA(productId);
-  if(EDITCA&&EDITCA.id){ const orig=DB.sales.find(x=>x.id===EDITCA.id); if(orig&&orig.bodega==='CA'&&!orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=(i.cantidad||0); }); }
+  if(EDITCA&&EDITCA.id){ const orig=DB.sales.find(x=>x.id===EDITCA.id); if(orig&&!orig.perdido) orig.items.forEach(i=>{ if(i.productId===productId) base+=itemQtyBodega(orig,i,'CA'); }); }
   return base;
 }
 function openCASale(id, canalDefault){
@@ -8548,9 +9118,10 @@ function openCASale(id, canalDefault){
   if(!EDITCA.canal) EDITCA.canal='Presencial';
   renderCASaleModal();
 }
-function caSaleProdOpt(sel){ return productsForPicker(productNameCliente).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · ${fmt(p.precioRef)} · CA ${stockCA(p.id)}</option>`).join(''); }
+function caSaleProdOpt(sel){ return productsForPicker(productNameCliente).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · ${fmt(p.precioRef)} · ${esAPedido(p)?'a pedido':('CA '+stockCA(p.id))}</option>`).join(''); }
 function caStockWarn(it){
   if(!it||!EDITCA) return '';
+  if(itemAPedido(it)) return '';   // producto a pedido: no lleva stock
   const base=stockCABaseVenta(it.productId);
   const req=EDITCA.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0);
   if(req>base) return `<div class="text-[11px] text-red-600 font-medium mt-1.5 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ Sin stock suficiente en Casa Augusta · disponible <b>${base}</b>, pedido <b>${req}</b>. Puedes registrar igualmente.</div>`;
@@ -8951,6 +9522,7 @@ function vincularDev(id, esCP){
   EDITCR.ventaId=s.id; EDITCR.ventaNum=devNumVenta(s); EDITCR.ventaEsCP=!!esCP; EDITCR.lineas=lineas; EDITCR.clienteNombre=devNombreVenta(s); EDITCR.bodega=bodegaDevolucionDeVenta(s, esCP);
   renderDevModal();
 }
+function setDevBodega(b){ if(!EDITCR||!BODEGA_INFO[b]) return; syncCADev(); EDITCR.bodega=b; renderDevModal(); }
 function desvincularDev(){ if(!EDITCR) return; syncCADev(); EDITCR.ventaId=null; EDITCR.ventaNum=''; EDITCR.lineas=[]; EDITCR.bodega=''; renderDevModal(); }
 function devTodo(){ if(!EDITCR) return; syncCADev(); EDITCR.lineas.forEach(l=>{ l.devolver=l.max; }); renderDevModal(); }
 function onDevLinea(ix,v){ const l=EDITCR.lineas[ix]; if(!l) return; l.devolver=Math.max(0,Math.min(l.max,parseInt(v,10)||0)); const el=document.getElementById('dv_resumen'); if(el) el.innerHTML=devResumenHtml(); }
@@ -8981,9 +9553,12 @@ function renderDevModal(){
   const opt=(k)=>{ const p=PUNTOS_DEV[k]; return `<button type="button" onclick="setDevPunto('${k}')" class="flex-1 text-left border rounded-xl p-3 transition ${e.punto===k?'border-clay-700 bg-clay-50 ring-1 ring-clay-700':'border-clay-200 hover:bg-clay-50'}"><div class="text-sm font-semibold text-clay-800">${p.icon} ${p.label}</div><div class="text-[11px] text-clay-500 mt-0.5">${p.desc}</div></button>`; };
   const clase=(k,icon,t,d)=>`<button type="button" onclick="setDevClase('${k}')" class="flex-1 text-left border rounded-xl p-3 transition ${e.clase===k?(k==='cambio'?'border-blue-600 bg-blue-50 ring-1 ring-blue-600':'border-amber-600 bg-amber-50 ring-1 ring-amber-600'):'border-clay-200 hover:bg-clay-50'}"><div class="text-sm font-semibold text-clay-800">${icon} ${t}</div><div class="text-[11px] text-clay-500 mt-0.5">${d}</div></button>`;
   const bodegaTxt=PUNTOS_DEV[e.bodega||e.punto].stock;
+  // Pedido dividido entre bodegas: se puede elegir a cuál vuelve (o de cuál sale) el stock.
+  const ventaDev=(e.ventaId&&!e.ventaEsCP)?(DB.sales||[]).find(x=>x.id===e.ventaId):null;
+  const bodDev=(ventaDev&&saleEsDividido(ventaDev))?`<div class="text-xs text-amber-800 mt-1">🔀 Este pedido salió de varias bodegas. Bodega donde ${esCambio?'se mueve':'vuelve'} el stock: <select onchange="setDevBodega(this.value)" class="border border-amber-300 rounded-lg px-1.5 py-0.5 bg-white text-xs">${saleBodegasUsadas(ventaDev).map(b=>`<option value="${b}" ${(e.bodega||'')===b?'selected':''}>${BODEGA_INFO[b].nombre}</option>`).join('')}</select></div>`:'';
   const pedidoBox = e.ventaId
     ? `<div class="border border-sage-200 bg-sage-50 rounded-xl p-3">
-        <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-sm"><b>Pedido ${e.ventaNum||''}</b> · ${e.clienteNombre||''}<div class="text-xs text-clay-500">El stock ${esCambio?'se mueve en':'vuelve a'} <b>${bodegaTxt}</b> (bodega de este pedido).</div></div><div class="flex gap-2"><button type="button" onclick="devTodo()" class="text-xs font-medium border border-clay-200 bg-white hover:bg-clay-50 px-3 py-1.5 rounded-lg">${esCambio?'Vuelve todo':'Devolver todo'}</button><button type="button" onclick="desvincularDev()" class="text-xs font-medium text-clay-500 hover:text-clay-800 px-2 py-1.5">Quitar pedido</button></div></div>
+        <div class="flex items-center justify-between gap-2 flex-wrap"><div class="text-sm"><b>Pedido ${e.ventaNum||''}</b> · ${e.clienteNombre||''}<div class="text-xs text-clay-500">El stock ${esCambio?'se mueve en':'vuelve a'} <b>${bodegaTxt}</b> (bodega de este pedido).</div>${bodDev}</div><div class="flex gap-2"><button type="button" onclick="devTodo()" class="text-xs font-medium border border-clay-200 bg-white hover:bg-clay-50 px-3 py-1.5 rounded-lg">${esCambio?'Vuelve todo':'Devolver todo'}</button><button type="button" onclick="desvincularDev()" class="text-xs font-medium text-clay-500 hover:text-clay-800 px-2 py-1.5">Quitar pedido</button></div></div>
         <table class="w-full text-sm mt-2"><thead class="text-[11px] uppercase text-clay-400"><tr><th class="text-left py-1">Producto</th><th class="text-center py-1">Vendida</th><th class="text-center py-1">Ya devuelta</th><th class="text-center py-1 w-28">${esCambio?'Vuelve':'Devolver'}</th></tr></thead><tbody>
         ${e.lineas.map((l,ix)=>`<tr class="border-t border-sage-100"><td class="py-1.5 pr-2">${l.label}<div class="text-[11px] text-clay-400">${fmt(l.precio)} c/u</div></td><td class="text-center tabular-nums">${l.vendida}</td><td class="text-center tabular-nums text-clay-400">${l.yaDev||'—'}</td><td class="text-center"><input type="number" min="0" max="${l.max}" value="${l.devolver}" oninput="onDevLinea(${ix},this.value)" ${l.max<=0?'disabled':''} class="w-20 text-center border border-clay-200 rounded-lg px-2 py-1 bg-white"></td></tr>`).join('')}
         </tbody></table>
@@ -9057,7 +9632,7 @@ function saveCADevolucion(){
     itemsEntrega=e.itemsEntrega.filter(i=>i.productId&&(+i.cantidad)>0).map(i=>({productId:i.productId,cantidad:+i.cantidad,precio:+i.precio||0}));
     if(!itemsEntrega.length){ alert('Indica qué producto se lleva el cliente a cambio.'); return; }
     const bod=e.bodega||punto; const falt=[];
-    itemsEntrega.forEach(i=>{ const disp=bod==='CA'?stockCA(i.productId):(bod==='CP'?cpStock(i.productId):stockOf(i.productId)); if(i.cantidad>disp) falt.push('• '+productNameCliente(productById(i.productId))+' — disponible '+disp+', se lleva '+i.cantidad); });
+    itemsEntrega.forEach(i=>{ if(itemAPedido(i)) return; const disp=bod==='CA'?stockCA(i.productId):(bod==='CP'?cpStock(i.productId):stockOf(i.productId)); if(i.cantidad>disp) falt.push('• '+productNameCliente(productById(i.productId))+' — disponible '+disp+', se lleva '+i.cantidad); });
     if(falt.length && !confirm('Stock insuficiente en '+PUNTOS_DEV[bod].stock+' para lo que se lleva:\n\n'+falt.join('\n')+'\n\n¿Registrar igual?')) return;
   }
   const m=devMontos(); const bodega=e.bodega||punto;
@@ -9173,7 +9748,7 @@ let CP_EDIT=null, CP_Q='', CP_MES='todos', CP_SQ='', CP_SOLO_STOCK=false, CP_HIS
 // Stock GUARDADO de Casa Planta (lo que mueven las ventas de Casa Planta, entradas, salidas y conteos).
 const cpStockGuardado = pid => +(((DB&&DB.cpStock)||{})[pid]||0);
 // Unidades reservadas por PEDIDOS (Ventas → Pedidos) que despachan desde la bodega Casa Planta.
-function cpPedidosQty(pid){ let q=0; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido||v.bodega!=='CP') return; (v.items||[]).forEach(i=>{ if(i.productId===pid) q+=(+i.cantidad||0); }); }); return q; }
+function cpPedidosQty(pid){ let q=0; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido) return; (v.items||[]).forEach(i=>{ if(i.productId===pid) q+=itemQtyBodega(v,i,'CP'); }); }); return q; }
 // Devoluciones de la bodega Casa Planta (módulo Devoluciones): lo devuelto reingresa; en un cambio, lo entregado sale.
 function cpDevolucionesQty(pid){ let q=0; ((DB&&DB.caReturns)||[]).forEach(r=>{ if(devBodega(r)!=='CP') return; (r.items||[]).forEach(i=>{ if(i.productId===pid) q+=(+i.cantidad||0); }); (r.itemsEntrega||[]).forEach(i=>{ if(i.productId===pid) q-=(+i.cantidad||0); }); }); return q; }
 // Stock DISPONIBLE de Casa Planta = guardado − pedidos que salen de esta bodega + devoluciones. Es lo que ve toda la app.
@@ -9200,10 +9775,10 @@ function cpMovsDevoluciones(){
 }
 // Movimientos "virtuales" de los pedidos (Ventas → Pedidos) que despachan desde Casa Planta, para el historial.
 function cpMovsPedidos(){
-  const out=[]; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido||v.bodega!=='CP') return;
+  const out=[]; ((DB&&DB.sales)||[]).forEach(v=>{ if(v.perdido) return;
     const c=clientById(v.clienteId); const quien=(c?c.nombre:(v.clienteNombre||'')).trim();
     const ts=v.creadoAt||(v.fecha?new Date(v.fecha+'T12:00:00').getTime():0);
-    (v.items||[]).forEach(i=>{ const q=+i.cantidad||0; if(q>0) out.push({id:'ped-'+v.id+'-'+i.productId, ts, fecha:v.fecha||'', tipo:'pedido', productId:i.productId, cantidad:-q, motivo:'Pedido'+(v.pedidoNum?(' '+v.pedidoNum):'')+(quien?(' · '+quien):''), saleId:v.id, virtual:true}); });
+    (v.items||[]).forEach(i=>{ const q=itemQtyBodega(v,i,'CP'); if(q>0) out.push({id:'ped-'+v.id+'-'+i.productId, ts, fecha:v.fecha||'', tipo:'pedido', productId:i.productId, cantidad:-q, motivo:'Pedido'+(v.pedidoNum?(' '+v.pedidoNum):'')+(quien?(' · '+quien):''), saleId:v.id, virtual:true}); });
   }); return out;
 }
 // Historial completo (movimientos reales + pedidos), del más reciente al más antiguo. El saldo se
@@ -9284,10 +9859,10 @@ function openCPSale(id){
   CP_EDIT=s?JSON.parse(JSON.stringify(s)):{id:null,fecha:todayISO(),cliente:'',telefono:'',email:'',items:[{productId:p0.id,cantidad:1,precio:+p0.precioRef||0,descuento:0}],pagado:true,nota:'',docTipo:'pendiente',docNumero:''};
   renderCPSaleModal();
 }
-function cpProdOpt(sel){ return productsForPicker(productNameCliente).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · ${fmt(p.precioRef)} · stock ${cpStock(p.id)}</option>`).join(''); }
+function cpProdOpt(sel){ return productsForPicker(productNameCliente).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${productNameCliente(p)} · ${fmt(p.precioRef)} · ${esAPedido(p)?'a pedido':('stock '+cpStock(p.id))}</option>`).join(''); }
 // Stock disponible para la venta en edición: el actual + lo que esa misma venta ya tenía descontado.
 function cpStockBase(pid){ let b=cpStock(pid); if(CP_EDIT&&CP_EDIT.id){ const o=cpSales().find(x=>x.id===CP_EDIT.id); if(o) (o.items||[]).forEach(i=>{ if(i.productId===pid) b+=(+i.cantidad||0); }); } return b; }
-function cpWarn(it){ if(!it||!CP_EDIT) return ''; const base=cpStockBase(it.productId); const req=CP_EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0); if(req>base) return `<div class="text-[11px] text-red-600 font-medium mt-1.5 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ Stock insuficiente en Casa Planta · disponible <b>${base}</b>, pedido <b>${req}</b>.</div>`; return ''; }
+function cpWarn(it){ if(!it||!CP_EDIT) return ''; if(itemAPedido(it)) return ''; const base=cpStockBase(it.productId); const req=CP_EDIT.items.filter(x=>x.productId===it.productId).reduce((a,x)=>a+(+x.cantidad||0),0); if(req>base) return `<div class="text-[11px] text-red-600 font-medium mt-1.5 bg-red-50 border border-red-200 rounded-lg px-2 py-1">⚠️ Stock insuficiente en Casa Planta · disponible <b>${base}</b>, pedido <b>${req}</b>.</div>`; return ''; }
 function cpLineSub(it){ const d=it.descuento||0, sub=lineTotal(it); return d>0?`<span class="text-sage-700">Subtotal: <span class="line-through text-clay-300">${fmt(it.cantidad*it.precio)}</span> → <b>${fmt(sub)}</b> · ${d}% dcto</span>`:`<span class="text-clay-400">Subtotal: <b>${fmt(sub)}</b></span>`; }
 function cpItemRow(it,ix){
   return `<div class="border border-clay-100 rounded-xl p-2.5 bg-clay-50/40"><div class="grid grid-cols-12 gap-2 items-center">
@@ -9343,7 +9918,7 @@ function saveCPSale(){
   const items=CP_EDIT.items.filter(i=>i.productId&&(+i.cantidad)>0).map(i=>({productId:i.productId,cantidad:Math.round(+i.cantidad),precio:+i.precio||0,descuento:+i.descuento||0,descripcion:productNameCliente(productById(i.productId))}));
   if(!items.length){ alert('Agrega al menos un producto.'); return; }
   const req={}; items.forEach(i=>{ req[i.productId]=(req[i.productId]||0)+i.cantidad; });
-  const falt=Object.keys(req).filter(pid=>req[pid]>cpStockBase(pid)).map(pid=>'• '+productNameCliente(productById(pid))+' — disponible '+cpStockBase(pid)+', pedido '+req[pid]);
+  const falt=Object.keys(req).filter(pid=>!esAPedido(productById(pid))&&req[pid]>cpStockBase(pid)).map(pid=>'• '+productNameCliente(productById(pid))+' — disponible '+cpStockBase(pid)+', pedido '+req[pid]);
   if(falt.length && !confirm('Stock insuficiente en Casa Planta:\n\n'+falt.join('\n')+'\n\n¿Registrar igual? El stock quedará en negativo hasta que lo ajustes en Casa Planta → Stock.')) return;
   if(!DB.cpSales) DB.cpSales=[];
   if(CP_EDIT.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(CP_EDIT.email)){ alert('El correo del cliente no parece válido. Revísalo o déjalo vacío.'); return; }
@@ -9393,7 +9968,7 @@ function renderCPStock(){
   const rows=todos.filter(p=>{ if(CP_SOLO_STOCK && cpStock(p.id)<=0) return false; if(q && !productNameCliente(p).toLowerCase().includes(q)) return false; return true; });
   const unidades=todos.reduce((a,p)=>a+Math.max(0,cpStock(p.id)),0);
   const conStock=todos.filter(p=>cpStock(p.id)>0).length;
-  const negativos=todos.filter(p=>cpStock(p.id)<0).length;
+  const negativos=todos.filter(p=>!esAPedido(p)&&cpStock(p.id)<0).length;   // lo "a pedido" no lleva stock: no cuenta como negativo
   const valor=todos.reduce((a,p)=>a+Math.max(0,cpStock(p.id))*(+p.precioRef||0),0);
   const reservadas=todos.reduce((a,p)=>a+cpPedidosQty(p.id),0); // unidades ya descontadas por pedidos que despachan desde CP
   const banner=cpBanner('Inventario propio de Casa Planta','Este stock baja solo con las <b>ventas de Casa Planta</b> y con los <b>pedidos</b> (Ventas → Pedidos) que eligen la bodega Casa Planta. Aquí lo cargas y ajustas a mano. Puedes escribir la cantidad directamente en la columna <b>Stock</b> (conteo) o usar <b>Ajustar</b> para una entrada o salida con motivo. Todo queda en el historial.');
@@ -9413,9 +9988,9 @@ function renderCPStock(){
     <div class="overflow-auto max-h-[60vh]"><table class="w-full text-sm min-w-[520px]">
       <thead class="bg-clay-50 text-clay-500 text-xs uppercase sticky top-0 z-10"><tr><th class="text-left px-4 py-3">Producto</th><th class="text-right px-4 py-3">Precio ref.</th><th class="text-center px-4 py-3">Stock</th><th class="px-4 py-3"></th></tr></thead>
       <tbody>${rows.length?rows.map(p=>{const n=cpStock(p.id);return `<tr class="border-t border-clay-100 hover:bg-clay-50/60">
-        <td class="px-4 py-2.5 font-medium text-clay-800">${productNameCliente(p)}</td>
+        <td class="px-4 py-2.5 font-medium text-clay-800">${productNameCliente(p)}${esAPedido(p)?' <span class="badge bg-clay-100 text-clay-500 ml-1 align-middle" title="No lleva stock: se compra o se manda a hacer cuando el cliente lo pide">A pedido</span>':''}</td>
         <td class="px-4 py-2.5 text-right text-clay-500 tabular-nums whitespace-nowrap">${fmt(p.precioRef)}</td>
-        <td class="px-4 py-2.5 text-center"><input type="number" value="${n}" onchange="cpFijar('${p.id}',this.value,'Conteo manual')" title="Escribe la cantidad real y presiona Enter" class="w-20 text-center border border-clay-200 rounded-lg px-2 py-1.5 text-base font-bold tabular-nums ${stockCls(n)} bg-white"></td>
+        <td class="px-4 py-2.5 text-center"><input type="number" value="${n}" onchange="cpFijar('${p.id}',this.value,'Conteo manual')" title="Escribe la cantidad real y presiona Enter" class="w-20 text-center border border-clay-200 rounded-lg px-2 py-1.5 text-base font-bold tabular-nums ${(esAPedido(p)&&n<=0)?'text-clay-300':stockCls(n)} bg-white"></td>
         <td class="px-4 py-2.5 text-right whitespace-nowrap"><button onclick="openCPAjuste('${p.id}')" class="text-xs font-medium text-clay-600 border border-clay-200 hover:bg-clay-50 px-2.5 py-1.5 rounded-lg">Ajustar</button></td>
       </tr>`;}).join(''):`<tr><td colspan="4" class="px-4 py-10 text-center text-clay-500">No hay productos que calcen con el filtro.</td></tr>`}</tbody></table></div>
   </div>`;
@@ -9472,7 +10047,7 @@ function saveCPAjuste(){
   else { if(!a.cantidad){ alert('Indica la cantidad.'); return; } delta=(tipo==='salida'?-1:1)*a.cantidad; motivo=motivo||(tipo==='salida'?'Salida manual':'Entrada manual'); }
   if(cpStock(a.productId)+delta<0 && !confirm('El stock de '+productNameCliente(p)+' quedaría en negativo ('+(cpStock(a.productId)+delta)+'). ¿Guardar igual?')) return;
   cpMov(tipo, a.productId, delta, motivo, '', a.fecha);
-  save(); closeModal(); CP_AJ=null; go('cp_stock');
+  save(); closeModal(); CP_AJ=null; go(CURRENT==='stock_uni'?'stock_uni':'cp_stock');
   toastInfo((delta>0?'+':'')+delta+' · '+productNameCliente(p)+' ahora tiene '+cpStock(a.productId));
 }
 
@@ -9620,9 +10195,9 @@ function descargarRespaldoExcel(){
     'Fecha venta':s.fecha||'','Cliente':c?c.nombre:(s.clienteNombre||''),'Días':diasDesde(s.fecha),'Monto':saleTotal(s),'Cuenta':s.cuenta||'','Documento':docPlain(s)
   };}));
 
-  add('Stock',(DB.products||[]).map(p=>{const st=stockOf(p.id);return {
+  add('Stock',(DB.products||[]).map(p=>{const st=stockVisible(p,stockOf(p.id));return {
     'SKU':p.sku||'','Producto':productName(p),'Modelo':p.modelo||'','Tamaño':p.tamano||'','Color':p.color||'','Stock':st,'Mínimo':p.stockMin||0,
-    'Estado':st<=0?'Agotado':st<=p.stockMin?'Bajo':'OK','Costo':p.costo||0,'Valor a costo':st*(p.costo||0)
+    'Estado':esAPedido(p)?'A pedido':(st<=0?'Agotado':st<=p.stockMin?'Bajo':'OK'),'Costo':p.costo||0,'Valor a costo':st*(p.costo||0)
   };}));
 
   add('Productos',(DB.products||[]).map(p=>({
